@@ -126,7 +126,10 @@ object AddonParser {
                         for (i in 0 until modules.length()) {
                             val module = modules.optJSONObject(i)
                             if (module != null) {
-                                module.optString("type")?.let { moduleTypes.add(it) }
+                                val type = module.optString("type")
+                                if (type.isNotEmpty()) {
+                                    moduleTypes.add(type)
+                                }
                             }
                         }
                     }
