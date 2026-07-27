@@ -1,0 +1,22 @@
+{
+  "id": "368c2b1e",
+  "baseDir": "C:\\Users\\HP\\AndroidStudioProjects\\PackForge",
+  "name": "Executing tasks: [:app:assembleDebug] in project",
+  "archived": false,
+  "aiderTotalCost": 0,
+  "agentTotalCost": 0,
+  "mainModel": "",
+  "currentMode": "agent",
+  "weakModelLocked": false,
+  "parentId": null,
+  "lastAgentProviderMetadata": null,
+  "agentProfileId": "default",
+  "provider": "openrouter",
+  "model": "qwen/qwen-2.5-coder-32b-instruct",
+  "workingMode": "local",
+  "updatedAt": "2026-07-26T18:30:44.507Z",
+  "startedAt": "2026-07-26T18:30:37.247Z",
+  "state": "TODO",
+  "createdAt": "2026-07-26T18:29:44.825Z",
+  "completedAt": "2026-07-26T18:29:45.982Z"
+}
