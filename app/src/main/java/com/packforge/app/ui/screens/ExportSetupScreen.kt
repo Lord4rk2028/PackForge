@@ -90,7 +90,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.net.Uri
+import android.os.Environment
 import java.io.File
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipEntry
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.Conflict
 import com.packforge.app.domain.model.ConflictSeverity
@@ -123,6 +126,7 @@ fun ExportSetupScreen(
     var useCustomPath by remember { mutableStateOf(false) }
     var customUri by remember { mutableStateOf<Uri?>(null) }
     var mcDropdownExpanded by remember { mutableStateOf(false) }
+    var showDebugZip by remember { mutableStateOf(false) }
 
     val activeAddons = addons.filter { it.enabled }
     val unresolvedCritical = conflicts.count {
@@ -814,6 +818,27 @@ fun ExportSetupScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
+
+            // BOTÓN DEBUG ZIP
+            item {
+                OutlinedButton(
+                    onClick = { showDebugZip = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Debug ZIP",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
         }
 
         if (exportState is ExportState.Error) {
@@ -845,6 +870,260 @@ fun ExportSetupScreen(
         }
 
         item { Spacer(modifier = Modifier.height(80.dp)) }
+    }
+
+    // DIÁLOGO DEBUG ZIP
+    if (showDebugZip) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showDebugZip = false },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Warning, tint = MaterialTheme.colorScheme.primary)
+                    Text("Debug ZIP", fontWeight = FontWeight.Bold)
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(400.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    val safeFileName = metadata.name
+                        .trim()
+                        .replace(" ", "_")
+                        .replace("[^a-zA-Z0-9_\\-]".toRegex(), "")
+                        .ifBlank { "modpack" }
+                    val zipFileName = "${safeFileName}_v${metadata.version}.mcaddon"
+                    val zipFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), zipFileName)
+                    
+                    if (zipFile.exists()) {
+                        // Leer entradas del ZIP
+                        val zipEntries = try {
+                            val entries = mutableListOf<String>()
+                            java.io.FileInputStream(zipFile).use { fis ->
+                                ZipInputStream(fis).use { zis ->
+                                    var entry: ZipEntry? = zis.nextEntry
+                                    while (entry != null) {
+                                        entries.add(entry.name)
+                                        entry = zis.nextEntry
+                                    }
+                                }
+                            }
+                            entries
+                        } catch (e: Exception) {
+                            listOf("Error al leer ZIP: ${e.message}")
+                        }
+                        
+                        Text(
+                            text = "📦 Entradas en ZIP (${zipEntries.size}):",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        
+                        zipEntries.take(20).forEach { entry ->
+                            Text(
+                                text = "  - $entry",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            )
+                        }
+                        
+                        if (zipEntries.size > 20) {
+                            Text(
+                                text = "... y ${zipEntries.size - 20} más",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        
+                        HorizontalDivider()
+                        
+                        // Buscar y mostrar manifests
+                        val bpManifestContent = zipEntries.find { it.contains("behavior_packs") && it.endsWith("manifest.json") }?.let { entry ->
+                            try {
+                                java.io.FileInputStream(zipFile).use { fis ->
+                                    ZipInputStream(fis).use { zis ->
+                                        var zipEntry: ZipEntry? = zis.nextEntry
+                                        while (zipEntry != null) {
+                                            if (zipEntry.name == entry) {
+                                                return@use zis.readBytes().toString(Charsets.UTF_8)
+                                            }
+                                            zipEntry = zis.nextEntry
+                                        }
+                                        null
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                "Error: ${e.message}"
+                            }
+                        }
+                        
+                        val rpManifestContent = zipEntries.find { it.contains("resource_packs") && it.endsWith("manifest.json") }?.let { entry ->
+                            try {
+                                java.io.FileInputStream(zipFile).use { fis ->
+                                    ZipInputStream(fis).use { zis ->
+                                        var zipEntry: ZipEntry? = zis.nextEntry
+                                        while (zipEntry != null) {
+                                            if (zipEntry.name == entry) {
+                                                return@use zis.readBytes().toString(Charsets.UTF_8)
+                                            }
+                                            zipEntry = zis.nextEntry
+                                        }
+                                        null
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                "Error: ${e.message}"
+                            }
+                        }
+                        
+                        if (bpManifestContent != null) {
+                            Text(
+                                text = "📄 BP manifest.json:",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                text = bpManifestContent,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(8.dp)
+                            )
+                            
+                            // Verificar UUIDs
+                            try {
+                                val bpJson = org.json.JSONObject(bpManifestContent)
+                                val bpHeaderUuid = bpJson.getJSONObject("header").getString("uuid")
+                                val bpDeps = bpJson.optJSONArray("dependencies")
+                                
+                                if (bpDeps != null && bpDeps.length() > 0) {
+                                    val bpDepUuid = bpDeps.getJSONObject(0).getString("uuid")
+                                    
+                                    HorizontalDivider()
+                                    Text(
+                                        text = "🔍 Verificación UUIDs:",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleSmall
+                                    )
+                                    Text(
+                                        text = "BP header UUID: $bpHeaderUuid",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(
+                                        text = "BP dependency UUID: $bpDepUuid",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    
+                                    if (rpManifestContent != null) {
+                                        val rpJson = org.json.JSONObject(rpManifestContent)
+                                        val rpHeaderUuid = rpJson.getJSONObject("header").getString("uuid")
+                                        
+                                        Text(
+                                            text = "RP header UUID: $rpHeaderUuid",
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                        
+                                        val uuidsMatch = bpDepUuid == rpHeaderUuid
+                                        Text(
+                                            text = if (uuidsMatch) "✅ UUIDs coinciden" else "❌ UUIDs NO coinciden",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (uuidsMatch) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                Text(
+                                    text = "Error al verificar UUIDs: ${e.message}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                        
+                        if (rpManifestContent != null) {
+                            HorizontalDivider()
+                            Text(
+                                text = "📄 RP manifest.json:",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                            Text(
+                                text = rpManifestContent,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(8.dp)
+                            )
+                        }
+                        
+                        // Verificar BOM
+                        HorizontalDivider()
+                        Text(
+                            text = "🔍 Verificación BOM:",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        
+                        val bpManifestBytes = bpManifestContent?.toByteArray(Charsets.UTF_8)
+                        val rpManifestBytes = rpManifestContent?.toByteArray(Charsets.UTF_8)
+                        
+                        if (bpManifestBytes != null && bpManifestBytes.isNotEmpty()) {
+                            val firstByte = String.format("%02X", bpManifestBytes[0])
+                            val hasBom = bpManifestBytes.size >= 3 && 
+                                        bpManifestBytes[0] == 0xEF.toByte() && 
+                                        bpManifestBytes[1] == 0xBB.toByte() && 
+                                        bpManifestBytes[2] == 0xBF.toByte()
+                            Text(
+                                text = "BP primer byte: $firstByte ${if (hasBom) "(❌ TIENE BOM)" else "(✅ Sin BOM)"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (hasBom) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
+                            )
+                        }
+                        
+                        if (rpManifestBytes != null && rpManifestBytes.isNotEmpty()) {
+                            val firstByte = String.format("%02X", rpManifestBytes[0])
+                            val hasBom = rpManifestBytes.size >= 3 && 
+                                        rpManifestBytes[0] == 0xEF.toByte() && 
+                                        rpManifestBytes[1] == 0xBB.toByte() && 
+                                        rpManifestBytes[2] == 0xBF.toByte()
+                            Text(
+                                text = "RP primer byte: $firstByte ${if (hasBom) "(❌ TIENE BOM)" else "(✅ Sin BOM)"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (hasBom) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
+                            )
+                        }
+                        
+                    } else {
+                        Text(
+                            text = "❌ ZIP no encontrado en Descargas",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Text(
+                            text = "Exporta el modpack primero para poder debuggearlo",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDebugZip = false }) {
+                    Text("Cerrar")
+                }
+            }
+        )
     }
 }
 

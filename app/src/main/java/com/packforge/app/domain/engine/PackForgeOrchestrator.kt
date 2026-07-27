@@ -5,6 +5,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.nio.charset.StandardCharsets
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -205,6 +206,11 @@ object PackForgeOrchestrator {
             val packDirs = mutableListOf<File>()
             if (bpDirs.isNotEmpty()) packDirs.add(mergedBpDir)
             if (rpDirs.isNotEmpty()) packDirs.add(mergedRpDir)
+            
+            // CRÍTICO: Verificar antes de crear ZIP
+            if (bpDirs.isNotEmpty() && rpDirs.isNotEmpty()) {
+                verifyBeforeZip(mergedBpDir, mergedRpDir)
+            }
             
             val success = createModpackZip(packDirs, outputFile, customName)
             
@@ -500,6 +506,58 @@ object PackForgeOrchestrator {
             PackForgeLog.e(TAG, "Error al extraer UUID: ${e.message}")
             null
         }
+    }
+    
+    /**
+     * Verifica que los manifests estén correctos antes de crear el ZIP
+     * CRÍTICO: Esta función previene errores de importación en Minecraft Bedrock
+     */
+    private fun verifyBeforeZip(mergedBpDir: File, mergedRpDir: File) {
+        PackForgeLog.d("PackForge_Verify", "=== INICIO VERIFICACIÓN PRE-ZIP ===")
+        
+        val bpManifest = File(mergedBpDir, "manifest.json")
+        val rpManifest = File(mergedRpDir, "manifest.json")
+        
+        require(bpManifest.exists()) { "❌ Falta manifest.json en BP" }
+        require(rpManifest.exists()) { "❌ Falta manifest.json en RP" }
+        
+        // Verificar contenido
+        val bpJson = JSONObject(bpManifest.readText(StandardCharsets.UTF_8))
+        val rpJson = JSONObject(rpManifest.readText(StandardCharsets.UTF_8))
+        
+        PackForgeLog.d("PackForge_Verify", "BP header.name: ${bpJson.getJSONObject("header").getString("name")}")
+        PackForgeLog.d("PackForge_Verify", "BP header.uuid: ${bpJson.getJSONObject("header").getString("uuid")}")
+        PackForgeLog.d("PackForge_Verify", "BP modules: ${bpJson.getJSONArray("modules").length()}")
+        PackForgeLog.d("PackForge_Verify", "BP dependencies: ${bpJson.optJSONArray("dependencies")?.length() ?: 0}")
+        
+        PackForgeLog.d("PackForge_Verify", "RP header.name: ${rpJson.getJSONObject("header").getString("name")}")
+        PackForgeLog.d("PackForge_Verify", "RP header.uuid: ${rpJson.getJSONObject("header").getString("uuid")}")
+        
+        // Verificar UUIDs coinciden
+        val rpHeaderUuid = rpJson.getJSONObject("header").getString("uuid")
+        val bpDeps = bpJson.optJSONArray("dependencies")
+        require(bpDeps != null && bpDeps.length() > 0) { "❌ BP no tiene dependencies" }
+        
+        val bpDepUuid = bpDeps.getJSONObject(0).getString("uuid")
+        require(bpDepUuid == rpHeaderUuid) { 
+            "❌ UUID de dependency del BP ($bpDepUuid) no coincide con UUID del RP ($rpHeaderUuid)" 
+        }
+        
+        // Verificar que no haya BOM en los manifests
+        val bpBytes = bpManifest.readBytes()
+        val rpBytes = rpManifest.readBytes()
+        
+        val bpHasBom = bpBytes.size >= 3 && bpBytes[0] == 0xEF.toByte() && bpBytes[1] == 0xBB.toByte() && bpBytes[2] == 0xBF.toByte()
+        val rpHasBom = rpBytes.size >= 3 && rpBytes[0] == 0xEF.toByte() && rpBytes[1] == 0xBB.toByte() && rpBytes[2] == 0xBF.toByte()
+        
+        require(!bpHasBom) { "❌ BP manifest tiene BOM UTF-8" }
+        require(!rpHasBom) { "❌ RP manifest tiene BOM UTF-8" }
+        
+        PackForgeLog.d("PackForge_Verify", "✅ Sin BOM (primer byte BP: ${String.format("%02X", bpBytes[0])})")
+        PackForgeLog.d("PackForge_Verify", "✅ Sin BOM (primer byte RP: ${String.format("%02X", rpBytes[0])})")
+        
+        PackForgeLog.d("PackForge_Verify", "✅ Todas las verificaciones pasaron")
+        PackForgeLog.d("PackForge_Verify", "=== FIN VERIFICACIÓN PRE-ZIP ===")
     }
     
     /**
