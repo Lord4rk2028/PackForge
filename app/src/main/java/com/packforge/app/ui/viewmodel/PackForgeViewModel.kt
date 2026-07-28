@@ -354,7 +354,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                     // Si no se seleccionó URI, copiar a Downloads por defecto
                     val finalPath = if (outUri == null) {
                         val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                        val targetFile = File(downloadsDir, "$customName.mcpack")
+                        val targetFile = File(downloadsDir, "$customName.mcaddon")
                         try {
                             outputFile.copyTo(targetFile, overwrite = true)
                             targetFile.absolutePath
@@ -376,11 +376,11 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                     
                     _exportState.value = ExportState.Success(
-                        fileName = "$customName.mcpack",
+                        fileName = "$customName.mcaddon",
                         filePath = finalPath,
                         importedToMinecraft = false
                     )
-                    saveModpackToHistory(context, "$customName.mcpack", finalPath)
+                    saveModpackToHistory(context, "$customName.mcaddon", finalPath)
                     _events.emit(PackForgeEvent.ShowSnackbar("¡Modpack fusionado con éxito!"))
                 } else {
                     _exportState.value = ExportState.Error(result.errorMessage ?: "Fallo en la fusión")

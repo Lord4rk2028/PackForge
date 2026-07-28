@@ -57,6 +57,15 @@ object PackForgeOrchestrator {
         try {
             // a) EXTRAER TODOS LOS ADDONS
             progressCallback?.onProgress("Extrayendo addons...")
+            
+            // LOGS OBLIGATORIOS DE VERIFICACIÓN
+            PackForgeLog.d("PackForge_Export", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            PackForgeLog.d("PackForge_Export", "🚀 INICIANDO EXPORTACIÓN")
+            PackForgeLog.d("PackForge_Export", "Total de addons seleccionados: ${addonPaths.size}")
+            addonPaths.forEachIndexed { index, path ->
+                PackForgeLog.d("PackForge_Export", "  Addon ${index + 1}: ${File(path).name}")
+            }
+            
             PackForgeLog.d("PackForge_Debug", "=== INICIO FUSIÓN ===")
             PackForgeLog.d("PackForge_Debug", "Total de addons a procesar: ${addonPaths.size}")
             
@@ -153,6 +162,11 @@ object PackForgeOrchestrator {
             PackForgeLog.d("PackForge_Debug", "BPs detectados: ${bpDirs.size}")
             PackForgeLog.d("PackForge_Debug", "RPs detectados: ${rpDirs.size}")
             
+            // LOG OBLIGATORIO: Resumen de clasificación
+            PackForgeLog.d("PackForge_Export", "📊 RESUMEN DE CLASIFICACIÓN:")
+            PackForgeLog.d("PackForge_Export", "  BPs detectados: ${bpDirs.size}")
+            PackForgeLog.d("PackForge_Export", "  RPs detectados: ${rpDirs.size}")
+            
             // c) FUSIONAR BEHAVIOR PACKS
             val mergedBpDir = File(tempDir, "merged_bp")
             val bpJsonCount = if (bpDirs.isNotEmpty()) {
@@ -201,22 +215,36 @@ object PackForgeOrchestrator {
             
             // g) EMPAQUETAR
             progressCallback?.onProgress("Empaquetando modpack...")
-            val outputFile = File(outputDir, "$customName.mcpack")
+            val outputFile = File(outputDir, "$customName.mcaddon")
             
-            val packDirs = mutableListOf<File>()
-            if (bpDirs.isNotEmpty()) packDirs.add(mergedBpDir)
-            if (rpDirs.isNotEmpty()) packDirs.add(mergedRpDir)
+            // LOG OBLIGATORIO: Antes de crear ZIP
+            PackForgeLog.d("PackForge_Export", "📦 CREANDO ZIP:")
+            PackForgeLog.d("PackForge_Export", "  Archivo de salida: ${outputFile.name}")
+            PackForgeLog.d("PackForge_Export", "  Extensión: ${outputFile.extension}")
+            if (outputFile.extension != "mcaddon") {
+                PackForgeLog.e("PackForge_Export", "❌ ERROR: La extensión NO es .mcaddon!")
+            }
             
             // CRÍTICO: Verificar antes de crear ZIP
             if (bpDirs.isNotEmpty() && rpDirs.isNotEmpty()) {
                 verifyBeforeZip(mergedBpDir, mergedRpDir)
             }
             
-            val success = createModpackZip(packDirs, outputFile, customName)
+            val success = createMcAddon(
+                if (bpDirs.isNotEmpty()) mergedBpDir else null,
+                if (rpDirs.isNotEmpty()) mergedRpDir else null,
+                outputFile
+            )
             
             if (!success) {
                 return MergeResult(false, null, null, null, totalJsonsMerged, "Error al empaquetar modpack")
             }
+            
+            // LOG OBLIGATORIO: Al final del ZIP
+            PackForgeLog.d("PackForge_Export", "✅ ARCHIVO CREADO:")
+            PackForgeLog.d("PackForge_Export", "  Ruta: ${outputFile.absolutePath}")
+            PackForgeLog.d("PackForge_Export", "  Tamaño: ${outputFile.length() / 1024} KB")
+            PackForgeLog.d("PackForge_Export", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
             // h) LIMPIEZA
             progressCallback?.onProgress("Limpiando temporales...")
@@ -563,55 +591,25 @@ object PackForgeOrchestrator {
     /**
      * Crea el archivo ZIP final del modpack con estructura correcta de Minecraft Bedrock
      * Estructura esperada:
-     * - behavior_packs/ (sin carpeta intermedia)
-     * - resource_packs/ (sin carpeta intermedia)
+     * - BP_PackForge/
+     * - RP_PackForge/
+     * CRÍTICO: NO usar behavior_packs/ o resource_packs/
      */
-    private fun createModpackZip(sourceDirs: List<File>, outputFile: File, packName: String): Boolean {
+    private fun createMcAddon(mergedBpDir: File?, mergedRpDir: File?, outputFile: File): Boolean {
         return try {
             ZipOutputStream(FileOutputStream(outputFile)).use { zos ->
-                for (sourceDir in sourceDirs) {
-                    val folderName = sourceDir.name
-                    
-                    // Determinar si es BP o RP basado en el nombre
-                    val packType = when {
-                        folderName.contains("merged_bp", ignoreCase = true) || 
-                        folderName.contains("separated_bp", ignoreCase = true) -> "behavior_packs"
-                        folderName.contains("merged_rp", ignoreCase = true) || 
-                        folderName.contains("separated_rp", ignoreCase = true) -> "resource_packs"
-                        folderName.contains("bp", ignoreCase = true) -> "behavior_packs"
-                        folderName.contains("rp", ignoreCase = true) -> "resource_packs"
-                        else -> {
-                            // Intentar detectar por contenido
-                            if (File(sourceDir, "entities").exists() || File(sourceDir, "items").exists()) {
-                                "behavior_packs"
-                            } else {
-                                "resource_packs"
-                            }
-                        }
-                    }
-                    
-                    PackForgeLog.d(TAG, "Empaquetando: $sourceDir -> $packType/")
-                    PackForgeLog.d("PackForge_Debug", "Verificando estructura de ZIP para: $sourceDir")
-                    
-                    // Verificar que manifest.json esté en la raíz del directorio
-                    val manifestFile = File(sourceDir, "manifest.json")
-                    if (manifestFile.exists()) {
-                        PackForgeLog.d("PackForge_Debug", "✅ manifest.json encontrado en raíz: ${manifestFile.absolutePath}")
-                    } else {
-                        PackForgeLog.e("PackForge_Debug", "❌ ERROR: manifest.json NO encontrado en raíz de $sourceDir")
-                        // Listar archivos para debug
-                        sourceDir.walkTopDown().filter { it.isFile }.forEach { file ->
-                            PackForgeLog.d("PackForge_Debug", "  Archivo en directorio: ${file.relativeTo(sourceDir).path}")
-                        }
-                    }
-                    
-                    // Agregar directorio recursivamente SIN carpeta intermedia
-                    addDirectoryToZip(zos, sourceDir, packType)
+                
+                // Agregar BP si existe
+                if (mergedBpDir != null && mergedBpDir.exists()) {
+                    addFolderToZip(zos, mergedBpDir, "BP_PackForge")
                 }
                 
-                // CRÍTICO: Finalizar ZIP correctamente
+                // Agregar RP si existe
+                if (mergedRpDir != null && mergedRpDir.exists()) {
+                    addFolderToZip(zos, mergedRpDir, "RP_PackForge")
+                }
+                
                 zos.finish()
-                zos.flush()
             }
             
             // Verificar que el archivo tenga contenido
@@ -627,6 +625,21 @@ object PackForgeOrchestrator {
         } catch (e: Exception) {
             PackForgeLog.e(TAG, "Error al crear ZIP: ${e.message}", e)
             false
+        }
+    }
+    
+    private fun addFolderToZip(zos: ZipOutputStream, sourceFolder: File, zipFolderPath: String) {
+        sourceFolder.walkTopDown().forEach { file ->
+            if (file.isFile) {
+                val relativePath = file.relativeTo(sourceFolder).path
+                val zipEntryName = "$zipFolderPath/$relativePath"
+                
+                zos.putNextEntry(ZipEntry(zipEntryName))
+                FileInputStream(file).use { it.copyTo(zos) }
+                zos.closeEntry()
+                
+                PackForgeLog.d("PackForge_ZIP", "Agregado al ZIP: $zipEntryName")
+            }
         }
     }
     

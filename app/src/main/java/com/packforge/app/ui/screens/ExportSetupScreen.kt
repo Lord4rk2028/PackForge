@@ -63,6 +63,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -820,24 +821,22 @@ fun ExportSetupScreen(
             }
 
             // BOTÓN DEBUG ZIP
-            item {
-                OutlinedButton(
-                    onClick = { showDebugZip = true },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Warning,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Debug ZIP",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
+            OutlinedButton(
+                onClick = { showDebugZip = true },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Debug ZIP",
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         }
 
@@ -881,7 +880,11 @@ fun ExportSetupScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.Warning, tint = MaterialTheme.colorScheme.primary)
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                     Text("Debug ZIP", fontWeight = FontWeight.Bold)
                 }
             },
@@ -943,19 +946,24 @@ fun ExportSetupScreen(
                         
                         HorizontalDivider()
                         
-                        // Buscar y mostrar manifests
-                        val bpManifestContent = zipEntries.find { it.contains("behavior_packs") && it.endsWith("manifest.json") }?.let { entry ->
+                        // Buscar y mostrar manifests (CRÍTICO: buscar en carpetas BP_* y RP_*)
+                        val bpManifestContent = zipEntries.find { 
+                            val parts = it.split("/")
+                            parts.size >= 2 && parts[0].startsWith("BP_", ignoreCase = true) && it.endsWith("manifest.json")
+                        }?.let { entry ->
                             try {
                                 java.io.FileInputStream(zipFile).use { fis ->
                                     ZipInputStream(fis).use { zis ->
                                         var zipEntry: ZipEntry? = zis.nextEntry
+                                        var result: String? = null
                                         while (zipEntry != null) {
                                             if (zipEntry.name == entry) {
-                                                return@use zis.readBytes().toString(Charsets.UTF_8)
+                                                result = zis.readBytes().toString(Charsets.UTF_8)
+                                                break
                                             }
                                             zipEntry = zis.nextEntry
                                         }
-                                        null
+                                        result
                                     }
                                 }
                             } catch (e: Exception) {
@@ -963,18 +971,23 @@ fun ExportSetupScreen(
                             }
                         }
                         
-                        val rpManifestContent = zipEntries.find { it.contains("resource_packs") && it.endsWith("manifest.json") }?.let { entry ->
+                        val rpManifestContent = zipEntries.find { 
+                            val parts = it.split("/")
+                            parts.size >= 2 && parts[0].startsWith("RP_", ignoreCase = true) && it.endsWith("manifest.json")
+                        }?.let { entry ->
                             try {
                                 java.io.FileInputStream(zipFile).use { fis ->
                                     ZipInputStream(fis).use { zis ->
                                         var zipEntry: ZipEntry? = zis.nextEntry
+                                        var result: String? = null
                                         while (zipEntry != null) {
                                             if (zipEntry.name == entry) {
-                                                return@use zis.readBytes().toString(Charsets.UTF_8)
+                                                result = zis.readBytes().toString(Charsets.UTF_8)
+                                                break
                                             }
                                             zipEntry = zis.nextEntry
                                         }
-                                        null
+                                        result
                                     }
                                 }
                             } catch (e: Exception) {
@@ -999,53 +1012,54 @@ fun ExportSetupScreen(
                             )
                             
                             // Verificar UUIDs
-                            try {
+                            val uuidVerificationResult = try {
                                 val bpJson = org.json.JSONObject(bpManifestContent)
                                 val bpHeaderUuid = bpJson.getJSONObject("header").getString("uuid")
                                 val bpDeps = bpJson.optJSONArray("dependencies")
                                 
                                 if (bpDeps != null && bpDeps.length() > 0) {
                                     val bpDepUuid = bpDeps.getJSONObject(0).getString("uuid")
+                                    val rpHeaderUuid = if (rpManifestContent != null) {
+                                        org.json.JSONObject(rpManifestContent).getJSONObject("header").getString("uuid")
+                                    } else null
                                     
-                                    HorizontalDivider()
-                                    Text(
-                                        text = "🔍 Verificación UUIDs:",
-                                        fontWeight = FontWeight.Bold,
-                                        style = MaterialTheme.typography.titleSmall
-                                    )
-                                    Text(
-                                        text = "BP header UUID: $bpHeaderUuid",
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                    Text(
-                                        text = "BP dependency UUID: $bpDepUuid",
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                    
-                                    if (rpManifestContent != null) {
-                                        val rpJson = org.json.JSONObject(rpManifestContent)
-                                        val rpHeaderUuid = rpJson.getJSONObject("header").getString("uuid")
-                                        
-                                        Text(
-                                            text = "RP header UUID: $rpHeaderUuid",
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                        
-                                        val uuidsMatch = bpDepUuid == rpHeaderUuid
-                                        Text(
-                                            text = if (uuidsMatch) "✅ UUIDs coinciden" else "❌ UUIDs NO coinciden",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (uuidsMatch) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
+                                    Triple(bpHeaderUuid, bpDepUuid, rpHeaderUuid)
+                                } else null
                             } catch (e: Exception) {
+                                null
+                            }
+
+                            if (uuidVerificationResult != null) {
+                                val (bpHeaderUuid, bpDepUuid, rpHeaderUuid) = uuidVerificationResult
+                                HorizontalDivider()
                                 Text(
-                                    text = "Error al verificar UUIDs: ${e.message}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
+                                    text = "🔍 Verificación UUIDs:",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleSmall
                                 )
+                                Text(
+                                    text = "BP header UUID: $bpHeaderUuid",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    text = "BP dependency UUID: $bpDepUuid",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                
+                                if (rpHeaderUuid != null) {
+                                    Text(
+                                        text = "RP header UUID: $rpHeaderUuid",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    
+                                    val uuidsMatch = bpDepUuid == rpHeaderUuid
+                                    Text(
+                                        text = if (uuidsMatch) "✅ UUIDs coinciden" else "❌ UUIDs NO coinciden",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (uuidsMatch) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                         }
                         
