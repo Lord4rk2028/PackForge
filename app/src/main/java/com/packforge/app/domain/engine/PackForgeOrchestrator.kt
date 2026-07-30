@@ -199,20 +199,9 @@ object PackForgeOrchestrator {
             
             PackForgeLog.d(TAG, "UUIDs generados - BP: $bpUuid, RP: $rpUuid")
 
-            // f) COPIAR ICONO PERSONALIZADO (SI EXISTE)
-            if (customIconPath != null && File(customIconPath).exists()) {
-                val iconFile = File(customIconPath)
-                if (bpDirs.isNotEmpty()) {
-                    val targetBpIcon = File(mergedBpDir, "pack_icon.png")
-                    iconFile.copyTo(targetBpIcon, overwrite = true)
-                }
-                if (rpDirs.isNotEmpty()) {
-                    val targetRpIcon = File(mergedRpDir, "pack_icon.png")
-                    iconFile.copyTo(targetRpIcon, overwrite = true)
-                }
-                PackForgeLog.d(TAG, "Icono personalizado copiado a los packs fusionados")
-            }
-            
+            // f) APLICAR ICONO PERSONALIZADO (DESPUÉS DE FUSIONAR, ANTES DE ZIP)
+            applyCustomIcon(mergedBpDir, mergedRpDir, customIconPath)
+
             // g) EMPAQUETAR
             progressCallback?.onProgress("Empaquetando modpack...")
             val outputFile = File(outputDir, "$customName.mcaddon")
@@ -533,6 +522,46 @@ object PackForgeOrchestrator {
         } catch (e: Exception) {
             PackForgeLog.e(TAG, "Error al extraer UUID: ${e.message}")
             null
+        }
+    }
+    
+    /**
+     * Aplica el icono personalizado al modpack DESPUÉS de fusionar los addons
+     * CRÍTICO: Debe llamarse DESPUÉS de fusionar y ANTES de crear el ZIP
+     */
+    private fun applyCustomIcon(mergedBpDir: File?, mergedRpDir: File?, customIconPath: String?) {
+        if (customIconPath == null) {
+            PackForgeLog.d("PackForge_Icon", "⚠️ No se proporcionó icono personalizado")
+            return
+        }
+        
+        val iconFile = File(customIconPath)
+        if (!iconFile.exists()) {
+            PackForgeLog.e("PackForge_Icon", "❌ El archivo de icono no existe: $customIconPath")
+            return
+        }
+        
+        val iconDirs = listOfNotNull(mergedBpDir, mergedRpDir)
+        
+        iconDirs.forEach { dir ->
+            if (dir.exists()) {
+                val targetIcon = File(dir, "pack_icon.png")
+                
+                // ELIMINAR cualquier pack_icon.png existente (de los addons)
+                if (targetIcon.exists()) {
+                    targetIcon.delete()
+                    PackForgeLog.d("PackForge_Icon", "🗑️ Eliminado pack_icon.png original de: ${dir.name}")
+                }
+                
+                // COPIAR el icono del usuario con el nombre EXACTO pack_icon.png
+                try {
+                    iconFile.copyTo(targetIcon, overwrite = true)
+                    PackForgeLog.d("PackForge_Icon", "✅ pack_icon.png personalizado aplicado en: ${dir.absolutePath}")
+                    PackForgeLog.d("PackForge_Icon", "   Tamaño: ${targetIcon.length()} bytes")
+                } catch (e: Exception) {
+                    PackForgeLog.e("PackForge_Icon", "❌ Error al copiar icono a ${dir.name}: ${e.message}")
+                }
+            }
         }
     }
     
