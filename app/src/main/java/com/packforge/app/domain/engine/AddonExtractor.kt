@@ -14,7 +14,8 @@ object AddonExtractor {
      * Resultado del análisis de un addon extraído
      */
     data class AddonAnalysis(
-        val addonType: AddonType,
+        val addonClassification: AddonClassification,
+        val addonType: AddonType, // Mantener para compatibilidad
         val totalJsonFiles: Int,
         val manifestFiles: List<String>,
         val itemFiles: List<String>,
@@ -25,7 +26,20 @@ object AddonExtractor {
     )
 
     /**
-     * Tipo de addon detectado
+     * Clasificación detallada de un addon con rutas de subcarpetas si es BOTH
+     */
+    sealed class AddonClassification {
+        object BEHAVIOR_PACK : AddonClassification()
+        object RESOURCE_PACK : AddonClassification()
+        data class BOTH(
+            val bpSubfolder: File,
+            val rpSubfolder: File
+        ) : AddonClassification()
+        object UNKNOWN : AddonClassification()
+    }
+    
+    /**
+     * Tipo de addon detectado (legacy, mantener para compatibilidad)
      */
     enum class AddonType {
         BEHAVIOR_PACK,
@@ -99,7 +113,7 @@ object AddonExtractor {
         if (!extractedDir.exists()) {
             PackForgeLog.e(TAG, "Carpeta extraída no existe: $extractedPath")
             return AddonAnalysis(
-                AddonType.UNKNOWN, 0, emptyList(), emptyList(),
+                AddonClassification.UNKNOWN, AddonType.UNKNOWN, 0, emptyList(), emptyList(),
                 emptyList(), emptyList(), emptyList(), emptyList()
             )
         }
@@ -115,7 +129,7 @@ object AddonExtractor {
         findJsonFiles(extractedDir, "", manifestFiles, itemFiles, entityFiles, lootFiles, recipeFiles, otherJsonFiles)
 
         // Detectar tipo de addon
-        val addonType = detectAddonType(manifestFiles, extractedDir)
+        val (addonClassification, addonType) = detectAddonType(manifestFiles, extractedDir)
 
         val totalJsonFiles = manifestFiles.size + itemFiles.size + entityFiles.size + 
                            lootFiles.size + recipeFiles.size + otherJsonFiles.size
@@ -123,6 +137,7 @@ object AddonExtractor {
         PackForgeLog.d(TAG, "Análisis completado - Tipo: $addonType, Total JSONs: $totalJsonFiles")
 
         return AddonAnalysis(
+            addonClassification = addonClassification,
             addonType = addonType,
             totalJsonFiles = totalJsonFiles,
             manifestFiles = manifestFiles,
@@ -182,8 +197,9 @@ object AddonExtractor {
 
     /**
      * Detecta el tipo de addon basándose en la estructura de archivos
+     * Retorna AddonClassification con rutas de subcarpetas si es BOTH
      */
-    private fun detectAddonType(manifestFiles: List<String>, extractedDir: File): AddonType {
+    private fun detectAddonType(manifestFiles: List<String>, extractedDir: File): Pair<AddonClassification, AddonType> {
         PackForgeLog.d("PackForge_Classify", "=== INICIO DETECCIÓN DE TIPO ===")
         PackForgeLog.d("PackForge_Classify", "Manifest files encontrados: ${manifestFiles.map { it }}")
         
@@ -239,8 +255,32 @@ object AddonExtractor {
                 lowerPath.contains("manifest.json")
             }
             
+            // Encontrar las carpetas padre de los manifests (las subcarpetas BP_* y RP_*)
+            val bpSubfolder = bpManifestPath?.let { path ->
+                val parts = path.split("/", "\\")
+                if (parts.isNotEmpty()) {
+                    val folderName = parts[0]
+                    extractedDir.listFiles()?.find { it.name == folderName }
+                } else null
+            }
+            val rpSubfolder = rpManifestPath?.let { path ->
+                val parts = path.split("/", "\\")
+                if (parts.isNotEmpty()) {
+                    val folderName = parts[0]
+                    extractedDir.listFiles()?.find { it.name == folderName }
+                } else null
+            }
+            
+            if (bpSubfolder != null && rpSubfolder != null) {
+                PackForgeLog.d("PackForge_Classify", "✅ BOTH detectado:")
+                PackForgeLog.d("PackForge_Classify", "   BP subfolder: ${bpSubfolder.name}")
+                PackForgeLog.d("PackForge_Classify", "   RP subfolder: ${rpSubfolder.name}")
+                return Pair(AddonClassification.BOTH(bpSubfolder, rpSubfolder), AddonType.BOTH)
+            }
+            
             PackForgeLog.d("PackForge_Classify", "✅ Clasificado como BOTH - BP: $bpManifestPath, RP: $rpManifestPath")
-            return AddonType.BOTH
+            // Fallback: BOTH sin subcarpetas específicas (se usará separateBothAddon original)
+            return Pair(AddonClassification.BOTH(extractedDir, extractedDir), AddonType.BOTH)
         }
         
         // Analizar el contenido del manifest.json si existe en raíz
@@ -259,19 +299,19 @@ object AddonExtractor {
                     return when {
                         isData && isResources -> {
                             PackForgeLog.d("PackForge_Classify", "Clasificado como: BOTH (manifest raíz)")
-                            AddonType.BOTH
+                            Pair(AddonClassification.BOTH(extractedDir, extractedDir), AddonType.BOTH)
                         }
                         isData -> {
                             PackForgeLog.d("PackForge_Classify", "Clasificado como: BEHAVIOR_PACK (manifest raíz)")
-                            AddonType.BEHAVIOR_PACK
+                            Pair(AddonClassification.BEHAVIOR_PACK, AddonType.BEHAVIOR_PACK)
                         }
                         isResources -> {
                             PackForgeLog.d("PackForge_Classify", "Clasificado como: RESOURCE_PACK (manifest raíz)")
-                            AddonType.RESOURCE_PACK
+                            Pair(AddonClassification.RESOURCE_PACK, AddonType.RESOURCE_PACK)
                         }
                         else -> {
                             PackForgeLog.d("PackForge_Classify", "Clasificado como: UNKNOWN (manifest raíz sin tipo reconocido)")
-                            AddonType.UNKNOWN
+                            Pair(AddonClassification.UNKNOWN, AddonType.UNKNOWN)
                         }
                     }
                 } catch (e: Exception) {
@@ -283,44 +323,44 @@ object AddonExtractor {
         // Detectar BP solo en subcarpeta BP_*
         if (hasBpManifest && !hasRpManifest) {
             PackForgeLog.d("PackForge_Classify", "Clasificado como: BEHAVIOR_PACK (manifest en subcarpeta BP_*)")
-            return AddonType.BEHAVIOR_PACK
+            return Pair(AddonClassification.BEHAVIOR_PACK, AddonType.BEHAVIOR_PACK)
         }
         
         // Detectar RP solo en subcarpeta RP_*
         if (hasRpManifest && !hasBpManifest) {
             PackForgeLog.d("PackForge_Classify", "Clasificado como: RESOURCE_PACK (manifest en subcarpeta RP_*)")
-            return AddonType.RESOURCE_PACK
+            return Pair(AddonClassification.RESOURCE_PACK, AddonType.RESOURCE_PACK)
         }
 
         // Fallback basado en estructura de carpetas
         val result = when {
             hasBehaviorPack && hasResourcePack -> {
                 PackForgeLog.d("PackForge_Classify", "Clasificado como: BOTH (carpetas behavior_packs + resource_packs)")
-                AddonType.BOTH
+                Pair(AddonClassification.BOTH(extractedDir, extractedDir), AddonType.BOTH)
             }
             hasBehaviorPack -> {
                 PackForgeLog.d("PackForge_Classify", "Clasificado como: BEHAVIOR_PACK (carpeta behavior_packs)")
-                AddonType.BEHAVIOR_PACK
+                Pair(AddonClassification.BEHAVIOR_PACK, AddonType.BEHAVIOR_PACK)
             }
             hasResourcePack -> {
                 PackForgeLog.d("PackForge_Classify", "Clasificado como: RESOURCE_PACK (carpeta resource_packs)")
-                AddonType.RESOURCE_PACK
+                Pair(AddonClassification.RESOURCE_PACK, AddonType.RESOURCE_PACK)
             }
             hasBpSubfolder && hasRpSubfolder -> {
                 PackForgeLog.d("PackForge_Classify", "Clasificado como: BOTH (subcarpetas BP_* + RP_*)")
-                AddonType.BOTH
+                Pair(AddonClassification.BOTH(extractedDir, extractedDir), AddonType.BOTH)
             }
             hasBpSubfolder -> {
                 PackForgeLog.d("PackForge_Classify", "Clasificado como: BEHAVIOR_PACK (subcarpeta BP_*)")
-                AddonType.BEHAVIOR_PACK
+                Pair(AddonClassification.BEHAVIOR_PACK, AddonType.BEHAVIOR_PACK)
             }
             hasRpSubfolder -> {
                 PackForgeLog.d("PackForge_Classify", "Clasificado como: RESOURCE_PACK (subcarpeta RP_*)")
-                AddonType.RESOURCE_PACK
+                Pair(AddonClassification.RESOURCE_PACK, AddonType.RESOURCE_PACK)
             }
             else -> {
                 PackForgeLog.w("PackForge_Classify", "Clasificado como: UNKNOWN (estructura no reconocida)")
-                AddonType.UNKNOWN
+                Pair(AddonClassification.UNKNOWN, AddonType.UNKNOWN)
             }
         }
         

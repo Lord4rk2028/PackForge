@@ -121,18 +121,27 @@ object PackForgeOrchestrator {
                 PackForgeLog.d("PackForge_Debug", "  - Entity files: ${analysis.entityFiles.size}")
                 PackForgeLog.d("PackForge_Debug", "  - Texture files: ${analysis.otherJsonFiles.size}")
                 
-                when (analysis.addonType) {
-                    AddonExtractor.AddonType.BEHAVIOR_PACK -> {
+                when (analysis.addonClassification) {
+                    is AddonExtractor.AddonClassification.BEHAVIOR_PACK -> {
                         bpDirs.add(extractedDir)
                         PackForgeLog.d("PackForge_Debug", "  -> Agregado a lista de BPs")
                     }
-                    AddonExtractor.AddonType.RESOURCE_PACK -> {
+                    is AddonExtractor.AddonClassification.RESOURCE_PACK -> {
                         rpDirs.add(extractedDir)
                         PackForgeLog.d("PackForge_Debug", "  -> Agregado a lista de RPs")
                     }
-                    AddonExtractor.AddonType.BOTH -> {
-                        PackForgeLog.d("PackForge_Debug", "  -> Addon tiene estructura BOTH, separando en BP y RP")
-                        val (bpPath, rpPath) = separateBothAddon(extractedDir, tempDir)
+                    is AddonExtractor.AddonClassification.BOTH -> {
+                        // ⭐ AMBAS CARPETAS DEBEN PROCESARSE ⭐
+                        PackForgeLog.d("PackForge_Process", "🔀 Procesando BOTH: ${File(extractedDir).name}")
+                        PackForgeLog.d("PackForge_Process", "   BP folder: ${analysis.addonClassification.bpSubfolder.name}")
+                        PackForgeLog.d("PackForge_Process", "   RP folder: ${analysis.addonClassification.rpSubfolder.name}")
+                        
+                        // Usar directamente las rutas del clasificador
+                        val (bpPath, rpPath) = separateBothAddonDirect(
+                            analysis.addonClassification.bpSubfolder,
+                            analysis.addonClassification.rpSubfolder,
+                            tempDir
+                        )
                         if (bpPath != null) {
                             bpDirs.add(bpPath)
                             PackForgeLog.d("PackForge_Debug", "  -> BP separado en: $bpPath")
@@ -142,7 +151,7 @@ object PackForgeOrchestrator {
                             PackForgeLog.d("PackForge_Debug", "  -> RP separado en: $rpPath")
                         }
                     }
-                    AddonExtractor.AddonType.UNKNOWN -> {
+                    is AddonExtractor.AddonClassification.UNKNOWN -> {
                         PackForgeLog.w("PackForge_Debug", "  -> Addon UNKNOWN, intentando detectar por manifest")
                         // Intentar detectar por estructura de carpetas
                         if (File(extractedDir, "manifest.json").exists()) {
@@ -200,7 +209,7 @@ object PackForgeOrchestrator {
             
             PackForgeLog.d(TAG, "UUIDs generados - BP: $bpUuid, RP: $rpUuid")
 
-            // f) APLICAR ICONO PERSONALIZADO (DESPUÉS DE FUSIONAR, ANTES DE ZIP)
+            // f) APLICAR ICONO PERSONALIZADO (AL FINAL, DESPUÉS DE TODO)
             applyCustomIcon(mergedBpDir, mergedRpDir, customIconPath)
 
             // g) EMPAQUETAR
@@ -251,6 +260,86 @@ object PackForgeOrchestrator {
             cleanupTempDirs(tempDir)
             return MergeResult(false, null, null, null, 0, "Error: ${e.message}")
         }
+    }
+    
+    /**
+     * Separa un addon tipo BOTH en sus componentes BP y RP usando rutas directas
+     * CRÍTICO: Usa las rutas directas del clasificador en lugar de buscarlas nuevamente
+     */
+    private fun separateBothAddonDirect(bpSubfolder: File, rpSubfolder: File, tempDir: File): Pair<String?, String?> {
+        PackForgeLog.d("PackForge_Debug", "=== INICIO SEPARACIÓN BOTH DIRECT ===")
+        PackForgeLog.d("PackForge_Debug", "BP subfolder: ${bpSubfolder.absolutePath}")
+        PackForgeLog.d("PackForge_Debug", "RP subfolder: ${rpSubfolder.absolutePath}")
+        
+        var bpPath: String? = null
+        var rpPath: String? = null
+        
+        // Separar BP
+        if (bpSubfolder.exists()) {
+            val bpDir = File(tempDir, "separated_bp_${System.currentTimeMillis()}")
+            bpDir.mkdirs()
+            
+            var bpFileCount = 0
+            bpSubfolder.walkTopDown().forEach { file ->
+                if (file.isFile) {
+                    val relativePath = file.relativeTo(bpSubfolder).path
+                    val targetFile = File(bpDir, relativePath)
+                    targetFile.parentFile?.mkdirs()
+                    file.copyTo(targetFile)
+                    bpFileCount++
+                    
+                    if (file.name == "manifest.json") {
+                        PackForgeLog.d("PackForge_Debug", "  ✅ manifest.json copiado a: ${targetFile.relativeTo(bpDir).path}")
+                    }
+                }
+            }
+            
+            val bpManifest = File(bpDir, "manifest.json")
+            if (bpManifest.exists()) {
+                PackForgeLog.d("PackForge_Debug", "✅ BP manifest.json en raíz: ${bpManifest.absolutePath}")
+            } else {
+                PackForgeLog.e("PackForge_Debug", "❌ ERROR: BP manifest.json NO en raíz de $bpDir")
+            }
+            
+            bpPath = bpDir.absolutePath
+            PackForgeLog.d("PackForge_Debug", "✅ Procesando separated_bp: $bpFileCount archivos en $bpPath")
+        }
+        
+        // Separar RP
+        if (rpSubfolder.exists()) {
+            val rpDir = File(tempDir, "separated_rp_${System.currentTimeMillis()}")
+            rpDir.mkdirs()
+            
+            var rpFileCount = 0
+            rpSubfolder.walkTopDown().forEach { file ->
+                if (file.isFile) {
+                    val relativePath = file.relativeTo(rpSubfolder).path
+                    val targetFile = File(rpDir, relativePath)
+                    targetFile.parentFile?.mkdirs()
+                    file.copyTo(targetFile)
+                    rpFileCount++
+                    
+                    if (file.name == "manifest.json") {
+                        PackForgeLog.d("PackForge_Debug", "  ✅ manifest.json copiado a: ${targetFile.relativeTo(rpDir).path}")
+                    }
+                }
+            }
+            
+            val rpManifest = File(rpDir, "manifest.json")
+            if (rpManifest.exists()) {
+                PackForgeLog.d("PackForge_Debug", "✅ RP manifest.json en raíz: ${rpManifest.absolutePath}")
+            } else {
+                PackForgeLog.e("PackForge_Debug", "❌ ERROR: RP manifest.json NO en raíz de $rpDir")
+            }
+            
+            rpPath = rpDir.absolutePath
+            PackForgeLog.d("PackForge_Debug", "✅ Procesando separated_rp: $rpFileCount archivos en $rpPath")
+        }
+        
+        PackForgeLog.d("PackForge_Debug", "=== FIN SEPARACIÓN BOTH DIRECT ===")
+        PackForgeLog.d("PackForge_Debug", "Resultados: BP=$bpPath, RP=$rpPath")
+        
+        return Pair(bpPath, rpPath)
     }
     
     /**
