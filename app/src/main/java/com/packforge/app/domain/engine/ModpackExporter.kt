@@ -181,7 +181,7 @@ object ModpackExporter {
             ZipInputStream(BufferedInputStream(FileInputStream(file))).use { zip ->
                 var entry = zip.nextEntry
                 while (entry != null) {
-                    if (entry.name.lowercase().endsWith(".mcpack")) {
+                    if (entry.name.lowercase().endsWith(".mcaddon")) {
                         val content = readZipToMap(zip.readBytes())
                         val p = MergedPack(addon.name, "")
                         p.files.putAll(normalizePaths(content))

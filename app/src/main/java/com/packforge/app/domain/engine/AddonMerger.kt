@@ -41,7 +41,7 @@ object AddonMerger {
                     return@forEachIndexed
                 }
 
-                // Extraer packs (pueden ser varios .mcpack dentro de un .mcaddon)
+                // Extraer packs (pueden ser varios .mcaddon dentro de un .mcaddon)
                 val extractedPacks = extractPacksFromZip(sourceFile)
                 
                 extractedPacks.forEach { extracted ->
@@ -144,7 +144,7 @@ object AddonMerger {
             ZipInputStream(BufferedInputStream(FileInputStream(file))).use { zip ->
                 var entry = zip.nextEntry
                 while (entry != null) {
-                    if (!entry.isDirectory && entry.name.lowercase().endsWith(".mcpack")) {
+                    if (!entry.isDirectory && entry.name.lowercase().endsWith(".mcaddon")) {
                         packs.add(normalizePack(readZipToMap(zip.readBytes())))
                     }
                     entry = zip.nextEntry

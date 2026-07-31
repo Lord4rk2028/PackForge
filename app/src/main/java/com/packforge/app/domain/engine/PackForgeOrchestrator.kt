@@ -35,7 +35,7 @@ object PackForgeOrchestrator {
     /**
      * Fusiona múltiples addons y crea el modpack final
      * 
-     * @param addonPaths Lista de rutas de archivos .mcaddon/.mcpack
+     * @param addonPaths Lista de rutas de archivos .mcaddon
      * @param outputDir Directorio donde se guardará el modpack final
      * @param progressCallback Callback opcional para reportar progreso
      * @return MergeResult con el resultado de la operación
@@ -219,15 +219,11 @@ object PackForgeOrchestrator {
                 verifyBeforeZip(mergedBpDir, mergedRpDir)
             }
             
-            val success = createMcAddon(
+            createMcAddon(
                 if (bpDirs.isNotEmpty()) mergedBpDir else null,
                 if (rpDirs.isNotEmpty()) mergedRpDir else null,
                 outputFile
             )
-            
-            if (!success) {
-                return MergeResult(false, null, null, null, totalJsonsMerged, "Error al empaquetar modpack")
-            }
             
             // LOG OBLIGATORIO: Al final del ZIP
             PackForgeLog.d("PackForge_Export", "✅ ARCHIVO CREADO:")
@@ -624,50 +620,44 @@ object PackForgeOrchestrator {
      * - RP_PackForge/
      * CRÍTICO: NO usar behavior_packs/ o resource_packs/
      */
-    private fun createMcAddon(mergedBpDir: File?, mergedRpDir: File?, outputFile: File): Boolean {
-        return try {
-            ZipOutputStream(FileOutputStream(outputFile)).use { zos ->
-                
-                // Agregar BP si existe
-                if (mergedBpDir != null && mergedBpDir.exists()) {
-                    addFolderToZip(zos, mergedBpDir, "BP_PackForge")
-                }
-                
-                // Agregar RP si existe
-                if (mergedRpDir != null && mergedRpDir.exists()) {
-                    addFolderToZip(zos, mergedRpDir, "RP_PackForge")
-                }
-                
-                zos.finish()
+    private fun createMcAddon(mergedBpDir: File?, mergedRpDir: File?, outputFile: File) {
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(outputFile))).use { zos ->
+            
+            if (mergedBpDir != null && mergedBpDir.exists()) {
+                addFolderToZip(zos, mergedBpDir, "BP_PackForge")
+                PackForgeLog.d("PackForge_ZIP", "✅ BP agregado como BP_PackForge/")
             }
             
-            // Verificar que el archivo tenga contenido
-            val fileSize = outputFile.length()
-            PackForgeLog.d(TAG, "ZIP creado: ${outputFile.absolutePath}, tamaño: $fileSize bytes")
-            
-            if (fileSize == 0L) {
-                PackForgeLog.e(TAG, "ERROR: El ZIP creado tiene 0 bytes")
-                return false
+            if (mergedRpDir != null && mergedRpDir.exists()) {
+                addFolderToZip(zos, mergedRpDir, "RP_PackForge")
+                PackForgeLog.d("PackForge_ZIP", "✅ RP agregado como RP_PackForge/")
             }
             
-            true
-        } catch (e: Exception) {
-            PackForgeLog.e(TAG, "Error al crear ZIP: ${e.message}", e)
-            false
+            zos.finish()
         }
+        
+        PackForgeLog.d("PackForge_ZIP", "📦 Archivo final: ${outputFile.name}")
+        PackForgeLog.d("PackForge_ZIP", "   Extensión: ${outputFile.extension}")
+        PackForgeLog.d("PackForge_ZIP", "   Tamaño: ${outputFile.length() / 1024} KB")
     }
     
     private fun addFolderToZip(zos: ZipOutputStream, sourceFolder: File, zipFolderPath: String) {
         sourceFolder.walkTopDown().forEach { file ->
-            if (file.isFile) {
-                val relativePath = file.relativeTo(sourceFolder).path
-                val zipEntryName = "$zipFolderPath/$relativePath"
+            val relativePath = file.relativeTo(sourceFolder).path
+            if (file.isDirectory) {
+                // Agregar entrada de directorio
+                val dirEntry = ZipEntry("$zipFolderPath/$relativePath/")
+                zos.putNextEntry(dirEntry)
+                zos.closeEntry()
+            } else {
+                val zipEntryName = if (relativePath.isEmpty()) 
+                    "$zipFolderPath/${file.name}" 
+                else 
+                    "$zipFolderPath/$relativePath"
                 
                 zos.putNextEntry(ZipEntry(zipEntryName))
                 FileInputStream(file).use { it.copyTo(zos) }
                 zos.closeEntry()
-                
-                PackForgeLog.d("PackForge_ZIP", "Agregado al ZIP: $zipEntryName")
             }
         }
     }

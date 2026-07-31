@@ -317,9 +317,7 @@ fun McpedlSearchScreen(
 private fun isAddonDownloadUrl(url: String): Boolean {
     val lower = url.lowercase()
     return lower.endsWith(".mcaddon") ||
-        lower.endsWith(".mcpack") ||
-        lower.contains(".mcaddon?") ||
-        lower.contains(".mcpack?")
+        lower.contains(".mcaddon?")
 }
 
 private fun isAddonMimeType(mimetype: String?): Boolean {
