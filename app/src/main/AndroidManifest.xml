@@ -67,6 +67,7 @@
                 <data android:scheme="file" />
                 <data android:scheme="content" />
                 <data android:pathPattern=".*\\.mcaddon" />
+                <data android:pathPattern=".*\\.mcpack" />
             </intent-filter>
         </activity>
 

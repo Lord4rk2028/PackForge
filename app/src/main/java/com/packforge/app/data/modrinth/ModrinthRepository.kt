@@ -79,14 +79,19 @@ class ModrinthRepository {
                 for (version in versions) {
                     val files = version.files.orEmpty()
                     val file = files.firstOrNull { file ->
-                        file.filename.orEmpty().endsWith(".mcaddon", ignoreCase = true)
+                        file.primary &&
+                            (file.filename.orEmpty().endsWith(".mcaddon", ignoreCase = true) ||
+                                file.filename.orEmpty().endsWith(".mcpack", ignoreCase = true))
+                    } ?: files.firstOrNull { file ->
+                        file.filename.orEmpty().endsWith(".mcaddon", ignoreCase = true) ||
+                                file.filename.orEmpty().endsWith(".mcpack", ignoreCase = true)
                     } ?: files.firstOrNull { it.primary }
                         ?: files.firstOrNull()
                     val url = file?.url?.takeIf { it.isNotBlank() }
                     if (url != null) return@runCatching url
                 }
                 throw IllegalStateException(
-                    "No se encontró un archivo .mcaddon descargable"
+                    "No se encontró un archivo .mcaddon o .mcpack descargable"
                 )
             }
         }
@@ -104,6 +109,7 @@ class ModrinthRepository {
                 .let { name ->
                     when {
                         name.endsWith(".mcaddon", ignoreCase = true) -> name
+                        name.endsWith(".mcpack", ignoreCase = true) -> name
                         else -> "$name.mcaddon"
                     }
                 }

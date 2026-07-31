@@ -32,6 +32,7 @@ object AddonParser {
 
             // Verificar extensiones permitidas
             if (!fileName.endsWith(".mcaddon", ignoreCase = true) &&
+                !fileName.endsWith(".mcpack", ignoreCase = true) &&
                 !fileName.endsWith(".zip", ignoreCase = true)) {
                 return null
             }

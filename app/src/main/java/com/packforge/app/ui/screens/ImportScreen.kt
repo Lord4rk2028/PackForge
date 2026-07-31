@@ -292,7 +292,7 @@ fun ImportDropZone(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Toca para seleccionar archivos .mcaddon",
+                    text = "Toca para seleccionar archivos .mcaddon o .mcpack",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -801,7 +801,7 @@ fun EmptyState() {
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
         )
         Text(
-            text = "Toca el botón de arriba para agregar\narchivos .mcaddon",
+            text = "Toca el botón de arriba para agregar\narchivos .mcaddon o .mcpack",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center

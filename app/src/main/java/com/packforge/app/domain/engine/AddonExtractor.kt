@@ -35,9 +35,9 @@ object AddonExtractor {
     }
 
     /**
-     * Extrae el contenido de un archivo .mcaddon a una carpeta de destino
+     * Extrae el contenido de un archivo .mcaddon o .mcpack a una carpeta de destino
      * 
-     * @param sourcePath Ruta del archivo .mcaddon
+     * @param sourcePath Ruta del archivo .mcaddon/.mcpack
      * @param destinationPath Ruta de la carpeta donde se extraerán los archivos
      * @return Ruta de la carpeta extraída, o null si hubo error
      */

@@ -297,7 +297,7 @@ fun shareModpack(context: android.content.Context, modpack: SavedModpack) {
             
             val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
             val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/zip" // Usar MIME type correcto para .mcaddon
+                type = "application/zip" // Usar MIME type correcto para .mcpack
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 putExtra(Intent.EXTRA_SUBJECT, "Modpack: ${modpack.name}")

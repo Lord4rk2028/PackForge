@@ -35,7 +35,7 @@ object PackForgeOrchestrator {
     /**
      * Fusiona múltiples addons y crea el modpack final
      * 
-     * @param addonPaths Lista de rutas de archivos .mcaddon
+     * @param addonPaths Lista de rutas de archivos .mcaddon/.mcpack
      * @param outputDir Directorio donde se guardará el modpack final
      * @param progressCallback Callback opcional para reportar progreso
      * @return MergeResult con el resultado de la operación
