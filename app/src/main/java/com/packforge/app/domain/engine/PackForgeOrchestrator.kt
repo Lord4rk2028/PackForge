@@ -225,13 +225,13 @@ object PackForgeOrchestrator {
             applyCustomIcon(mergedBpDir, mergedRpDir, customIconPath)
             PackForgeLog.d("PackForge_Export", "🔧 PASO 6 completado")
 
-            // VERIFICACIÓN: listar archivos en mergedBpDir y mergedRpDir
-            mergedBpDir?.listFiles()?.forEach { file ->
-                PackForgeLog.d("PackForge_Export", "   BP file: ${file.name} (${file.length()} bytes)")
-            }
-            mergedRpDir?.listFiles()?.forEach { file ->
-                PackForgeLog.d("PackForge_Export", "   RP file: ${file.name} (${file.length()} bytes)")
-            }
+// VERIFICACIÓN: listar archivos en mergedBpDir y mergedRpDir
+             mergedBpDir.listFiles()?.forEach { file ->
+                 PackForgeLog.d("PackForge_Export", "   BP file: ${file.name} (${file.length()} bytes)")
+             }
+             mergedRpDir.listFiles()?.forEach { file ->
+                 PackForgeLog.d("PackForge_Export", "   RP file: ${file.name} (${file.length()} bytes)")
+             }
 
             // h) EMPAQUETAR
             progressCallback?.onProgress("Empaquetando modpack...")
