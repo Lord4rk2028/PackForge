@@ -292,21 +292,38 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 // Procesar icono personalizado si existe
                 var customIconPath: String? = null
                 val coverUriString = _metadata.value.coverUriString
+                
+                PackForgeLog.d("PackForge_Icon", "📸 URI de portada recibido: $coverUriString")
+                PackForgeLog.d("PackForge_Icon", "📸 URI es null? ${coverUriString.isNullOrEmpty()}")
+                
                 if (!coverUriString.isNullOrEmpty()) {
                     try {
                         val uri = Uri.parse(coverUriString)
+                        PackForgeLog.d("PackForge_Icon", "📸 Intentando abrir InputStream del URI...")
                         val tempIcon = File(context.cacheDir, "temp_pack_icon_${System.currentTimeMillis()}.png")
+                        
                         context.contentResolver.openInputStream(uri)?.use { input ->
+                            PackForgeLog.d("PackForge_Icon", "📸 InputStream abierto? true")
                             tempIcon.outputStream().use { output ->
-                                input.copyTo(output)
+                                val bytesCopied = input.copyTo(output)
+                                PackForgeLog.d("PackForge_Icon", "📸 Bytes copiados a temp: $bytesCopied")
                             }
+                        } ?: run {
+                            PackForgeLog.e("PackForge_Icon", "❌ No se pudo abrir InputStream del URI")
                         }
+                        
                         if (tempIcon.exists()) {
                             customIconPath = tempIcon.absolutePath
+                            PackForgeLog.d("PackForge_Icon", "✅ Icono temporal creado: $customIconPath")
+                            PackForgeLog.d("PackForge_Icon", "   Tamaño: ${tempIcon.length()} bytes")
+                        } else {
+                            PackForgeLog.e("PackForge_Icon", "❌ Icono temporal NO se creó")
                         }
                     } catch (e: Exception) {
-                        PackForgeLog.e("PackForge", "Error al procesar el icono: ${e.message}")
+                        PackForgeLog.e("PackForge_Icon", "❌ Error al procesar el icono: ${e.message}", e)
                     }
+                } else {
+                    PackForgeLog.w("PackForge_Icon", "⚠️ No se proporcionó URI de portada")
                 }
 
                 // Sanitizar nombre del archivo

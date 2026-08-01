@@ -23,7 +23,8 @@ object PackForgeOrchestrator {
         val bpUuid: String?,
         val rpUuid: String?,
         val totalJsonsMerged: Int,
-        val errorMessage: String? = null
+        val errorMessage: String? = null,
+        val validationResult: PackForgeValidator.ValidationResult? = null
     )
 
     /**
@@ -102,7 +103,7 @@ object PackForgeOrchestrator {
             }
             
             if (extractedDirs.isEmpty()) {
-                return MergeResult(false, null, null, null, 0, "No se pudo extraer ningún addon")
+                return MergeResult(false, null, null, null, 0, "No se pudo extraer ningún addon", null)
             }
             
             // b) CLASIFICAR ADDONS POR TIPO
@@ -209,10 +210,30 @@ object PackForgeOrchestrator {
             
             PackForgeLog.d(TAG, "UUIDs generados - BP: $bpUuid, RP: $rpUuid")
 
-            // f) APLICAR ICONO PERSONALIZADO (AL FINAL, DESPUÉS DE TODO)
-            applyCustomIcon(mergedBpDir, mergedRpDir, customIconPath)
+            // f) EJECUTAR VALIDADOR DE REFERENCIAS CRUZADAS
+            progressCallback?.onProgress("Validando referencias...")
+            PackForgeLog.d("PackForge_Export", "🔧 PASO 5: Ejecutando validador de referencias...")
+            val validationResult = PackForgeValidator.validate(
+                bpDir = mergedBpDir,
+                rpDir = mergedRpDir,
+                originalAddons = extractedDirs
+            )
+            PackForgeLog.d("PackForge_Export", "🔧 PASO 5 completado")
 
-            // g) EMPAQUETAR
+            // g) APLICAR ICONO PERSONALIZADO (AL FINAL, DESPUÉS DE TODO)
+            PackForgeLog.d("PackForge_Export", "🔧 PASO 6: Aplicando icono personalizado...")
+            applyCustomIcon(mergedBpDir, mergedRpDir, customIconPath)
+            PackForgeLog.d("PackForge_Export", "🔧 PASO 6 completado")
+
+            // VERIFICACIÓN: listar archivos en mergedBpDir y mergedRpDir
+            mergedBpDir?.listFiles()?.forEach { file ->
+                PackForgeLog.d("PackForge_Export", "   BP file: ${file.name} (${file.length()} bytes)")
+            }
+            mergedRpDir?.listFiles()?.forEach { file ->
+                PackForgeLog.d("PackForge_Export", "   RP file: ${file.name} (${file.length()} bytes)")
+            }
+
+            // h) EMPAQUETAR
             progressCallback?.onProgress("Empaquetando modpack...")
             val outputFile = File(outputDir, "$customName.mcaddon")
             
@@ -252,13 +273,14 @@ object PackForgeOrchestrator {
                 outputPath = outputFile.absolutePath,
                 bpUuid = bpUuid,
                 rpUuid = rpUuid,
-                totalJsonsMerged = totalJsonsMerged
+                totalJsonsMerged = totalJsonsMerged,
+                validationResult = validationResult
             )
             
         } catch (e: Exception) {
             PackForgeLog.e(TAG, "Error en fusión de addons: ${e.message}", e)
             cleanupTempDirs(tempDir)
-            return MergeResult(false, null, null, null, 0, "Error: ${e.message}")
+            return MergeResult(false, null, null, null, 0, "Error: ${e.message}", null)
         }
     }
     
@@ -616,8 +638,14 @@ object PackForgeOrchestrator {
      * CRÍTICO: Debe llamarse DESPUÉS de fusionar y ANTES de crear el ZIP
      */
     private fun applyCustomIcon(mergedBpDir: File?, mergedRpDir: File?, customIconPath: String?) {
+        PackForgeLog.d("PackForge_Icon", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        PackForgeLog.d("PackForge_Icon", "🎨 APLICANDO PORTADA PERSONALIZADA")
+        PackForgeLog.d("PackForge_Icon", "   BP dir: ${mergedBpDir?.absolutePath ?: "null"}")
+        PackForgeLog.d("PackForge_Icon", "   RP dir: ${mergedRpDir?.absolutePath ?: "null"}")
+        PackForgeLog.d("PackForge_Icon", "   Icon path: $customIconPath")
+        
         if (customIconPath == null) {
-            PackForgeLog.d("PackForge_Icon", "⚠️ No se proporcionó icono personalizado")
+            PackForgeLog.w("PackForge_Icon", "⚠️ No se proporcionó icono personalizado. Saltando.")
             return
         }
         
@@ -627,28 +655,49 @@ object PackForgeOrchestrator {
             return
         }
         
-        val iconDirs = listOfNotNull(mergedBpDir, mergedRpDir)
+        PackForgeLog.d("PackForge_Icon", "   Icon file existe: ${iconFile.exists()}")
+        PackForgeLog.d("PackForge_Icon", "   Icon file tamaño: ${iconFile.length()} bytes")
         
-        iconDirs.forEach { dir ->
-            if (dir.exists()) {
+        val dirs = listOfNotNull(mergedBpDir, mergedRpDir).filter { it.exists() }
+        
+        if (dirs.isEmpty()) {
+            PackForgeLog.e("PackForge_Icon", "❌ No hay directorios válidos para aplicar icono")
+            return
+        }
+        
+        PackForgeLog.d("PackForge_Icon", "   Directorios a procesar: ${dirs.size}")
+        
+        dirs.forEach { dir ->
+            try {
                 val targetIcon = File(dir, "pack_icon.png")
                 
-                // ELIMINAR cualquier pack_icon.png existente (de los addons)
+                // ELIMINAR icono existente (de los addons)
                 if (targetIcon.exists()) {
-                    targetIcon.delete()
-                    PackForgeLog.d("PackForge_Icon", "🗑️ Eliminado pack_icon.png original de: ${dir.name}")
+                    val deleted = targetIcon.delete()
+                    PackForgeLog.d("PackForge_Icon", "🗑️ Icono anterior eliminado de ${dir.name}: $deleted")
+                } else {
+                    PackForgeLog.d("PackForge_Icon", "ℹ️ No había icono anterior en ${dir.name}")
                 }
                 
-                // COPIAR el icono del usuario con el nombre EXACTO pack_icon.png
-                try {
-                    iconFile.copyTo(targetIcon, overwrite = true)
-                    PackForgeLog.d("PackForge_Icon", "✅ pack_icon.png personalizado aplicado en: ${dir.absolutePath}")
+                // COPIAR la imagen del usuario
+                val bytesCopied = iconFile.copyTo(targetIcon, overwrite = true)
+                PackForgeLog.d("PackForge_Icon", "✅ Bytes copiados a ${dir.name}: $bytesCopied")
+                
+                // VERIFICAR que el archivo se creó
+                if (targetIcon.exists()) {
+                    PackForgeLog.d("PackForge_Icon", "✅ pack_icon.png creado en ${dir.name}")
                     PackForgeLog.d("PackForge_Icon", "   Tamaño: ${targetIcon.length()} bytes")
-                } catch (e: Exception) {
-                    PackForgeLog.e("PackForge_Icon", "❌ Error al copiar icono a ${dir.name}: ${e.message}")
+                    PackForgeLog.d("PackForge_Icon", "   Ruta: ${targetIcon.absolutePath}")
+                } else {
+                    PackForgeLog.e("PackForge_Icon", "❌ pack_icon.png NO se creó en ${dir.name}")
                 }
+                
+            } catch (e: Exception) {
+                PackForgeLog.e("PackForge_Icon", "❌ Error procesando ${dir.name}: ${e.message}", e)
             }
         }
+        
+        PackForgeLog.d("PackForge_Icon", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     }
     
     /**
@@ -734,6 +783,14 @@ object PackForgeOrchestrator {
     private fun addFolderToZip(zos: ZipOutputStream, sourceFolder: File, zipFolderPath: String) {
         sourceFolder.walkTopDown().forEach { file ->
             val relativePath = file.relativeTo(sourceFolder).path
+            
+            // LOG ESPECIAL para pack_icon.png
+            if (file.name == "pack_icon.png") {
+                PackForgeLog.d("PackForge_ZIP", "🎨 Agregando pack_icon.png al ZIP desde: ${file.absolutePath}")
+                PackForgeLog.d("PackForge_ZIP", "   Tamaño: ${file.length()} bytes")
+                PackForgeLog.d("PackForge_ZIP", "   Ruta en ZIP: $zipFolderPath/$relativePath")
+            }
+            
             if (file.isDirectory) {
                 // Agregar entrada de directorio
                 val dirEntry = ZipEntry("$zipFolderPath/$relativePath/")

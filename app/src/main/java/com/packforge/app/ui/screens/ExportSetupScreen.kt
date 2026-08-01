@@ -180,6 +180,7 @@ fun ExportSetupScreen(
             result = exportState,
             isMinecraftInstalled = isMinecraftInstalled,
             conflicts = mergeResult?.conflicts ?: emptyList(),
+            validationResult = mergeResult?.validationResult,
             onReset = onResetExport
         )
         return
@@ -820,6 +821,29 @@ fun ExportSetupScreen(
                 )
             }
 
+            // BOTÓN DEBUG VERIFICAR PORTADA
+            var showIconDebug by remember { mutableStateOf(false) }
+            OutlinedButton(
+                onClick = { showIconDebug = true },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Person,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Verificar Portada")
+            }
+
+            if (showIconDebug) {
+                IconDebugDialog(
+                    coverUriString = metadata.coverUriString,
+                    onDismiss = { showIconDebug = false }
+                )
+            }
+
             // BOTÓN DEBUG ZIP
             OutlinedButton(
                 onClick = { showDebugZip = true },
@@ -1331,6 +1355,7 @@ fun ExportSuccessScreen(
     result: ExportState.Success,
     isMinecraftInstalled: Boolean,
     conflicts: List<String>,
+    validationResult: com.packforge.app.domain.engine.PackForgeValidator.ValidationResult?,
     onReset: () -> Unit
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -1470,6 +1495,44 @@ fun ExportSuccessScreen(
                 }
             }
         }
+
+        // Reporte de validación
+        if (validationResult != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("✅ VALIDACIÓN COMPLETADA", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                    Text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", style = MaterialTheme.typography.bodySmall)
+                    
+                    Text("Texturas faltantes reparadas: ${validationResult.fixedReferences}", style = MaterialTheme.typography.bodySmall)
+                    Text("Modelos faltantes reparados: ${validationResult.missingModels.size}", style = MaterialTheme.typography.bodySmall)
+                    
+                    if (validationResult.langKeysAdded.isNotEmpty()) {
+                        validationResult.langKeysAdded.forEach { (lang, count) ->
+                            Text("Claves de idioma fusionadas: $count ($lang)", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    
+                    Text("Sonidos fusionados: ${if (validationResult.soundsFixed) "✅" else "❌"}", style = MaterialTheme.typography.bodySmall)
+                    Text("Referencias rotas reparadas: ${validationResult.fixedReferences}", style = MaterialTheme.typography.bodySmall)
+                    
+                    if (validationResult.warnings.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("⚠️ ADVERTENCIAS (no críticas):", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        validationResult.warnings.take(3).forEach { warning ->
+                            Text("• $warning", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (validationResult.warnings.size > 3) {
+                            Text("... y ${validationResult.warnings.size - 3} más", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        }
         
         Spacer(modifier = Modifier.height(32.dp))
         
@@ -1583,4 +1646,88 @@ fun ExportSuccessScreen(
             Text("Volver al editor")
         }
     }
+}
+
+@Composable
+private fun IconDebugDialog(
+    coverUriString: String?,
+    onDismiss: () -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var iconSize by remember { mutableStateOf<Long?>(null) }
+    var iconExists by remember { mutableStateOf(false) }
+    
+    // Verificar el tamaño de la imagen
+    androidx.compose.runtime.LaunchedEffect(coverUriString) {
+        if (!coverUriString.isNullOrEmpty()) {
+            try {
+                val uri = android.net.Uri.parse(coverUriString)
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    val bytes = input.readBytes()
+                    iconSize = bytes.size.toLong()
+                    iconExists = true
+                }
+            } catch (e: Exception) {
+                iconExists = false
+            }
+        }
+    }
+    
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "🎨 VERIFICACIÓN DE PORTADA",
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                HorizontalDivider()
+                Text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                
+                Text(
+                    text = "URI de imagen: ${coverUriString ?: "null"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                )
+                
+                if (iconSize != null) {
+                    Text(
+                        text = "Tamaño imagen original: ${iconSize} bytes",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else if (coverUriString.isNullOrEmpty()) {
+                    Text(
+                        text = "⚠️ No se seleccionó ninguna portada",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                } else {
+                    Text(
+                        text = "❌ No se pudo leer la imagen",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                
+                HorizontalDivider()
+                
+                if (iconSize != null) {
+                    Text(
+                        text = "✅ La portada está configurada correctamente",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF4CAF50)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cerrar")
+            }
+        }
+    )
 }
