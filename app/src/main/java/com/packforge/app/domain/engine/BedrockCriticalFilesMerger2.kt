@@ -14,8 +14,8 @@ import java.nio.charset.StandardCharsets
  * 1. textures/terrain_texture.json - Mapea nombres a texturas de BLOQUES
  * 2. textures/item_texture.json - Mapea nombres a texturas de ITEMS
  * 3. blocks.json (raiz del RP) - Define renderizado de bloques
- * 4. texts/*.lang + languages.json - Traducciones de nombres (CRITICO para "desconocido")
- * 5. models/**/*.geo.json - GEOMETRIAS 3D de bloques complejos (enredaderas, vallas, cruces, plantas)
+ * 4. texts/.lang + languages.json - Traducciones de nombres (CRITICO para "desconocido")
+ * 5. *.geo.json en models/ - GEOMETRIAS 3D de bloques complejos (enredaderas, vallas, cruces, plantas)
  * 6. textures/flipbook_textures.json - Texturas animadas
  * 7. material_instances del BP vs terrain_texture.json - Texturas referenciadas por materiales
  *
