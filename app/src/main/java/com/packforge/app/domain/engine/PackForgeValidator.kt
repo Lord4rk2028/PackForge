@@ -66,6 +66,12 @@ object PackForgeValidator {
         val blockTexturesFixed = validateBlockReferences(bpDir, rpDir, addonDirs)
         fixedReferences += blockTexturesFixed
 
+        // VALIDACIÓN 2b: Geometría de Bloques (BP → RP)
+        // CRÍTICO para bloques con geometría compleja (enredaderas, vallas, cruces, plantas 3D)
+        PackForgeLog.d(TAG, "📦 VALIDACIÓN 2b: Geometría de Bloques")
+        val blockGeometryFixed = validateBlockGeometry(bpDir, rpDir, addonDirs)
+        fixedReferences += blockGeometryFixed
+
         // VALIDACIÓN 3: Referencias de Entidades (RP ↔ RP)
         PackForgeLog.d(TAG, "📦 VALIDACIÓN 3: Referencias de Entidades")
         val entityRefsFixed = validateEntityReferences(rpDir, addonDirs, missingTextures, missingModels)
@@ -206,6 +212,82 @@ object PackForgeValidator {
 
         PackForgeLog.d(TAG, "   Bloques validados: ${fixedCount} texturas reparadas")
         return fixedCount
+    }
+
+    /**
+     * VALIDACIÓN 2b: Geometría de Bloques (BP → RP)
+     * Los bloques con geometría compleja (enredaderas, vallas, cruces, plantas 3D, modelos)
+     * referencian "minecraft:geometry" en su definición del BP. La geometría (.geo.json)
+     * debe existir en el RP en models/entity/ o models/blocks/.
+     * Si falta, se busca en los addons originales y se copia.
+     */
+    private fun validateBlockGeometry(bpDir: File, rpDir: File, addonDirs: List<File>): Int {
+        var fixedCount = 0
+        val blocksDir = File(bpDir, "blocks")
+
+        if (!blocksDir.exists()) {
+            PackForgeLog.d(TAG, "   No existe carpeta blocks en BP")
+            return 0
+        }
+
+        val modelsEntityDir = File(rpDir, "models/entity")
+        modelsEntityDir.mkdirs()
+        val modelsBlocksDir = File(rpDir, "models/blocks")
+        modelsBlocksDir.mkdirs()
+
+        blocksDir.listFiles()?.filter { it.extension == "json" }?.forEach { blockFile ->
+            try {
+                val json = JSONObject(blockFile.readText())
+                val components = json.optJSONObject("components")
+
+                // Extraer referencia de geometría (puede ser object {"value": "geometry.x"} o string "geometry.x")
+                val geometryRef = extractGeometryReference(components?.opt("minecraft:geometry"))
+                    ?: extractGeometryReference(json.opt("minecraft:geometry"))
+
+                if (geometryRef != null) {
+                    val geometryName = geometryRef.substringAfterLast(".") // "geometry.vine" -> "vine"
+                    if (geometryName.isEmpty()) return@forEach
+
+                    // Buscar en models/entity y models/blocks
+                    val expectedInEntity = File(modelsEntityDir, "$geometryName.geo.json")
+                    val expectedInBlocks = File(modelsBlocksDir, "$geometryName.geo.json")
+
+                    if (!expectedInEntity.exists() && !expectedInBlocks.exists()) {
+                        PackForgeLog.w(TAG, "⚠️ Bloque sin geometría: ${blockFile.name} -> $geometryRef")
+
+                        // Buscar el .geo.json en los addons originales y copiarlo
+                        val found = searchAndCopyFile(geometryName, ".geo.json", addonDirs, modelsEntityDir)
+                        if (found) {
+                            fixedCount++
+                            PackForgeLog.d(TAG, "✅ Geometría de bloque reparada: $geometryName.geo.json")
+                        } else {
+                            PackForgeLog.w(TAG, "❌ Geometría de bloque no encontrada: $geometryName.geo.json")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                PackForgeLog.e(TAG, "Error validando geometría de bloque ${blockFile.name}: ${e.message}")
+            }
+        }
+
+        PackForgeLog.d(TAG, "   Geometrías de bloques validadas: ${fixedCount} geometrías reparadas")
+        return fixedCount
+    }
+
+    /**
+     * Extrae el valor "geometry.xxx" de una referencia de geometría que puede ser:
+     * - JSONObject { "value": "geometry.xxx" } (formato moderno)
+     * - String "geometry.xxx" (formato simple)
+     */
+    private fun extractGeometryReference(value: Any?): String? {
+        return when (value) {
+            is JSONObject -> {
+                val v = value.optString("value")
+                if (v.isNotEmpty()) v else null
+            }
+            is String -> if (value.isNotEmpty()) value else null
+            else -> null
+        }
     }
 
     /**
