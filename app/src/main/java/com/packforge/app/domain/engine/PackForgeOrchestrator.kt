@@ -6,6 +6,7 @@ import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -205,7 +206,7 @@ object PackForgeOrchestrator {
             PackForgeLog.d("PackForge_Debug", "=== FIN FUSIÓN ===")
             
             // ⭐⭐⭐ CRÍTICO: Fusionar archivos críticos de Bedrock (terrain_texture, item_texture, blocks.json, .lang,
-            // geometrías 3D, flipbook textures y material_instances)
+            // geometrías 3D, flipbook textures, entity definitions, render controllers, animations, sounds y material_instances)
             // Estos archivos DEBEN fusionarse DESPUÉS de mergePackType y ANTES de generar manifiestos/ZIP
             // rpDirs contiene las rutas de TODOS los RPs extraídos (NO el mergedRpDir)
             // bpDirs contiene las rutas de TODOS los BPs extraídos (para material_instances)
@@ -219,30 +220,44 @@ object PackForgeOrchestrator {
                 val bpDirFiles = bpDirs.map { File(it) }
                 val addonDirFiles = extractedDirs.map { File(it) }
                 
-                // 1. Fusionar terrain_texture.json (mapea bloques → texturas)
-                BedrockCriticalFilesMerger2.mergeTerrainTexture(rpDirs = rpDirFiles, destDir = mergedRpDir)
+                val merger = BedrockCriticalFilesMerger()
                 
-                // 2. Fusionar item_texture.json (mapea items → texturas)
-                BedrockCriticalFilesMerger2.mergeItemTexture(rpDirs = rpDirFiles, destDir = mergedRpDir)
+                // 1. Fusionar terrain_texture.json (mapea bloques → texturas) - CRÍTICO
+                merger.mergeTerrainTexture(rpDirFiles, mergedRpDir)
                 
-                // 3. Fusionar blocks.json (define renderizado de bloques, conservando format_version alto)
-                BedrockCriticalFilesMerger2.mergeBlocksJson(rpDirs = rpDirFiles, destDir = mergedRpDir)
+                // 2. Fusionar item_texture.json (mapea items → texturas) - CRÍTICO
+                merger.mergeItemTexture(rpDirFiles, mergedRpDir)
                 
-                // 4. Fusionar .lang + crear languages.json (CRÍTICO para nombres "desconocido")
+                // 3. Fusionar blocks.json (define renderizado de bloques, conservando format_version alto) - CRÍTICO
+                merger.mergeBlocksJson(rpDirFiles, mergedRpDir)
+                
+                // 4. Fusionar entity/*.entity.json (definiciones de mobs 3D) - CRÍTICO para mobs
+                merger.mergeEntityDefinitions(rpDirFiles, mergedRpDir)
+                
+                // 5. Fusionar render_controllers (controladores de render de mobs) - CRÍTICO para mobs
+                merger.mergeRenderControllers(rpDirFiles, mergedRpDir)
+                
+                // 6. Fusionar animations + animation_controllers - CRÍTICO para animaciones
+                merger.mergeAnimations(rpDirFiles, mergedRpDir)
+                
+                // 7. Fusionar sounds.json (sonidos de bloques/entidades)
+                merger.mergeSoundsJson(rpDirFiles, mergedRpDir)
+                
+                // 8. Fusionar .lang + crear languages.json (CRÍTICO para nombres "desconocido")
                 // En AMBOS packs (BP y RP pueden tener traducciones)
-                BedrockCriticalFilesMerger2.mergeLangFiles(addonDirs = addonDirFiles, destDir = mergedRpDir)
-                BedrockCriticalFilesMerger2.mergeLangFiles(addonDirs = addonDirFiles, destDir = mergedBpDir)
+                merger.mergeLangFiles(addonDirFiles, mergedRpDir)
+                merger.mergeLangFiles(addonDirFiles, mergedBpDir)
                 
-                // 5. Fusionar geometrías 3D (.geo.json) deduplicando por identifier
+                // 9. Fusionar geometrías 3D (.geo.json) deduplicando por identifier
                 // CRÍTICO para bloques con geometría compleja: enredaderas, vallas, cruces, plantas 3D
-                BedrockCriticalFilesMerger2.mergeGeometryFiles(rpDirs = rpDirFiles, destDir = mergedRpDir)
+                merger.mergeGeometryFiles(rpDirFiles, mergedRpDir)
                 
-                // 6. Fusionar flipbook_textures.json (texturas animadas)
-                BedrockCriticalFilesMerger2.mergeFlipbookTextures(rpDirs = rpDirFiles, destDir = mergedRpDir)
+                // 10. Fusionar flipbook_textures.json (texturas animadas)
+                merger.mergeFlipbookTextures(rpDirFiles, mergedRpDir)
                 
-                // 7. Verificar material_instances del BP contra terrain_texture.json del RP
+                // 11. Verificar material_instances del BP contra terrain_texture.json del RP
                 // Si un bloque referencía una textura no mapeada, se agrega y se copia el PNG
-                BedrockCriticalFilesMerger2.mergeMaterialInstances(
+                merger.mergeMaterialInstances(
                     bpDirs = bpDirFiles,
                     rpDirs = rpDirFiles,
                     mergedBpDir = mergedBpDir,
