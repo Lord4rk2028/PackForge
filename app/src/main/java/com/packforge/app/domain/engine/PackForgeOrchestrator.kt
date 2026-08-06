@@ -1,5 +1,7 @@
 package com.packforge.app.domain.engine
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import com.packforge.app.util.PackForgeLog
 import org.json.JSONObject
 import java.io.BufferedOutputStream
@@ -220,7 +222,7 @@ object PackForgeOrchestrator {
                 val bpDirFiles = bpDirs.map { File(it) }
                 val addonDirFiles = extractedDirs.map { File(it) }
                 
-                val merger = BedrockCriticalFilesMerger()
+                val merger = BedrockCriticalFilesMerger
                 
                 // 1. Fusionar terrain_texture.json (mapea bloques → texturas) - CRÍTICO
                 merger.mergeTerrainTexture(rpDirFiles, mergedRpDir)
@@ -742,9 +744,18 @@ object PackForgeOrchestrator {
                     PackForgeLog.d("PackForge_Icon", "ℹ️ No había icono anterior en ${dir.name}")
                 }
                 
-                // COPIAR la imagen del usuario
-                val bytesCopied = iconFile.copyTo(targetIcon, overwrite = true)
-                PackForgeLog.d("PackForge_Icon", "✅ Bytes copiados a ${dir.name}: $bytesCopied")
+                // CRÍTICO: Minecraft espera pack_icon.png CUADRADO (normalmente 256x256 o 512x512).
+                // Si el usuario sube una portada ancha o vertical, se debe ajustar (center-crop a
+                // cuadrado + escalar) para que el icono encaje perfectamente sin espacios vacíos.
+                val processed = processIconCrop(iconFile, targetIcon)
+                
+                if (processed) {
+                    PackForgeLog.d("PackForge_Icon", "✅ pack_icon.png generado (256x256, center-crop) en ${dir.name}")
+                } else {
+                    // Fallback: copiar tal cual si no se pudo procesar
+                    PackForgeLog.w("PackForge_Icon", "⚠️ No se pudo procesar la portada, copiando original")
+                    iconFile.copyTo(targetIcon, overwrite = true)
+                }
                 
                 // VERIFICAR que el archivo se creó
                 if (targetIcon.exists()) {
@@ -761,6 +772,58 @@ object PackForgeOrchestrator {
         }
         
         PackForgeLog.d("PackForge_Icon", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    }
+    
+    /**
+     * Convierte la portada en un icono CUADRADO (center-crop) de 256x256 PNG,
+     * el formato que Minecraft Bedrock espera para pack_icon.png.
+     * Devuelve true si se procesó correctamente.
+     */
+    private fun processIconCrop(sourceFile: File, targetFile: File): Boolean {
+        return try {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(sourceFile.absolutePath, options)
+            val srcW = options.outWidth
+            val srcH = options.outHeight
+            if (srcW <= 0 || srcH <= 0) return false
+            
+            // Decodificar con reducción de sampleo para no saturar memoria
+            val sampleSize = calculateInSampleSize(srcW, srcH, 512)
+            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            val srcBitmap = BitmapFactory.decodeFile(sourceFile.absolutePath, decodeOpts) ?: return false
+            
+            // Center-crop a cuadrado
+            val side = minOf(srcBitmap.width, srcBitmap.height)
+            val left = (srcBitmap.width - side) / 2
+            val top = (srcBitmap.height - side) / 2
+            val cropped = Bitmap.createBitmap(srcBitmap, left, top, side, side)
+            
+            // Escalar a 256x256
+            val resized = Bitmap.createScaledBitmap(cropped, 256, 256, true)
+            if (resized != cropped) cropped.recycle()
+            if (resized != srcBitmap) srcBitmap.recycle()
+            
+            FileOutputStream(targetFile).use { out ->
+                resized.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            resized.recycle()
+            true
+        } catch (e: Exception) {
+            PackForgeLog.e("PackForge_Icon", "❌ Error procesando portada: ${e.message}")
+            false
+        }
+    }
+    
+    private fun calculateInSampleSize(width: Int, height: Int, reqSize: Int): Int {
+        var sample = 1
+        var w = width
+        var h = height
+        while (w / 2 >= reqSize && h / 2 >= reqSize) {
+            w /= 2
+            h /= 2
+            sample *= 2
+        }
+        return sample
     }
     
     /**

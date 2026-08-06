@@ -298,20 +298,41 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 
                 if (!coverUriString.isNullOrEmpty()) {
                     try {
-                        val uri = Uri.parse(coverUriString)
-                        PackForgeLog.d("PackForge_Icon", "📸 Intentando abrir InputStream del URI...")
                         val tempIcon = File(context.cacheDir, "temp_pack_icon_${System.currentTimeMillis()}.png")
-                        
-                        context.contentResolver.openInputStream(uri)?.use { input ->
-                            PackForgeLog.d("PackForge_Icon", "📸 InputStream abierto? true")
-                            tempIcon.outputStream().use { output ->
-                                val bytesCopied = input.copyTo(output)
-                                PackForgeLog.d("PackForge_Icon", "📸 Bytes copiados a temp: $bytesCopied")
+
+                        // CRÍTICO: La portada guardada en "My Modpacks" es una RUTA DE ARCHIVO absoluta,
+                        // no un content:// URI. contentResolver.openInputStream falla con rutas de archivo.
+                        // Debemos detectar el tipo: si empieza con "/" es un archivo, si no es un content://
+                        val isFilePath = coverUriString.startsWith("/") ||
+                            coverUriString.startsWith("file://")
+
+                        if (isFilePath) {
+                            // Según el scheme, usar file:/ y desmontar, o path directo
+                            val srcFile = if (coverUriString.startsWith("file://")) {
+                                File(java.net.URI(coverUriString))
+                            } else {
+                                File(coverUriString)
                             }
-                        } ?: run {
-                            PackForgeLog.e("PackForge_Icon", "❌ No se pudo abrir InputStream del URI")
+                            if (srcFile.exists()) {
+                                srcFile.copyTo(tempIcon, overwrite = true)
+                                PackForgeLog.d("PackForge_Icon", "📸 Copiado desde archivo: ${srcFile.absolutePath}")
+                            } else {
+                                PackForgeLog.e("PackForge_Icon", "❌ Archivo de portada no existe: ${srcFile.absolutePath}")
+                            }
+                        } else {
+                            val uri = Uri.parse(coverUriString)
+                            PackForgeLog.d("PackForge_Icon", "📸 Intentando abrir InputStream del URI (content://)...")
+                            context.contentResolver.openInputStream(uri)?.use { input ->
+                                PackForgeLog.d("PackForge_Icon", "📸 InputStream abierto? true")
+                                tempIcon.outputStream().use { output ->
+                                    val bytesCopied = input.copyTo(output)
+                                    PackForgeLog.d("PackForge_Icon", "📸 Bytes copiados a temp: $bytesCopied")
+                                }
+                            } ?: run {
+                                PackForgeLog.e("PackForge_Icon", "❌ No se pudo abrir InputStream del URI")
+                            }
                         }
-                        
+
                         if (tempIcon.exists()) {
                             customIconPath = tempIcon.absolutePath
                             PackForgeLog.d("PackForge_Icon", "✅ Icono temporal creado: $customIconPath")

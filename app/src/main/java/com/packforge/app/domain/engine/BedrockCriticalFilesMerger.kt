@@ -6,7 +6,6 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
-import java.nio.charset.Charsets
 import java.nio.charset.StandardCharsets
 
 /**
@@ -16,10 +15,10 @@ import java.nio.charset.StandardCharsets
  * 1. textures/terrain_texture.json - Mapea bloques a texturas (CRÍTICO)
  * 2. textures/item_texture.json - Mapea items a texturas (CRÍTICO)
  * 3. blocks.json (raíz del RP) - Define renderizado de bloques (CRÍTICO)
- * 4. entity/*.entity.json - Definiciones de entidades/mobs 3D (CRÍTICO para mobs)
- * 5. render_controllers/*.json - Controladores de render (CRÍTICO para mobs)
- * 6. animations/*.json + animation_controllers/*.json - Animaciones (CRÍTICO)
- * 7. texts/*.lang + languages.json - Traducciones (CRÍTICO para "desconocido")
+ * 4. entity definitions (.entity.json) - Definiciones de entidades/mobs 3D (CRÍTICO para mobs)
+ * 5. render_controllers - Controladores de render (CRÍTICO para mobs)
+ * 6. animations + animation_controllers - Animaciones (CRÍTICO)
+ * 7. .lang en textos de texts/ + languages.json - Traducciones (CRÍTICO para "desconocido")
  * 8. sounds.json - Sonidos de bloques/entidades
  *
  * SIN estos archivos, aunque las texturas .png existan, Minecraft NO SABE qué textura mostrar
