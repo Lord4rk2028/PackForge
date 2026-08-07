@@ -36,18 +36,53 @@ fun WebBrowserScreen(
     onUrlChanged: (String) -> Unit,
     onImportFromUrl: (String) -> Unit,
     onClearError: () -> Unit,
-    onReloadInitial: () -> Unit
+    onReloadInitial: () -> Unit,
+    webView: WebView
 ) {
     val context = LocalContext.current
     var isLoadingPage by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    
-    // Sincronizar el WebView con la URL actual si es necesario (para el botón de recarga inicial)
-    LaunchedEffect(currentUrl) {
-        webViewRef?.let { wv ->
-            if (wv.url != currentUrl) {
-                wv.loadUrl(currentUrl)
+
+    // Configurar/actualizar listeners del WebView persistente cada vez que el
+    // composable entra en composición. El WebView persiste entre pestañas (estado
+    // conservado → NO pantalla en blanco), pero los callbacks deben capturar el
+    // estado de la composición ACTUAL (isLoadingPage / onUrlChanged).
+    DisposableEffect(Unit) {
+        webView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            setSupportMultipleWindows(false)
+        }
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(v: WebView?, u: String?, f: Bitmap?) {
+                isLoadingPage = true
             }
+            override fun onPageFinished(v: WebView?, u: String?) {
+                isLoadingPage = false
+                if (u != null && u != "about:blank") {
+                    onUrlChanged(u)
+                }
+            }
+            override fun shouldOverrideUrlLoading(v: WebView?, r: WebResourceRequest?): Boolean {
+                val url = r?.url?.toString() ?: return false
+                if (isAddonDownloadUrl(url)) {
+                    onImportFromUrl(url)
+                    return true
+                }
+                return false
+            }
+        }
+        webView.setDownloadListener { url, _, _, _, _ ->
+            if (url != null) onImportFromUrl(url)
+        }
+        onDispose { /* NO destruir: el WebView es persistente entre pestañas */ }
+    }
+
+    // Sincronizar el WebView con la URL actual solo si difiere de la que está cargada
+    LaunchedEffect(currentUrl) {
+        val wv = webView
+        if (wv.url != currentUrl || wv.url.isNullOrEmpty()) {
+            wv.loadUrl(currentUrl)
         }
     }
 
@@ -101,38 +136,10 @@ fun WebBrowserScreen(
             AndroidView(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 factory = { ctx ->
-                    WebView(ctx).apply {
-                        settings.apply {
-                            javaScriptEnabled = true
-                            domStorageEnabled = true
-                            setSupportMultipleWindows(false)
-                        }
-                        webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(v: WebView?, u: String?, f: Bitmap?) {
-                                isLoadingPage = true
-                            }
-                            override fun onPageFinished(v: WebView?, u: String?) {
-                                isLoadingPage = false
-                                if (u != null && u != "about:blank") {
-                                    onUrlChanged(u)
-                                }
-                            }
-                            override fun shouldOverrideUrlLoading(v: WebView?, r: WebResourceRequest?): Boolean {
-                                val url = r?.url?.toString() ?: return false
-                                if (isAddonDownloadUrl(url)) {
-                                    onImportFromUrl(url)
-                                    return true
-                                }
-                                // No forzar carga aquí para dejar que el WebView maneje el historial
-                                return false
-                            }
-                        }
-                        setDownloadListener { url, _, _, _, _ ->
-                            if (url != null) onImportFromUrl(url)
-                        }
-                        webViewRef = this
-                        loadUrl(currentUrl)
-                    }
+                    // REUTILIZAR el WebView persistente en lugar de crear uno nuevo.
+                    // Esto conserva historial/scroll/estado → NO pantalla en blanco.
+                    webViewRef = webView
+                    webView
                 },
                 update = { wv ->
                     webViewRef = wv

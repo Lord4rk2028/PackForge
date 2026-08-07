@@ -3,6 +3,8 @@ package com.packforge.app.ui.viewmodel
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import android.webkit.WebSettings
+import android.webkit.WebView
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.packforge.app.data.PackForgeDatabase
@@ -121,6 +123,48 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setActiveWebSource(source: String?) {
         _activeWebSource.value = source
+    }
+
+    // ─── WEBVIEWS PERSISTENTES ─────────────────────────────
+    // La WebView del navegador interno se guarda POR FUENTE para que NO se
+    // destruya al navegar a otra pestaña y volver. Si la recreamos desde cero,
+    // la pantalla aparece en BLANCO (estado perdido) hasta pulsar "recargar".
+    private val _persistentWebViews = mutableMapOf<String, WebView>()
+
+    /**
+     * Devuelve (creando si hace falta) el WebView persistente de una fuente
+     * (MCPEDL, CurseForge, ModBay). Así conserva historial, scroll y estado
+     * mientras el usuario navega por la app.
+     */
+    fun getPersistentWebView(source: String, context: Context): WebView {
+        return _persistentWebViews.getOrPut(source) {
+            WebView(context).apply {
+                settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    setSupportMultipleWindows(false)
+                    cacheMode = WebSettings.LOAD_DEFAULT
+                }
+            }
+        }
+    }
+
+    /** Elimina el WebView de una fuente (al cerrar el navegador, por ejemplo). */
+    fun clearPersistentWebView(source: String) {
+        _persistentWebViews.remove(source)?.let { it.stopLoading() }
+    }
+
+    /** Añade/mueve el WebView actual al contexto para un manejo manual (back). */
+    fun onStudioWebBackPressed(): Boolean {
+        return _activeWebSource.value?.let { source ->
+            val wv = _persistentWebViews[source]
+            if (wv != null && wv.canGoBack()) {
+                wv.goBack()
+                true
+            } else {
+                false
+            }
+        } ?: false
     }
 
     fun updateWebUrl(source: String, url: String) {

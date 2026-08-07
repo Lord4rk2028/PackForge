@@ -60,13 +60,22 @@ fun StudioScreen(
     // Manejo de navegadores internos con persistencia
     activeWebSource?.let { source ->
         val currentUrl = lastWebUrls[source] ?: ""
+        // WebView persistente por fuente para NO perder estado al salir/volver a Studio
+        // (evita la pantalla en blanco hasta pulsar recargar).
+        val persistentWebView = viewModel.getPersistentWebView(source, LocalContext.current.applicationContext)
         WebBrowserScreen(
             title = source,
             currentUrl = currentUrl,
             importError = webImportError,
             isImporting = isImporting,
             importProgress = importProgress,
-            onBack = { viewModel.setActiveWebSource(null) },
+            onBack = {
+                // NAVEGACIÓN INTELIGENTE: si el WebView tiene historial hacia atrás,
+                // primero retrocede; solo se cierra el navegador en la raíz.
+                if (!viewModel.onStudioWebBackPressed()) {
+                    viewModel.setActiveWebSource(null)
+                }
+            },
             onUrlChanged = { newUrl -> viewModel.updateWebUrl(source, newUrl) },
             onImportFromUrl = onImportFromUrl,
             onClearError = onClearError,
@@ -78,7 +87,8 @@ fun StudioScreen(
                     else -> ""
                 }
                 viewModel.updateWebUrl(source, initial)
-            }
+            },
+            webView = persistentWebView
         )
         return
     }
