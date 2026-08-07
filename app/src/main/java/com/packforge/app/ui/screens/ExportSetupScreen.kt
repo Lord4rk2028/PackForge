@@ -267,8 +267,9 @@ fun ExportSetupScreen(
                     ) {
                         when {
                             previewUri != null -> {
-                                val imageModel = if (previewUri.startsWith("/")) File(previewUri) else Uri.parse(previewUri)
-                                val fileExists = if (previewUri.startsWith("/")) File(previewUri).exists() else true
+                                val resolved = resolveCoverModel(previewUri)
+                                val imageModel = resolved.first
+                                val fileExists = resolved.second
                                 
                                 if (fileExists) {
                                     CachedAsyncImage(
@@ -1191,12 +1192,10 @@ fun ModpackPreviewCard(
                 val coverUri = metadata.coverUriString
                 when {
                     coverUri != null -> {
-                        val imageModel = if (coverUri.startsWith("/")) File(coverUri) else Uri.parse(coverUri)
-                        val fileExists = if (coverUri.startsWith("/")) File(coverUri).exists() else true
-                        
-                        if (fileExists) {
+                        val resolved = resolveCoverModel(coverUri)
+                        if (resolved.second) {
                             CachedAsyncImage(
-                                model = imageModel,
+                                model = resolved.first,
                                 contentDescription = null,
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Crop
@@ -1229,6 +1228,27 @@ fun ModpackPreviewCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+    }
+}
+
+/**
+ * Resuelve una cadena de portada (ruta absoluta "/...", "file:///...", "content://...",
+ * o URL http) a un modelo de imagen válido para Coil y si realmente el archivo existe.
+ */
+private fun resolveCoverModel(coverUri: String): Pair<Any?, Boolean> {
+    return when {
+        coverUri.startsWith("/") -> {
+            val f = File(coverUri)
+            Pair(f, f.exists())
+        }
+        coverUri.startsWith("file://") -> {
+            val f = try { File(java.net.URI(coverUri)) } catch (e: Exception) { File(coverUri) }
+            Pair(f, f.exists())
+        }
+        else -> {
+            // content:// o http(s):// - confiar en Coil para cargarlo
+            Pair(Uri.parse(coverUri), true)
         }
     }
 }

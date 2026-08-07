@@ -453,27 +453,15 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             val modpackId = editingModpackId ?: UUID.randomUUID().toString()
 
             // ─── PERSISTIR ICONO DE PORTADA ──────────────────
-            var persistentCoverPath = _metadata.value.coverUriString
-            if (!persistentCoverPath.isNullOrEmpty() && persistentCoverPath.startsWith("content://")) {
-                try {
-                    val iconDir = File(context.filesDir, "modpack_icons")
-                    if (!iconDir.exists()) iconDir.mkdirs()
-                    
-                    val iconFile = File(iconDir, "${modpackId}_cover.png")
-                    val uri = Uri.parse(persistentCoverPath)
-                    
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        iconFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    persistentCoverPath = iconFile.absolutePath
-                    PackForgeLog.d("PackForge", "Icono persistido en: $persistentCoverPath")
-                } catch (e: Exception) {
-                    PackForgeLog.e("PackForge", "Error al persistir icono: ${e.message}")
-                }
+            // CRÍTICO: copiar SIEMPRE a almacenamiento interno. Los content:// URIs pierden el
+            // permiso de lectura cuando la app se reinicia, así que guardamos una copia local
+            // en filesDir/modpack_icons/{id}_cover.png y referenciamos esa ruta.
+            var persistentCoverPath = persistCoverToInternal(context, _metadata.value.coverUriString, modpackId)
+                ?: _metadata.value.coverUriString
+            if (persistentCoverPath != null) {
+                PackForgeLog.d("PackForge", "Icono de portada persistido: $persistentCoverPath")
             }
-            
+
             val saved = SavedModpack(
                 id = modpackId,
                 name = _metadata.value.name,
@@ -496,6 +484,63 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    /**
+     * Copia la portada a almacenamiento interno permanente (filesDir/modpack_icons/{id}_cover.png).
+     * CRÍTICO: los content:// URIs pierden el permiso de lectura al reiniciar la app, por lo que
+     * la portada guardada en "My Modpacks" dejaba de cargarse. Aquí siempre se normaliza a un
+     * archivo local accesible.
+     *
+     * Acepta: ruta absoluta ("/data/..."), "file:///...", o "content://...".
+     * Devuelve la ruta interna persistida, o null si no se pudo persistir.
+     */
+    private fun persistCoverToInternal(context: Context, coverUriString: String?, modpackId: String): String? {
+        if (coverUriString.isNullOrEmpty()) return null
+        return try {
+            val iconDir = File(context.filesDir, "modpack_icons")
+            if (!iconDir.exists()) iconDir.mkdirs()
+            val iconFile = File(iconDir, "${modpackId}_cover.png")
+
+            // Si ya es nuestro archivo interno y existe, usarlo directamente
+            if (coverUriString == iconFile.absolutePath) {
+                return if (iconFile.exists() && iconFile.length() > 0) iconFile.absolutePath else null
+            }
+
+            val input = when {
+                coverUriString.startsWith("/") -> {
+                    val f = File(coverUriString)
+                    if (f.exists() && f.length() > 0) f.inputStream() else null
+                }
+                coverUriString.startsWith("file://") -> {
+                    try {
+                        val f = File(java.net.URI(coverUriString))
+                        if (f.exists() && f.length() > 0) f.inputStream() else null
+                    } catch (e: Exception) {
+                        PackForgeLog.e("PackForge", "Error parseando file:// portada: ${e.message}")
+                        null
+                    }
+                }
+                else -> {
+                    try {
+                        context.contentResolver.openInputStream(Uri.parse(coverUriString))
+                    } catch (e: Exception) {
+                        PackForgeLog.e("PackForge", "Error abriendo content:// portada: ${e.message}")
+                        null
+                    }
+                }
+            }
+
+            if (input == null) return null
+
+            input.use { src ->
+                iconFile.outputStream().use { out -> src.copyTo(out) }
+            }
+            if (iconFile.exists() && iconFile.length() > 0) iconFile.absolutePath else null
+        } catch (e: Exception) {
+            PackForgeLog.e("PackForge", "Error al persistir portada: ${e.message}")
+            null
+        }
+    }
+
     fun loadModpack(m: SavedModpack) {
         viewModelScope.launch {
             try {
@@ -509,6 +554,17 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 editingModpackId = m.id
+
+                // CRÍTICO: normalizar/persistir la portada a almacenamiento interno AL CARGAR,
+                // para que no se pierda el permiso de content:// ni apunte a una ruta inválida.
+                val context = getApplication<Application>()
+                val persistentCover = withContext(Dispatchers.IO) {
+                    persistCoverToInternal(context, m.coverUriString, m.id)
+                } ?: m.coverUriString
+                if (persistentCover != null) {
+                    PackForgeLog.d("PackForge", "Portada cargada desde Studio: $persistentCover")
+                }
+
                 _addons.value = restored
                 _metadata.value = ModpackMetadata(
                     name = m.name, 
@@ -518,7 +574,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                     description = m.description, 
                     iconEmoji = "🎮", 
                     tags = m.tags.split(",").filter { it.isNotBlank() }, 
-                    coverUriString = m.coverUriString
+                    coverUriString = persistentCover
                 )
                 
                 recalculateConflicts()
