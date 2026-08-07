@@ -60,12 +60,17 @@ fun StudioScreen(
     // Manejo de navegadores internos con persistencia
     activeWebSource?.let { source ->
         val currentUrl = lastWebUrls[source] ?: ""
-        // WebView persistente por fuente para NO perder estado al salir/volver a Studio
-        // (evita la pantalla en blanco hasta pulsar recargar).
-        val persistentWebView = viewModel.getPersistentWebView(source, LocalContext.current.applicationContext)
+        val initialUrl = when(source) {
+            "MCPEDL" -> "https://mcpedl.com/category/mods-addons/"
+            "CurseForge" -> "https://www.curseforge.com/minecraft-bedrock"
+            "ModBay" -> "https://modbay.org/mods/"
+            else -> ""
+        }
+        val persistentWebView = viewModel.getPersistentWebView(source, LocalContext.current)
         WebBrowserScreen(
             title = source,
             currentUrl = currentUrl,
+            initialUrl = initialUrl,
             importError = webImportError,
             isImporting = isImporting,
             importProgress = importProgress,
@@ -79,15 +84,6 @@ fun StudioScreen(
             onUrlChanged = { newUrl -> viewModel.updateWebUrl(source, newUrl) },
             onImportFromUrl = onImportFromUrl,
             onClearError = onClearError,
-            onReloadInitial = {
-                val initial = when(source) {
-                    "MCPEDL" -> "https://mcpedl.com/category/mods-addons/"
-                    "CurseForge" -> "https://www.curseforge.com/minecraft-bedrock"
-                    "ModBay" -> "https://modbay.org/mods/"
-                    else -> ""
-                }
-                viewModel.updateWebUrl(source, initial)
-            },
             webView = persistentWebView
         )
         return

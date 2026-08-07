@@ -125,16 +125,16 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         _activeWebSource.value = source
     }
 
-    // ─── WEBVIEWS PERSISTENTES ─────────────────────────────
-    // La WebView del navegador interno se guarda POR FUENTE para que NO se
-    // destruya al navegar a otra pestaña y volver. Si la recreamos desde cero,
-    // la pantalla aparece en BLANCO (estado perdido) hasta pulsar "recargar".
+    // ─── WEBVIEWS PERSISTENTES POR FUENTE ──────────────────
+    // Mantenemos la WebView VIVA (con su contenido, historial y scroll en memoria)
+    // para que al volver a Studio NO se recargue la URL (lo que causa "página web
+    // no disponible" en páginas de descarga/redirect). El estado se conserva al
+    // desmontar/re-adjuntar la vista.
     private val _persistentWebViews = mutableMapOf<String, WebView>()
 
     /**
-     * Devuelve (creando si hace falta) el WebView persistente de una fuente
-     * (MCPEDL, CurseForge, ModBay). Así conserva historial, scroll y estado
-     * mientras el usuario navega por la app.
+     * Devuelve (creando si hace falta) la WebView persistente de una fuente.
+     * La WebView se mantiene viva en el ViewModel mientras la app no se cierre.
      */
     fun getPersistentWebView(source: String, context: Context): WebView {
         return _persistentWebViews.getOrPut(source) {
@@ -149,12 +149,14 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    /** Elimina el WebView de una fuente (al cerrar el navegador, por ejemplo). */
+    /** Elimina la WebView de una fuente (al cerrar el navegador, por ejemplo). */
     fun clearPersistentWebView(source: String) {
-        _persistentWebViews.remove(source)?.let { it.stopLoading() }
+        _persistentWebViews.remove(source)?.let {
+            try { it.stopLoading() } catch (e: Exception) {}
+        }
     }
 
-    /** Añade/mueve el WebView actual al contexto para un manejo manual (back). */
+    /** Navegación inteligente atrás: retrocede en el historial si es posible. */
     fun onStudioWebBackPressed(): Boolean {
         return _activeWebSource.value?.let { source ->
             val wv = _persistentWebViews[source]

@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -29,6 +30,7 @@ import com.packforge.app.domain.model.OperationProgress
 fun WebBrowserScreen(
     title: String,
     currentUrl: String,
+    initialUrl: String,
     importError: String?,
     isImporting: Boolean,
     importProgress: OperationProgress,
@@ -36,53 +38,20 @@ fun WebBrowserScreen(
     onUrlChanged: (String) -> Unit,
     onImportFromUrl: (String) -> Unit,
     onClearError: () -> Unit,
-    onReloadInitial: () -> Unit,
     webView: WebView
 ) {
     val context = LocalContext.current
     var isLoadingPage by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
-    // Configurar/actualizar listeners del WebView persistente cada vez que el
-    // composable entra en composición. El WebView persiste entre pestañas (estado
-    // conservado → NO pantalla en blanco), pero los callbacks deben capturar el
-    // estado de la composición ACTUAL (isLoadingPage / onUrlChanged).
-    DisposableEffect(Unit) {
-        webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            setSupportMultipleWindows(false)
-        }
-        webView.webViewClient = object : WebViewClient() {
-            override fun onPageStarted(v: WebView?, u: String?, f: Bitmap?) {
-                isLoadingPage = true
-            }
-            override fun onPageFinished(v: WebView?, u: String?) {
-                isLoadingPage = false
-                if (u != null && u != "about:blank") {
-                    onUrlChanged(u)
-                }
-            }
-            override fun shouldOverrideUrlLoading(v: WebView?, r: WebResourceRequest?): Boolean {
-                val url = r?.url?.toString() ?: return false
-                if (isAddonDownloadUrl(url)) {
-                    onImportFromUrl(url)
-                    return true
-                }
-                return false
-            }
-        }
-        webView.setDownloadListener { url, _, _, _, _ ->
-            if (url != null) onImportFromUrl(url)
-        }
-        onDispose { /* NO destruir: el WebView es persistente entre pestañas */ }
-    }
-
-    // Sincronizar el WebView con la URL actual solo si difiere de la que está cargada
-    LaunchedEffect(currentUrl) {
-        val wv = webView
-        if (wv.url != currentUrl || wv.url.isNullOrEmpty()) {
-            wv.loadUrl(currentUrl)
+    // NAVEGACIÓN INTELIGENTE: el gesto/tecla atrás del sistema primero retrocede
+    // en el historial del WebView y SOLO si está en la raíz cierra el navegador.
+    BackHandler(enabled = true) {
+        val wv = webViewRef
+        if (wv != null && wv.canGoBack()) {
+            wv.goBack()
+        } else {
+            onBack()
         }
     }
 
@@ -91,12 +60,28 @@ fun WebBrowserScreen(
             TopAppBar(
                 title = { Text(title, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = {
+                        val wv = webViewRef
+                        if (wv != null && wv.canGoBack()) {
+                            wv.goBack()
+                        } else {
+                            onBack()
+                        }
+                    }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Atrás")
                     }
                 },
                 actions = {
-                    IconButton(onClick = onReloadInitial) {
+                    IconButton(onClick = {
+                        // Recargar Inicio: cargar la URL inicial en la WebView persistente
+                        webViewRef?.let { wv ->
+                            if (initialUrl.isNotEmpty() && wv.url != initialUrl) {
+                                wv.loadUrl(initialUrl)
+                            } else {
+                                wv.reload()
+                            }
+                        }
+                    }) {
                         Icon(Icons.Default.Refresh, "Recargar Inicio")
                     }
                     IconButton(onClick = {
@@ -110,7 +95,7 @@ fun WebBrowserScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            
+
             if (isLoadingPage) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 
             // Panel de Importación
@@ -136,13 +121,61 @@ fun WebBrowserScreen(
             AndroidView(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 factory = { ctx ->
-                    // REUTILIZAR el WebView persistente en lugar de crear uno nuevo.
-                    // Esto conserva historial/scroll/estado → NO pantalla en blanco.
+                    // REUTILIZAR la WebView persistente: conserva la página en memoria
+                    // (sin recargar URL → no aparece "página web no disponible").
+                    // Configurar listeners solo la primera vez.
+                    if (webView.tag == null) {
+                        webView.tag = "configured"
+                        webView.settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            setSupportMultipleWindows(false)
+                        }
+                        webView.webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(v: WebView?, u: String?, f: Bitmap?) {
+                                isLoadingPage = true
+                            }
+                            override fun onPageFinished(v: WebView?, u: String?) {
+                                isLoadingPage = false
+                                if (u != null && u != "about:blank") {
+                                    onUrlChanged(u)
+                                }
+                            }
+                            override fun shouldOverrideUrlLoading(v: WebView?, r: WebResourceRequest?): Boolean {
+                                val url = r?.url?.toString() ?: return false
+                                if (isAddonDownloadUrl(url)) {
+                                    onImportFromUrl(url)
+                                    return true
+                                }
+                                return false
+                            }
+                        }
+                        webView.setDownloadListener { url, _, _, _, _ ->
+                            if (url != null) onImportFromUrl(url)
+                        }
+                        // Cargar la URL inicial si la WebView está vacía (primera visita
+                        // o tras recrearse por rotación de pantalla)
+                        if (webView.url.isNullOrEmpty()) {
+                            webView.loadUrl(currentUrl.ifEmpty { initialUrl })
+                        }
+                    }
+
+                    // Al re-adjuntar tras volver de otra pestaña, forzar redibujado
+                    // para que la superficie nativa se restaure (evita pantalla en blanco).
+                    try {
+                        webView.onResume()
+                    } catch (e: Exception) {}
+                    webView.invalidate()
+
                     webViewRef = webView
                     webView
                 },
                 update = { wv ->
                     webViewRef = wv
+                    try {
+                        wv.onResume()
+                    } catch (e: Exception) {}
+                    wv.invalidate()
                 }
             )
         }
@@ -151,6 +184,6 @@ fun WebBrowserScreen(
 
 private fun isAddonDownloadUrl(url: String): Boolean {
     val lower = url.lowercase()
-    return lower.endsWith(".mcaddon") || lower.endsWith(".mcpack") || 
+    return lower.endsWith(".mcaddon") || lower.endsWith(".mcpack") ||
            lower.contains(".mcaddon?") || lower.contains(".mcpack?")
 }
