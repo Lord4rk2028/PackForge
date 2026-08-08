@@ -42,7 +42,10 @@ object ManifestGenerator {
         originalRpHeaderUuids: Set<String>,
         newRpHeaderUuid: String?,
         packName: String,
-        hasScriptsFolder: Boolean
+        hasScriptsFolder: Boolean,
+        packAuthor: String = "",
+        packVersion: String = "1.0.0",
+        packDescription: String = ""
     ): JSONObject {
         val newBpHeaderUuid = UUID.randomUUID().toString()
         val modules = JSONArray()
@@ -163,13 +166,19 @@ object ManifestGenerator {
             put("format_version", 2)
             put("header", JSONObject().apply {
                 put("name", packName)
-                put("description", "Behavior Pack created by PackForge")
+                put("description", packDescription.ifBlank { "Behavior Pack created by PackForge" })
                 put("uuid", newBpHeaderUuid)
-                put("version", JSONArray(listOf(1, 0, 0)))
+                put("version", parseVersion(packVersion))
                 put("min_engine_version", JSONArray(minEngine))
             })
             put("modules", modules)
             put("dependencies", dependencies)
+            // Metadatos: autor visible en el juego
+            if (packAuthor.isNotBlank()) {
+                put("metadata", JSONObject().apply {
+                    put("authors", JSONArray(listOf(packAuthor)))
+                })
+            }
         }
 
         // LOG OBLIGATORIO: manifiesto del BP completo
@@ -184,7 +193,10 @@ object ManifestGenerator {
     fun buildMergedRpManifest(
         originalRpManifests: List<File>,
         packName: String,
-        newBpHeaderUuid: String? = null
+        newBpHeaderUuid: String? = null,
+        packAuthor: String = "",
+        packVersion: String = "1.0.0",
+        packDescription: String = ""
     ): JSONObject {
         val newRpHeaderUuid = UUID.randomUUID().toString()
         val modules = JSONArray()
@@ -254,14 +266,20 @@ object ManifestGenerator {
         val manifest = JSONObject().apply {
             put("format_version", 2)
             put("header", JSONObject().apply {
-                put("name", "$packName (RP)")
-                put("description", "Resource Pack created by PackForge")
+                put("name", packName)
+                put("description", packDescription.ifBlank { "Resource Pack created by PackForge" })
                 put("uuid", newRpHeaderUuid)
-                put("version", JSONArray(listOf(1, 0, 0)))
+                put("version", parseVersion(packVersion))
                 put("min_engine_version", JSONArray(minEngine))
             })
             put("modules", modules)
             put("dependencies", dependencies)
+            // Metadatos: autor visible en el juego
+            if (packAuthor.isNotBlank()) {
+                put("metadata", JSONObject().apply {
+                    put("authors", JSONArray(listOf(packAuthor)))
+                })
+            }
         }
 
         // LOG OBLIGATORIO: manifiesto del RP completo
@@ -271,6 +289,24 @@ object ManifestGenerator {
     }
 
     // ─── HELPERS DE VERSIONES ──────────────────────────────────────────
+
+    /**
+     * Convierte una versión "1.2.3" en un JSONArray [1, 2, 3].
+     * Si la entrada es inválida o vacía, usa [1, 0, 0].
+     */
+    private fun parseVersion(version: String): JSONArray {
+        if (version.isBlank()) return JSONArray(listOf(1, 0, 0))
+        val parts = version.trim().split("\\.".toRegex()).mapNotNull { it.toIntOrNull() }
+        return if (parts.isEmpty()) {
+            JSONArray(listOf(1, 0, 0))
+        } else {
+            JSONArray(listOf(
+                parts.getOrElse(0) { 1 },
+                parts.getOrElse(1) { 0 },
+                parts.getOrElse(2) { 0 }
+            ))
+        }
+    }
 
     /**
      * Compara dos versiones [a, b, c] — devuelve negativo si a < b,

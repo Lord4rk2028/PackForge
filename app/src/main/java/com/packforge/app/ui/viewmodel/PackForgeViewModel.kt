@@ -460,6 +460,9 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                     },
                     addonNames = addonNames,
                     customName = customName,
+                    customAuthor = _metadata.value.author.trim(),
+                    customVersion = _metadata.value.version.trim().ifBlank { "1.0.0" },
+                    customDescription = _metadata.value.description.trim(),
                     customIconPath = customIconPath
                 )
                 

@@ -7,7 +7,7 @@ data class ModpackMetadata(
     val name: String = "",
     val author: String = "",
     val version: String = "1.0.0",
-    val mcVersion: String = "1.21.50",
+    val mcVersion: String = "26.42",
     val description: String = "",
     val iconEmoji: String = "🎮",
     val tags: List<String> = emptyList(),

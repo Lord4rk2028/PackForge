@@ -51,6 +51,9 @@ object PackForgeOrchestrator {
         progressCallback: ProgressCallback? = null,
         addonNames: List<String> = emptyList(),
         customName: String = "PackForge_Modpack",
+        customAuthor: String = "",
+        customVersion: String = "1.0.0",
+        customDescription: String = "",
         customIconPath: String? = null
     ): MergeResult {
         val extractedDirs = mutableListOf<String>()
@@ -271,7 +274,16 @@ object PackForgeOrchestrator {
             
             // e) GENERAR MANIFIESTOS VINCULADOS
             progressCallback?.onProgress("Generando manifiestos...")
-            val (bpUuid, rpUuid) = generateLinkedManifests(bpDirs, rpDirs, mergedBpDir, mergedRpDir, customName)
+            val (bpUuid, rpUuid) = generateLinkedManifests(
+                bpDirs = bpDirs,
+                rpDirs = rpDirs,
+                mergedBpDir = mergedBpDir,
+                mergedRpDir = mergedRpDir,
+                customName = customName,
+                customAuthor = customAuthor,
+                customVersion = customVersion,
+                customDescription = customDescription
+            )
             
             PackForgeLog.d(TAG, "UUIDs generados - BP: $bpUuid, RP: $rpUuid")
 
@@ -674,7 +686,10 @@ object PackForgeOrchestrator {
         rpDirs: List<String>,
         mergedBpDir: File,
         mergedRpDir: File,
-        customName: String = "PackForge Modpack"
+        customName: String = "PackForge Modpack",
+        customAuthor: String = "",
+        customVersion: String = "1.0.0",
+        customDescription: String = ""
     ): Pair<String?, String?> {
         // Recolectar manifests originales de BP y RP
         val originalBpManifests = bpDirs.mapNotNull { dir ->
@@ -709,7 +724,10 @@ PackForgeLog.d(TAG, "UUIDs de RPs originales: $originalRpHeaderUuids")
         if (hasRp) {
             rpManifestObj = ManifestGenerator.buildMergedRpManifest(
                 originalRpManifests = originalRpManifests,
-                packName = customName
+                packName = customName,
+                packAuthor = customAuthor,
+                packVersion = customVersion,
+                packDescription = customDescription
             )
             newRpHeaderUuid = rpManifestObj.optJSONObject("header")?.optString("uuid")
                 ?: java.util.UUID.randomUUID().toString()
@@ -724,7 +742,10 @@ PackForgeLog.d(TAG, "UUIDs de RPs originales: $originalRpHeaderUuids")
             originalRpHeaderUuids = originalRpHeaderUuids,
             newRpHeaderUuid = if (hasRp) newRpHeaderUuid else null,
             packName = customName,
-            hasScriptsFolder = hasScriptsFolder
+            hasScriptsFolder = hasScriptsFolder,
+            packAuthor = customAuthor,
+            packVersion = customVersion,
+            packDescription = customDescription
         )
 
         val newBpHeaderUuid = bpManifestObj.optJSONObject("header")?.optString("uuid")
