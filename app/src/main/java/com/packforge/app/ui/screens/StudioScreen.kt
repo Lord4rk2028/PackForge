@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.packforge.app.ui.components.CachedAsyncImage
+import com.packforge.app.ui.components.PackForgeTopBar
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.domain.model.OperationProgress
 import com.packforge.app.domain.model.SavedModpack
@@ -55,7 +56,8 @@ fun StudioScreen(
 ) {
     val activeWebSource by viewModel.activeWebSource.collectAsStateWithLifecycle()
     val lastWebUrls by viewModel.lastWebUrls.collectAsStateWithLifecycle()
-    var showMyModpacks by remember { mutableStateOf(false) }
+    val showMyModpacks by viewModel.showMyModpacks.collectAsStateWithLifecycle()
+    val webImportSuccess by viewModel.webImportSuccess.collectAsStateWithLifecycle()
 
     // Manejo de navegadores internos con persistencia
     activeWebSource?.let { source ->
@@ -74,6 +76,7 @@ fun StudioScreen(
             importError = webImportError,
             isImporting = isImporting,
             importProgress = importProgress,
+            webImportSuccess = webImportSuccess,
             onBack = {
                 // NAVEGACIÓN INTELIGENTE: si el WebView tiene historial hacia atrás,
                 // primero retrocede; solo se cierra el navegador en la raíz.
@@ -92,7 +95,7 @@ fun StudioScreen(
     if (showMyModpacks) {
         MyModpacksScreen(
             modpacks = savedModpacks,
-            onBack = { showMyModpacks = false },
+            onBack = { viewModel.setShowMyModpacks(false) },
             onDelete = onDeleteModpack,
             onLoad = onLoadModpack
         )
@@ -130,7 +133,7 @@ fun StudioScreen(
                 description = "Edita, comparte o borra tus modpacks guardados", 
                 badge = if(savedModpacks.isNotEmpty()) savedModpacks.size.toString() else null
             ) {
-                showMyModpacks = true
+                viewModel.setShowMyModpacks(true)
             }
         }
 
@@ -235,9 +238,9 @@ fun MyModpacksScreen(modpacks: List<SavedModpack>, onBack: () -> Unit, onDelete:
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("My Modpacks", fontWeight = FontWeight.Bold) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Atrás") } }
+            PackForgeTopBar(
+                title = "My Modpacks",
+                onBackClick = onBack
             )
         }
     ) { padding ->

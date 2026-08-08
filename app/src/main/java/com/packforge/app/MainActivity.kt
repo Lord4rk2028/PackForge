@@ -4,14 +4,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -29,8 +21,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,6 +48,7 @@ import com.packforge.app.ui.screens.StudioScreen
 import com.packforge.app.ui.theme.PackForgeTheme
 import com.packforge.app.ui.viewmodel.PackForgeEvent
 import com.packforge.app.ui.viewmodel.PackForgeViewModel
+import com.packforge.app.ui.components.PackForgeTopBar
 import kotlinx.coroutines.flow.collectLatest
 
 class MainActivity : ComponentActivity() {
@@ -98,6 +89,8 @@ fun PackForgeApp(
     val minecraftUri by viewModel.minecraftUri.collectAsStateWithLifecycle()
     val conflictStrategy by viewModel.conflictStrategy.collectAsStateWithLifecycle()
     val mergeConflicts by viewModel.mergeConflicts.collectAsStateWithLifecycle()
+    val activeWebSource by viewModel.activeWebSource.collectAsStateWithLifecycle()
+    val showMyModpacks by viewModel.showMyModpacks.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
         viewModel.events.collectLatest { event ->
@@ -118,48 +111,30 @@ fun PackForgeApp(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    AnimatedContent(
-                        targetState = currentScreen.title,
-                        transitionSpec = {
-                            (fadeIn(animationSpec = tween(300, easing = FastOutSlowInEasing)) + 
-                             slideInHorizontally(animationSpec = tween(300, easing = FastOutSlowInEasing), initialOffsetX = { it / 4 }))
-                            .togetherWith(fadeOut(animationSpec = tween(200, easing = FastOutSlowInEasing)) + 
-                             slideOutHorizontally(animationSpec = tween(200, easing = FastOutSlowInEasing), targetOffsetX = { -it / 4 }))
-                        },
-                        label = "title_animation"
-                    ) { title ->
-                        Text(
-                            text = title, 
-                            fontWeight = FontWeight.Bold, 
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                },
-                actions = {
-                    if (currentScreen == Screen.Import && addons.isNotEmpty()) {
-                        IconButton(
-                            onClick = { 
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                viewModel.clearAll() 
+            // Cuando el navegador interno de Studio o la sub-pantalla "My Modpacks"
+            // están abiertos, ocultamos la barra global para evitar la doble barra
+            // fea y alta (esas pantallas ya tienen su propia barra).
+            if (activeWebSource == null && !showMyModpacks) {
+                PackForgeTopBar(
+                    title = currentScreen.title,
+                    actions = {
+                        if (currentScreen == Screen.Import && addons.isNotEmpty()) {
+                            IconButton(
+                                onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    viewModel.clearAll()
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Limpiar todo",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
                             }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Delete, 
-                                contentDescription = "Limpiar todo", 
-                                tint = MaterialTheme.colorScheme.error
-                            )
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.primary
                 )
-            )
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {

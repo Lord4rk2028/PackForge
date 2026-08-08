@@ -99,7 +99,21 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun updateMergeConflicts() {
-        _mergeConflicts.value = com.packforge.app.domain.engine.JsonDeepMerger.mergeConflicts.toList()
+        // Combinar conflictos del DeepMerger y del Registro central (que captura TODOS:
+        // colisiones primitivas, texturas/modelos no-JSON, manifest/UUIDs, estructuras raras)
+        val fromMerger = com.packforge.app.domain.engine.JsonDeepMerger.mergeConflicts
+        val fromRegistry = com.packforge.app.domain.engine.ConflictRegistry.conflicts.value
+
+        // Deduplicar por (conflictType + filePath + sourceAddon + targetAddon) sin perder severidad
+        val merged = LinkedHashMap<String, com.packforge.app.domain.model.MergeConflict>()
+        (fromMerger + fromRegistry).forEach { c ->
+            val key = "${c.conflictType}|${c.filePath}|${c.sourceAddon}|${c.targetAddon}"
+            val existing = merged[key]
+            if (existing == null || c.severity.ordinal >= existing.severity.ordinal) {
+                merged[key] = c
+            }
+        }
+        _mergeConflicts.value = merged.values.toList()
     }
 
     fun resolveMergeConflict(index: Int, resolution: String) {
@@ -123,6 +137,26 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setActiveWebSource(source: String?) {
         _activeWebSource.value = source
+    }
+
+    // ─── SUB-PANTALLA MY MODPACKS ─────────────────────────
+    // Permite a MainActivity ocultar la barra global cuando la sub-pantalla
+    // My Modpacks está abierta (evita la doble barra fea y alta).
+    private val _showMyModpacks = MutableStateFlow(false)
+    val showMyModpacks = _showMyModpacks.asStateFlow()
+
+    fun setShowMyModpacks(show: Boolean) {
+        _showMyModpacks.value = show
+    }
+
+    // ─── ÉXITO DE IMPORTACIÓN WEB (check animado) ─────────
+    // Timestamp del último addon importado desde la web. La UI lo muestra
+    // como un check verde "Addon importado" y lo oculta tras unos segundos.
+    private val _webImportSuccess = MutableStateFlow<Long?>(null)
+    val webImportSuccess = _webImportSuccess.asStateFlow()
+
+    fun consumeWebImportSuccess() {
+        _webImportSuccess.value = null
     }
 
     // ─── WEBVIEWS PERSISTENTES POR FUENTE ──────────────────
@@ -211,8 +245,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             modrinthRepository.downloadToCache(context, downloadUrl, fileName) { p ->
                 _importProgress.value = OperationProgress.Loading("Descargando...", p)
             }.onSuccess { uri ->
-                importAddons(context, listOf(uri))
-                _events.emit(PackForgeEvent.ShowSnackbar("¡Descarga completada e importada!"))
+                importAddons(context, listOf(uri), fromWeb = true)
             }.onFailure {
                 _webImportError.value = "Error al descargar: ${it.message}"
                 _importProgress.value = OperationProgress.Idle
@@ -220,7 +253,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun importAddons(context: Context, uris: List<Uri>) {
+    fun importAddons(context: Context, uris: List<Uri>, fromWeb: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
             _isImporting.value = true
             val newAddons = mutableListOf<Addon>()
@@ -236,11 +269,16 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 current.addAll(newAddons)
                 _addons.value = current.mapIndexed { i, a -> a.copy(priority = i) }
                 recalculateConflicts()
-                _events.emit(PackForgeEvent.ShowSnackbar("Se añadieron ${newAddons.size} addons"))
                 _events.emit(PackForgeEvent.Vibration)
             }
             _isImporting.value = false
             _importProgress.value = OperationProgress.Idle
+
+            if (fromWeb && newAddons.isNotEmpty()) {
+                // Marcamos el éxito para que la WebView muestre el check verde
+                // "Addon importado" durante unos segundos.
+                _webImportSuccess.value = System.currentTimeMillis()
+            }
         }
     }
 

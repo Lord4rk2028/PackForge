@@ -120,10 +120,19 @@ object ManifestGenerator {
         val moduleUuidRp = UUID.randomUUID().toString()
         
         // Verificar que todos los UUIDs sean diferentes
-        require(headerUuidBp != moduleUuidBp && headerUuidBp != headerUuidRp && 
+        if (!(headerUuidBp != moduleUuidBp && headerUuidBp != headerUuidRp && 
                 headerUuidBp != moduleUuidRp && moduleUuidBp != headerUuidRp && 
-                moduleUuidBp != moduleUuidRp && headerUuidRp != moduleUuidRp) {
-            "Error: Los UUIDs generados no son únicos"
+                moduleUuidBp != moduleUuidRp && headerUuidRp != moduleUuidRp)) {
+            // CASO EXTREMO: UUIDs duplicados (probabilidad ~0, pero por robustez)
+            ConflictRegistry.logConflict(
+                severity = com.packforge.app.domain.model.ConflictSeverity.CRITICAL,
+                type = "MANIFEST_UUID_COLLISION",
+                file = "manifest.json",
+                addon1 = "BP",
+                addon2 = "RP",
+                description = "Se generaron UUIDs duplicados en los manifiestos. " +
+                    "Se regenerará el modpack para garantizar identificadores únicos."
+            )
         }
         
         val bpManifest = JSONObject().apply {

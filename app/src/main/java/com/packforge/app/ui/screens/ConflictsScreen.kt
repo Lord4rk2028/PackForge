@@ -112,10 +112,16 @@ fun ConflictsScreen(
             }
         }
 
-        // Dividir por severidad
+        // Dividir por severidad (TODAS, incluida WARNING)
         val grouped = conflicts.groupBy { it.severity }
         
-        listOf(ConflictSeverity.CRITICAL, ConflictSeverity.HIGH, ConflictSeverity.MEDIUM, ConflictSeverity.LOW).forEach { severity ->
+        listOf(
+            ConflictSeverity.CRITICAL,
+            ConflictSeverity.HIGH,
+            ConflictSeverity.MEDIUM,
+            ConflictSeverity.LOW,
+            ConflictSeverity.WARNING
+        ).forEach { severity ->
             val list = grouped[severity] ?: emptyList()
             if (list.isNotEmpty()) {
                 item { SeverityHeader(severity) }
@@ -149,10 +155,41 @@ fun ConflictSummaryCard(total: Int, resolved: Int, conflicts: List<Conflict>) {
                 }
             }
             LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(CircleShape))
+
+            // ─── Resumen por severidad (TODAS visibles) ─────
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    ConflictSeverity.CRITICAL to Color(0xFFF44336),
+                    ConflictSeverity.HIGH to Color(0xFFFF9800),
+                    ConflictSeverity.MEDIUM to Color(0xFFFFC107),
+                    ConflictSeverity.LOW to Color(0xFF4CAF50),
+                    ConflictSeverity.WARNING to Color(0xFFB0BEC5)
+                ).forEach { (severity, color) ->
+                    val count = conflicts.count { it.severity == severity }
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Surface(shape = RoundedCornerShape(8.dp), color = color.copy(alpha = 0.15f)) {
+                            Text(
+                                text = count.toString(),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = color,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                        Text(
+                            text = severity.name.lowercase().replaceFirstChar { it.uppercase() },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+
             if (criticalUnresolved > 0) {
                 Text("⚠️ $criticalUnresolved conflictos críticos pendientes", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             } else {
-                Text("✅ Modpack listo para exportar", color = Color(0xFF4CAF50), style = MaterialTheme.typography.bodySmall)
+                Text("✅ Listo para exportar", color = Color(0xFF4CAF50), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -161,9 +198,11 @@ fun ConflictSummaryCard(total: Int, resolved: Int, conflicts: List<Conflict>) {
 @Composable
 fun SeverityHeader(severity: ConflictSeverity) {
     val color = when(severity) {
-        ConflictSeverity.CRITICAL -> MaterialTheme.colorScheme.error
-        ConflictSeverity.HIGH -> Color(0xFFF57C00)
-        else -> MaterialTheme.colorScheme.primary
+        ConflictSeverity.CRITICAL -> MaterialTheme.colorScheme.error          // Rojo
+        ConflictSeverity.HIGH -> Color(0xFFF57C00)                            // Naranja
+        ConflictSeverity.MEDIUM -> Color(0xFFFFB300)                          // Ámbar
+        ConflictSeverity.LOW -> Color(0xFF4CAF50)                             // Verde
+        ConflictSeverity.WARNING -> Color(0xFFFFB300)                         // Ámbar suave
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.size(8.dp).clip(CircleShape).background(color))
@@ -313,18 +352,29 @@ fun MergeConflictCard(
     var expanded by remember { mutableStateOf(false) }
     val isResolved = conflict.resolution != "UNRESOLVED"
     
+    val severityColor = when (conflict.severity) {
+        ConflictSeverity.CRITICAL -> Color(0xFFF44336)   // Rojo
+        ConflictSeverity.HIGH -> Color(0xFFFF9800)       // Naranja
+        ConflictSeverity.MEDIUM -> Color(0xFFFFC107)     // Amarillo
+        ConflictSeverity.LOW -> Color(0xFF4CAF50)        // Verde
+        ConflictSeverity.WARNING -> Color(0xFFB0BEC5)    // Gris/Ámbar suave
+    }
+    
     val conflictTypeLabel = when (conflict.conflictType) {
         "ITEM_OVERWRITE" -> "Ítem sobrescrito"
         "ENTITY_OVERWRITE" -> "Entidad sobrescrita"
         "TEXTURE_OVERWRITE" -> "Textura sobrescrita"
         "RECIPE_OVERWRITE" -> "Receta sobrescrita"
+        "NAMESPACE_COLLISION" -> "Identificador en conflicto"
+        "UNKNOWN_STRUCTURE" -> "Estructura no reconocida"
+        "MANIFEST_UUID_COLLISION" -> "UUID de manifiesto duplicado"
         else -> "Valor primitivo sobrescrito"
     }
     
     ElevatedCard(
         modifier = Modifier.fillMaxWidth().border(
-            1.dp,
-            if (isResolved) Color(0xFF4CAF50).copy(0.4f) else Color.Transparent,
+            2.dp,
+            if (isResolved) Color(0xFF4CAF50).copy(0.4f) else severityColor,
             RoundedCornerShape(12.dp)
         ),
         shape = RoundedCornerShape(12.dp)
@@ -339,7 +389,7 @@ fun MergeConflictCard(
                 Icon(
                     if (isResolved) Icons.Default.CheckCircle else Icons.Default.Warning,
                     null,
-                    tint = if (isResolved) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+                    tint = if (isResolved) Color(0xFF4CAF50) else severityColor,
                     modifier = Modifier.size(20.dp)
                 )
                 Spacer(Modifier.width(12.dp))
@@ -357,6 +407,17 @@ fun MergeConflictCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                // Etiqueta de severidad
+                Surface(shape = RoundedCornerShape(8.dp), color = severityColor.copy(alpha = 0.15f)) {
+                    Text(
+                        text = conflict.severity.name,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = severityColor,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
                 Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
             }
             
@@ -367,6 +428,13 @@ fun MergeConflictCard(
                         .padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    if (conflict.description.isNotBlank()) {
+                        Text(
+                            conflict.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Text(
                         "Archivo: ${conflict.filePath}",
                         style = MaterialTheme.typography.bodySmall
@@ -379,7 +447,7 @@ fun MergeConflictCard(
                     Text(
                         "Addon sobrescrito: ${conflict.targetAddon}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
+                        color = Color(0xFFF44336)
                     )
                     
                     Text(
@@ -402,7 +470,7 @@ fun MergeConflictCard(
                             border = if (conflict.resolution == MergeConflict.RESOLUTION_KEEP_SOURCE)
                                 null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                         ) {
-                            Text("Mantener ${conflict.sourceAddon}", fontSize = 11.sp)
+                            Text("Mantener ${conflict.sourceAddon}", fontSize = 11.sp, maxLines = 1)
                         }
                         
                         Button(
@@ -415,7 +483,7 @@ fun MergeConflictCard(
                             border = if (conflict.resolution == MergeConflict.RESOLUTION_KEEP_TARGET)
                                 null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                         ) {
-                            Text("Mantener ${conflict.targetAddon}", fontSize = 11.sp)
+                            Text("Mantener ${conflict.targetAddon}", fontSize = 11.sp, maxLines = 1)
                         }
                     }
                     

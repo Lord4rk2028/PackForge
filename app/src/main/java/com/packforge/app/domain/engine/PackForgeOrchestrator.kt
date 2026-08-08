@@ -617,6 +617,22 @@ object PackForgeOrchestrator {
                             PackForgeLog.w("PackForge_Debug", "    ⚠️  Colisión (no-JSON): $relativePath")
                             PackForgeLog.w("PackForge_Debug", "    - ¿Ya existe en destino? true")
                             PackForgeLog.w("PackForge_Debug", "    - Acción: SOBRESCRIBIR (manteniendo nuevo)")
+                            // REGISTRAR el conflicto de textura/modelo con mismo nombre
+                            val nonJsonSeverity = when {
+                                relativePath.contains("textures/") -> com.packforge.app.domain.model.ConflictSeverity.MEDIUM
+                                relativePath.contains("models/") -> com.packforge.app.domain.model.ConflictSeverity.HIGH
+                                relativePath.contains("sounds/") || relativePath.contains(".ogg") || relativePath.contains(".fsb") ->
+                                    com.packforge.app.domain.model.ConflictSeverity.LOW
+                                else -> com.packforge.app.domain.model.ConflictSeverity.MEDIUM
+                            }
+                            ConflictRegistry.logConflict(
+                                severity = nonJsonSeverity,
+                                type = "TEXTURE_OVERWRITE",
+                                file = relativePath,
+                                addon1 = sourceAddonName,
+                                addon2 = targetDir.name,
+                                description = "Archivo no-JSON (textura/modelo/sonido) sobrescrito: el addon con mayor prioridad gana."
+                            )
                             file.copyTo(targetFile, overwrite = true)
                         } else {
                             PackForgeLog.d("PackForge_Debug", "    ✅ Copiando (no-JSON nuevo): $relativePath")

@@ -5,7 +5,9 @@ data class MergeConflict(
     val conflictType: String,
     val sourceAddon: String,
     val targetAddon: String,
-    val resolution: String = "UNRESOLVED"
+    val resolution: String = "UNRESOLVED",
+    val severity: ConflictSeverity = ConflictSeverity.MEDIUM,
+    val description: String = ""
 ) {
     companion object {
         const val RESOLUTION_KEEP_SOURCE = "KEEP_SOURCE"

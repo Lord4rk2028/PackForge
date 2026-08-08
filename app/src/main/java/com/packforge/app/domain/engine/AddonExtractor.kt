@@ -136,6 +136,19 @@ object AddonExtractor {
 
         PackForgeLog.d(TAG, "Análisis completado - Tipo: $addonType, Total JSONs: $totalJsonFiles")
 
+        // REGISTRAR: estructuras raras detectadas (para que aparezcan en Conflictos)
+        if (addonClassification is AddonClassification.UNKNOWN) {
+            ConflictRegistry.logConflict(
+                severity = com.packforge.app.domain.model.ConflictSeverity.WARNING,
+                type = "UNKNOWN_STRUCTURE",
+                file = extractedDir.name,
+                addon1 = extractedDir.name,
+                addon2 = "",
+                description = "Estructura de addon no reconocida. Puede que algunos " +
+                    "archivos no se fusionen correctamente."
+            )
+        }
+
         return AddonAnalysis(
             addonClassification = addonClassification,
             addonType = addonType,

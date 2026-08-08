@@ -25,6 +25,7 @@ object JsonDeepMerger {
     
     fun clearConflicts() {
         mergeConflicts.clear()
+        ConflictRegistry.clear()
     }
 
     /**
@@ -55,8 +56,6 @@ object JsonDeepMerger {
                 // Colisión de tipos primitivos o tipos diferentes -> sobrescribir con Log
                 else -> {
                     if (baseValue != null && mergeValue !is JSONObject && mergeValue !is JSONArray) {
-                        Log.w(TAG, "Colisión de clave primitiva: $key. Sobrescribiendo valor.")
-                        
                         // Determine conflict type based on key
                         val conflictType = when {
                             key.contains("item") -> "ITEM_OVERWRITE"
@@ -65,17 +64,31 @@ object JsonDeepMerger {
                             key.contains("recipe") -> "RECIPE_OVERWRITE"
                             else -> "PRIMITIVE_OVERWRITE"
                         }
-                        
-                        // Create and register the conflict
+
+                        // Severidad según el tipo de dato sobrescrito
+                        val severity = when (conflictType) {
+                            "ENTITY_OVERWRITE" -> com.packforge.app.domain.model.ConflictSeverity.HIGH
+                            "ITEM_OVERWRITE" -> com.packforge.app.domain.model.ConflictSeverity.HIGH
+                            "TEXTURE_OVERWRITE" -> com.packforge.app.domain.model.ConflictSeverity.MEDIUM
+                            "RECIPE_OVERWRITE" -> com.packforge.app.domain.model.ConflictSeverity.MEDIUM
+                            else -> com.packforge.app.domain.model.ConflictSeverity.MEDIUM
+                        }
+
                         val conflict = MergeConflict(
                             filePath = currentFilePath,
                             conflictType = conflictType,
                             sourceAddon = currentSourceAddon,
                             targetAddon = currentTargetAddon,
-                            resolution = MergeConflict.RESOLUTION_KEEP_SOURCE
+                            resolution = MergeConflict.RESOLUTION_KEEP_SOURCE,
+                            severity = severity,
+                            description = "Colisión de clave '$key': el valor se sobrescribe."
                         )
                         mergeConflicts.add(conflict)
-                        Log.w(CONFLICT_TAG, "Conflicto detectado: $conflict")
+                        // Registrar TODO en el registro central (aunque la clave ya exista)
+                        ConflictRegistry.addConflict(conflict)
+
+                        Log.w(TAG, "Colisión de clave primitiva: $key. Sobrescribiendo valor.")
+                        Log.w(CONFLICT_TAG, "🔴 ${severity.name} Conflicto detectado: $conflict")
                     }
                     result.put(key, mergeValue)
                 }
@@ -117,6 +130,14 @@ object JsonDeepMerger {
     fun checkNamespaceCollision(key: String) {
         if (key.contains(":")) {
             Log.w(TAG, "Colisión de identificador (namespace): $key. El segundo addon sobrescribe al primero.")
+            ConflictRegistry.logConflict(
+                severity = com.packforge.app.domain.model.ConflictSeverity.MEDIUM,
+                type = "NAMESPACE_COLLISION",
+                file = currentFilePath,
+                addon1 = currentSourceAddon,
+                addon2 = currentTargetAddon,
+                description = "Identificador de namespace '$key' sobrescrito por el segundo addon."
+            )
         }
     }
 
