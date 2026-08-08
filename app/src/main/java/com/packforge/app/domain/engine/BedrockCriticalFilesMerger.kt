@@ -39,12 +39,16 @@ object BedrockCriticalFilesMerger {
             val file = File(rpDir, "textures/terrain_texture.json")
             if (file.exists()) {
                 try {
-                    val json = JSONObject(file.readText(Charsets.UTF_8))
+                    // Limpiar el JSON completo (trim en claves y valores)
+                    val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
 
                     json.optJSONObject("texture_data")?.let { data ->
                         data.keys().forEach { blockName ->
-                            if (!mergedTextureData.has(blockName)) {
-                                mergedTextureData.put(blockName, data.get(blockName))
+                            val cleanBlockName = blockName.trim()  // ⭐ QUITAR ESPACIOS
+                            val value = data.get(cleanBlockName)
+                            val cleanValue = JsonDeepMerger.cleanJsonValue(value)
+                            if (!mergedTextureData.has(cleanBlockName)) {
+                                mergedTextureData.put(cleanBlockName, cleanValue)
                             }
                         }
                     }
@@ -72,6 +76,8 @@ object BedrockCriticalFilesMerger {
         OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
             it.write(merged.toString(2))
         }
+        // VALIDACIÓN: no deben quedar espacios al final en claves
+        validateNoTrailingSpaces(destFile, "terrain_texture.json")
         PackForgeLog.d("PackForge_Terrain", "✅ terrain_texture.json fusionado: ${mergedTextureData.length()} bloques")
     }
 
@@ -85,11 +91,14 @@ object BedrockCriticalFilesMerger {
             val file = File(rpDir, "textures/item_texture.json")
             if (file.exists()) {
                 try {
-                    val json = JSONObject(file.readText(Charsets.UTF_8))
+                    val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
                     json.optJSONObject("texture_data")?.let { data ->
                         data.keys().forEach { itemName ->
-                            if (!mergedTextureData.has(itemName)) {
-                                mergedTextureData.put(itemName, data.get(itemName))
+                            val cleanItemName = itemName.trim()  // ⭐ QUITAR ESPACIOS
+                            val value = data.get(cleanItemName)
+                            val cleanValue = JsonDeepMerger.cleanJsonValue(value)
+                            if (!mergedTextureData.has(cleanItemName)) {
+                                mergedTextureData.put(cleanItemName, cleanValue)
                             }
                         }
                     }
@@ -110,6 +119,8 @@ object BedrockCriticalFilesMerger {
         OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
             it.write(merged.toString(2))
         }
+        // VALIDACIÓN: no deben quedar espacios al final en claves
+        validateNoTrailingSpaces(destFile, "item_texture.json")
         PackForgeLog.d("PackForge_ItemTexture", "✅ item_texture.json: ${mergedTextureData.length()} items")
     }
 
@@ -125,10 +136,11 @@ object BedrockCriticalFilesMerger {
             val file = File(rpDir, "blocks.json")
             if (file.exists()) {
                 try {
-                    val json = JSONObject(file.readText(Charsets.UTF_8))
+                    val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
                     json.keys().forEach { key ->
-                        if (key != "format_version" && !merged.has(key)) {
-                            merged.put(key, json.get(key))
+                        val cleanKey = key.trim()  // ⭐ QUITAR ESPACIOS
+                        if (cleanKey != "format_version" && !merged.has(cleanKey)) {
+                            merged.put(cleanKey, JsonDeepMerger.cleanJsonValue(json.get(cleanKey)))
                         }
                     }
                 } catch (e: Exception) {
@@ -141,6 +153,8 @@ object BedrockCriticalFilesMerger {
         OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
             it.write(merged.toString(2))
         }
+        // VALIDACIÓN: no deben quedar espacios al final en claves
+        validateNoTrailingSpaces(destFile, "blocks.json")
         PackForgeLog.d("PackForge_BlocksJson", "✅ blocks.json: ${merged.length() - 1} bloques")
     }
 
@@ -158,18 +172,27 @@ object BedrockCriticalFilesMerger {
                     val destFile = File(destEntityDir, file.name)
 
                     if (!destFile.exists()) {
-                        file.copyTo(destFile)
+                        // Copiar LIMPIANDO espacios en claves/valores (evita "desconocido")
+                        try {
+                            val clean = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+                            OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
+                                it.write(clean.toString(2))
+                            }
+                        } catch (e: Exception) {
+                            file.copyTo(destFile)
+                        }
                         PackForgeLog.d("PackForge_Entity", "✅ Copiado: entity/${file.name}")
                     } else {
                         // FUSIONAR inteligentemente
                         try {
-                            val base = JSONObject(destFile.readText(Charsets.UTF_8))
-                            val merge = JSONObject(file.readText(Charsets.UTF_8))
+                            val base = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
+                            val merge = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
 
-                            // Fusionar cada definición de entidad
+                            // Fusionar cada definición de entidad (claves limpias)
                             merge.keys().forEach { entityKey ->
-                                if (!base.has(entityKey)) {
-                                    base.put(entityKey, merge.get(entityKey))
+                                val cleanKey = entityKey.trim()  // ⭐ QUITAR ESPACIOS
+                                if (!base.has(cleanKey)) {
+                                    base.put(cleanKey, merge.get(cleanKey))
                                 }
                             }
 
@@ -200,18 +223,27 @@ object BedrockCriticalFilesMerger {
                     val destFile = File(destDir2, file.name)
 
                     if (!destFile.exists()) {
-                        file.copyTo(destFile)
+                        // Copiar LIMPIANDO espacios en claves/valores
+                        try {
+                            val clean = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+                            OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
+                                it.write(clean.toString(2))
+                            }
+                        } catch (e: Exception) {
+                            file.copyTo(destFile)
+                        }
                     } else {
                         try {
-                            val base = JSONObject(destFile.readText(Charsets.UTF_8))
-                            val merge = JSONObject(file.readText(Charsets.UTF_8))
+                            val base = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
+                            val merge = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
 
                             // Fusionar render_controllers
                             merge.optJSONObject("render_controllers")?.let { rcData ->
                                 val baseRc = base.optJSONObject("render_controllers")
                                     ?: JSONObject().also { base.put("render_controllers", it) }
                                 rcData.keys().forEach { key ->
-                                    if (!baseRc.has(key)) baseRc.put(key, rcData.get(key))
+                                    val cleanKey = key.trim()  // ⭐ QUITAR ESPACIOS
+                                    if (!baseRc.has(cleanKey)) baseRc.put(cleanKey, rcData.get(cleanKey))
                                 }
                             }
 
@@ -245,11 +277,19 @@ object BedrockCriticalFilesMerger {
                         val destFile = File(destDirAnim, file.name)
 
                         if (!destFile.exists()) {
-                            file.copyTo(destFile)
+                            // Copiar LIMPIANDO espacios en claves/valores
+                            try {
+                                val clean = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+                                OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
+                                    it.write(clean.toString(2))
+                                }
+                            } catch (e: Exception) {
+                                file.copyTo(destFile)
+                            }
                         } else {
                             try {
-                                val base = JSONObject(destFile.readText(Charsets.UTF_8))
-                                val merge = JSONObject(file.readText(Charsets.UTF_8))
+                                val base = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
+                                val merge = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
 
                                 // Fusionar animations o animation_controllers
                                 listOf("animations", "animation_controllers").forEach { key ->
@@ -257,8 +297,9 @@ object BedrockCriticalFilesMerger {
                                         val baseData = base.optJSONObject(key)
                                             ?: JSONObject().also { base.put(key, it) }
                                         data.keys().forEach { animKey ->
-                                            if (!baseData.has(animKey)) {
-                                                baseData.put(animKey, data.get(animKey))
+                                            val cleanAnimKey = animKey.trim()  // ⭐ QUITAR ESPACIOS
+                                            if (!baseData.has(cleanAnimKey)) {
+                                                baseData.put(cleanAnimKey, data.get(cleanAnimKey))
                                             }
                                         }
                                     }
@@ -337,7 +378,7 @@ object BedrockCriticalFilesMerger {
             val file = File(rpDir, "sounds.json")
             if (file.exists()) {
                 try {
-                    val json = JSONObject(file.readText(Charsets.UTF_8))
+                    val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
 
                     // entity_sounds.entities
                     json.optJSONObject("entity_sounds")?.optJSONObject("entities")?.let { ent ->
@@ -345,21 +386,30 @@ object BedrockCriticalFilesMerger {
                             ?: JSONObject().also {
                                 merged.put("entity_sounds", JSONObject().put("entities", it))
                             }
-                        ent.keys().forEach { k -> if (!mergedEnt.has(k)) mergedEnt.put(k, ent.get(k)) }
+                        ent.keys().forEach { k ->
+                            val cleanK = k.trim()
+                            if (!mergedEnt.has(cleanK)) mergedEnt.put(cleanK, ent.get(cleanK))
+                        }
                     }
 
                     // block_sounds
                     json.optJSONObject("block_sounds")?.let { blocks ->
                         val mergedBlocks = merged.optJSONObject("block_sounds")
                             ?: JSONObject().also { merged.put("block_sounds", it) }
-                        blocks.keys().forEach { k -> if (!mergedBlocks.has(k)) mergedBlocks.put(k, blocks.get(k)) }
+                        blocks.keys().forEach { k ->
+                            val cleanK = k.trim()
+                            if (!mergedBlocks.has(cleanK)) mergedBlocks.put(cleanK, blocks.get(cleanK))
+                        }
                     }
 
                     // individual_event_sounds
                     json.optJSONObject("individual_event_sounds")?.let { events ->
                         val mergedEvents = merged.optJSONObject("individual_event_sounds")
                             ?: JSONObject().also { merged.put("individual_event_sounds", it) }
-                        events.keys().forEach { k -> if (!mergedEvents.has(k)) mergedEvents.put(k, events.get(k)) }
+                        events.keys().forEach { k ->
+                            val cleanK = k.trim()
+                            if (!mergedEvents.has(cleanK)) mergedEvents.put(cleanK, events.get(cleanK))
+                        }
                     }
                 } catch (e: Exception) {
                     PackForgeLog.e("PackForge_Sounds", "Error: ${e.message}")
@@ -391,7 +441,7 @@ object BedrockCriticalFilesMerger {
                     val relativePath = file.relativeTo(rpDir).path
                     processedCount++
                     try {
-                        val json = JSONObject(file.readText(Charsets.UTF_8))
+                        val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
                         val existing = geoFiles[relativePath]
 
                         if (existing == null) {
@@ -466,15 +516,16 @@ object BedrockCriticalFilesMerger {
             val flipbookFile = File(rpDir, "textures/flipbook_textures.json")
             if (flipbookFile.exists()) {
                 try {
-                    val json = JSONObject(flipbookFile.readText(Charsets.UTF_8))
+                    val json = JsonDeepMerger.cleanJsonObject(JSONObject(flipbookFile.readText(Charsets.UTF_8)))
                     processedCount++
                     json.optJSONArray("flipbook_textures")?.let { entries ->
                         for (i in 0 until entries.length()) {
                             val entry = entries.optJSONObject(i) ?: continue
                             val key = entry.optString("flipbook_texture")
                                 .ifEmpty { entry.optString("atlas_tile") }
+                                .trim()  // ⭐ QUITAR ESPACIOS
                             if (key.isEmpty() || seenKeys.add(key)) {
-                                mergedArray.put(entry)
+                                mergedArray.put(JsonDeepMerger.cleanJsonValue(entry))
                             } else {
                                 PackForgeLog.w("PackForge_Flipbook", "Flipbook duplicado: $key (manteniendo primero)")
                             }
@@ -522,8 +573,10 @@ object BedrockCriticalFilesMerger {
         val terrainFile = File(mergedRpDir, "textures/terrain_texture.json")
         val terrainData = if (terrainFile.exists()) {
             try {
-                JSONObject(terrainFile.readText(Charsets.UTF_8))
-                    .optJSONObject("texture_data") ?: JSONObject()
+                JsonDeepMerger.cleanJsonObject(
+                    JSONObject(terrainFile.readText(Charsets.UTF_8))
+                        .optJSONObject("texture_data") ?: JSONObject()
+                )
             } catch (e: Exception) {
                 PackForgeLog.e("PackForge_Materials", "Error leyendo terrain_texture.json fusionado: ${e.message}")
                 JSONObject()
@@ -538,7 +591,7 @@ object BedrockCriticalFilesMerger {
 
         blocksDir.listFiles()?.filter { it.extension == "json" }?.forEach { blockFile ->
             try {
-                val json = JSONObject(blockFile.readText(Charsets.UTF_8))
+                val json = JsonDeepMerger.cleanJsonObject(JSONObject(blockFile.readText(Charsets.UTF_8)))
                 val components = json.optJSONObject("components")
                 val matInstances = components?.optJSONObject("minecraft:material_instances")?.optJSONObject("mappings")
                     ?: components?.optJSONObject("minecraft:material_instances")
@@ -557,7 +610,8 @@ object BedrockCriticalFilesMerger {
                     }
                 }
 
-                textureNames.forEach { textureName ->
+                textureNames.forEach { rawTextureName ->
+                    val textureName = rawTextureName.trim()  // ⭐ QUITAR ESPACIOS
                     // Si la textura ya esta mapeada en terrain_texture, ok
                     if (terrainData.has(textureName)) {
                         return@forEach
@@ -608,9 +662,69 @@ object BedrockCriticalFilesMerger {
                     put("texture_data", terrainData)
                 }.toString(2))
             }
+            // VALIDACIÓN tras el paso de material instances
+            validateNoTrailingSpaces(terrainFile, "terrain_texture.json (tras material_instances)")
         }
 
         PackForgeLog.d("PackForge_Materials", "Material instances verificados: $addedCount texturas agregadas, ${missingTextures.size} faltantes")
+    }
+
+    // =====================================================================
+    // VALIDADOR POST-FUSIÓN: verifica que los archivos JSON críticos no
+    // tengan espacios al final en claves (causa de bloques "?" y "desconocido")
+    // =====================================================================
+    fun validateNoTrailingSpaces(file: File, fileName: String): Boolean {
+        if (!file.exists()) {
+            PackForgeLog.w("PackForge_Validate", "Archivo no existe para validar: $fileName")
+            return true
+        }
+        return try {
+            val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+            var hasSpaces = false
+
+            lateinit var checkObject: (JSONObject, String) -> Unit
+            lateinit var checkArray: (JSONArray, String) -> Unit
+
+            checkObject = { obj, path ->
+                obj.keys().forEach { key ->
+                    if (key != key.trim()) {
+                        PackForgeLog.e("PackForge_Validate", "❌ ESPACIO en clave: '$key' en $path")
+                        hasSpaces = true
+                    }
+                    val value = obj.get(key)
+                    when (value) {
+                        is JSONObject -> checkObject(value, "$path.$key")
+                        is JSONArray -> checkArray(value, "$path.$key")
+                        is String -> {
+                            if (value != value.trim() && value.isNotBlank()) {
+                                PackForgeLog.w("PackForge_Validate", "⚠️ Espacio en valor: '$value' en $path.$key")
+                            }
+                        }
+                        else -> {}
+                    }
+                }
+            }
+
+            checkArray = { arr, path ->
+                for (i in 0 until arr.length()) {
+                    when (val v = arr.get(i)) {
+                        is JSONObject -> checkObject(v, "$path[$i]")
+                        is JSONArray -> checkArray(v, "$path[$i]")
+                        else -> {}
+                    }
+                }
+            }
+
+            checkObject(json, fileName)
+
+            if (!hasSpaces) {
+                PackForgeLog.d("PackForge_Validate", "✅ $fileName sin espacios en claves")
+            }
+            !hasSpaces
+        } catch (e: Exception) {
+            PackForgeLog.e("PackForge_Validate", "Error validando $fileName: ${e.message}")
+            true
+        }
     }
 
     /**

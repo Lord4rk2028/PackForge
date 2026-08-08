@@ -608,16 +608,26 @@ object PackForgeOrchestrator {
                                 PackForgeLog.d("PackForge_Debug", "    ✅ Fusionado exitosamente")
                             } catch (e: Exception) {
                                 PackForgeLog.e("PackForge_Debug", "    ❌ Error al fusionar $relativePath: ${e.message}")
-                                // En caso de error, sobrescribir
-                                file.copyTo(targetFile, overwrite = true)
+                                // En caso de error, sobrescribir (con limpieza de espacios)
+                                try {
+                                    val cleanJson = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText()))
+                                    targetFile.writeText(cleanJson.toString(4))
+                                } catch (e2: Exception) {
+                                    file.copyTo(targetFile, overwrite = true)
+                                }
                                 jsonCount++
                             }
                         } else {
-                            // Copiar directamente
+                            // Copiar directamente (con limpieza de espacios en claves/valores)
                             PackForgeLog.d("PackForge_Debug", "  ✅ Copiando (JSON nuevo): $relativePath")
                             PackForgeLog.d("PackForge_Debug", "    - ¿Ya existe en destino? false")
                             PackForgeLog.d("PackForge_Debug", "    - Acción: COPIAR")
-                            file.copyTo(targetFile)
+                            try {
+                                val cleanJson = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText()))
+                                targetFile.writeText(cleanJson.toString(4))
+                            } catch (e2: Exception) {
+                                file.copyTo(targetFile)
+                            }
                             jsonCount++
                         }
                     } else {

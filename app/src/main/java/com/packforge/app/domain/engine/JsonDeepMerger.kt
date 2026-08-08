@@ -30,38 +30,50 @@ object JsonDeepMerger {
 
     /**
      * Realiza una fusión profunda (Deep Merge) de dos objetos JSON.
+     * IMPORTANTE: todas las claves y valores String se limpian con trim()
+     * para evitar espacios al final (causa de bloques "?" y items "desconocido").
      * 
      * @param base El JSON base (se mantiene si no hay conflicto)
      * @param toMerge El JSON a fusionar (tiene prioridad en colisiones)
      * @return El resultado de la fusión profunda
      */
     fun deepMerge(base: JSONObject, toMerge: JSONObject): JSONObject {
-        val result = JSONObject(base.toString())
-        
+        val result = JSONObject()
+
+        // Fusionar claves del base (limpias con trim)
+        base.keys().forEach { key ->
+            val cleanKey = key.trim()
+            if (!result.has(cleanKey)) {
+                result.put(cleanKey, cleanJsonValue(base.get(key)))
+            }
+        }
+
+        // Fusionar claves del merge (limpias con trim)
         toMerge.keys().forEach { key ->
-            val baseValue = result.opt(key)
-            val mergeValue = toMerge.get(key)
-            
+            val cleanKey = key.trim()
+            val baseValue = result.opt(cleanKey)
+            val mergeValue = cleanJsonValue(toMerge.get(key))
+
             when {
                 // Ambos son objetos -> fusión recursiva
                 baseValue is JSONObject && mergeValue is JSONObject -> {
-                    result.put(key, deepMerge(baseValue, mergeValue))
+                    result.put(cleanKey, deepMerge(baseValue, mergeValue))
                 }
-                
+
                 // Ambos son arrays -> concatenación
                 baseValue is JSONArray && mergeValue is JSONArray -> {
-                    result.put(key, concatArrays(baseValue, mergeValue))
+                    result.put(cleanKey, concatArrays(baseValue, mergeValue))
                 }
-                
+
                 // Colisión de tipos primitivos o tipos diferentes -> sobrescribir con Log
                 else -> {
                     if (baseValue != null && mergeValue !is JSONObject && mergeValue !is JSONArray) {
                         // Determine conflict type based on key
                         val conflictType = when {
-                            key.contains("item") -> "ITEM_OVERWRITE"
-                            key.contains("entity") -> "ENTITY_OVERWRITE"
-                            key.contains("texture") -> "TEXTURE_OVERWRITE"
-                            key.contains("recipe") -> "RECIPE_OVERWRITE"
+                            cleanKey.contains("item") -> "ITEM_OVERWRITE"
+                            cleanKey.contains("entity") -> "ENTITY_OVERWRITE"
+                            cleanKey.contains("texture") -> "TEXTURE_OVERWRITE"
+                            cleanKey.contains("recipe") -> "RECIPE_OVERWRITE"
                             else -> "PRIMITIVE_OVERWRITE"
                         }
 
@@ -81,20 +93,20 @@ object JsonDeepMerger {
                             targetAddon = currentTargetAddon,
                             resolution = MergeConflict.RESOLUTION_KEEP_SOURCE,
                             severity = severity,
-                            description = "Colisión de clave '$key': el valor se sobrescribe."
+                            description = "Colisión de clave '$cleanKey': el valor se sobrescribe."
                         )
                         mergeConflicts.add(conflict)
                         // Registrar TODO en el registro central (aunque la clave ya exista)
                         ConflictRegistry.addConflict(conflict)
 
-                        Log.w(TAG, "Colisión de clave primitiva: $key. Sobrescribiendo valor.")
+                        Log.w(TAG, "Colisión de clave primitiva: $cleanKey. Sobrescribiendo valor.")
                         Log.w(CONFLICT_TAG, "🔴 ${severity.name} Conflicto detectado: $conflict")
                     }
-                    result.put(key, mergeValue)
+                    result.put(cleanKey, mergeValue)
                 }
             }
         }
-        
+
         return result
     }
 
@@ -107,18 +119,68 @@ object JsonDeepMerger {
      */
     private fun concatArrays(array1: JSONArray, array2: JSONArray): JSONArray {
         val result = JSONArray()
-        
+
         // Añadir elementos del primer array
         for (i in 0 until array1.length()) {
-            result.put(array1.get(i))
+            result.put(cleanJsonValue(array1.get(i)))
         }
-        
+
         // Añadir elementos del segundo array
         for (i in 0 until array2.length()) {
-            result.put(array2.get(i))
+            result.put(cleanJsonValue(array2.get(i)))
         }
-        
+
         return result
+    }
+
+    /**
+     * Limpia un valor JSON recursivamente: trims Strings, objetos y arrays.
+     * Elimina espacios al final en claves y valores (crítico para Minecraft).
+     */
+    fun cleanJsonValue(value: Any?): Any? {
+        return when (value) {
+            is String -> value.trim()
+            is JSONObject -> cleanJsonObject(value)
+            is JSONArray -> cleanJsonArray(value)
+            else -> value
+        }
+    }
+
+    /**
+     * Limpia un JSONObject: trims todas sus claves y valores recursivamente.
+     */
+    fun cleanJsonObject(obj: JSONObject): JSONObject {
+        val cleaned = JSONObject()
+        obj.keys().forEach { key ->
+            val cleanKey = key.trim()
+            val value = obj.get(key)
+            val cleanValue = when (value) {
+                is String -> value.trim()
+                is JSONObject -> cleanJsonObject(value)
+                is JSONArray -> cleanJsonArray(value)
+                else -> value
+            }
+            cleaned.put(cleanKey, cleanValue)
+        }
+        return cleaned
+    }
+
+    /**
+     * Limpia un JSONArray: trims todos sus elementos recursivamente.
+     */
+    fun cleanJsonArray(arr: JSONArray): JSONArray {
+        val cleaned = JSONArray()
+        for (i in 0 until arr.length()) {
+            val value = arr.get(i)
+            val cleanValue = when (value) {
+                is String -> value.trim()
+                is JSONObject -> cleanJsonObject(value)
+                is JSONArray -> cleanJsonArray(value)
+                else -> value
+            }
+            cleaned.put(cleanValue)
+        }
+        return cleaned
     }
 
     /**
