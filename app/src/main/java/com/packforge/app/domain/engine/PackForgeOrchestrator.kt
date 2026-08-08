@@ -271,7 +271,7 @@ object PackForgeOrchestrator {
             
             // e) GENERAR MANIFIESTOS VINCULADOS
             progressCallback?.onProgress("Generando manifiestos...")
-            val (bpUuid, rpUuid) = generateLinkedManifests(mergedBpDir, mergedRpDir, bpDirs.isNotEmpty(), rpDirs.isNotEmpty(), customName)
+            val (bpUuid, rpUuid) = generateLinkedManifests(bpDirs, rpDirs, mergedBpDir, mergedRpDir, customName)
             
             PackForgeLog.d(TAG, "UUIDs generados - BP: $bpUuid, RP: $rpUuid")
 
@@ -659,46 +659,95 @@ object PackForgeOrchestrator {
     }
     
     /**
-     * Genera manifiestos vinculados para BP y RP
+     * Genera manifiestos vinculados BP↔RP usando el NUEVO generador que conserva
+     * min_engine_version, módulos script y dependencias @minecraft/ (librerías).
+     *
+     * @param bpDirs Directorios de los Behavior Packs ORIGINALES extraídos
+     * @param rpDirs Directorios de los Resource Packs ORIGINALES extraídos
+     * @param mergedBpDir Carpeta del BP fusionado (donde se escribe manifest.json)
+     * @param mergedRpDir Carpeta del RP fusionado (donde se escribe manifest.json)
+     * @param customName Nombre del modpack
+     * @return Pair con los UUIDs de header (BP, RP)
      */
     private fun generateLinkedManifests(
-        bpDir: File,
-        rpDir: File,
-        hasBp: Boolean,
-        hasRp: Boolean,
+        bpDirs: List<String>,
+        rpDirs: List<String>,
+        mergedBpDir: File,
+        mergedRpDir: File,
         customName: String = "PackForge Modpack"
     ): Pair<String?, String?> {
-        var bpUuid: String? = null
-        var rpUuid: String? = null
-        
-        if (hasBp && hasRp) {
-            // Generar manifiestos vinculados
-            val (bpManifest, rpManifest) = ManifestGenerator.generateLinkedManifests(customName)
-            
-            // Escribir usando UTF-8 sin BOM
-            ManifestGenerator.writeManifestToFile(bpManifest, File(bpDir, "manifest.json"))
-            ManifestGenerator.writeManifestToFile(rpManifest, File(rpDir, "manifest.json"))
-            
-            PackForgeLog.d("PackForge_Debug", "Manifests escritos con UTF-8 sin BOM")
-            
-            // Extraer UUIDs de los manifiestos generados
-            bpUuid = extractUuidFromManifest(bpManifest)
-            rpUuid = extractUuidFromManifest(rpManifest)
-            
-        } else if (hasBp) {
-            // Solo BP
-            val bpManifest = ManifestGenerator.generateBehaviorPackManifest(customName)
-            ManifestGenerator.writeManifestToFile(bpManifest, File(bpDir, "manifest.json"))
-            bpUuid = extractUuidFromManifest(bpManifest)
-            
-        } else if (hasRp) {
-            // Solo RP
-            val rpManifest = ManifestGenerator.generateResourcePackManifest(customName)
-            ManifestGenerator.writeManifestToFile(rpManifest, File(rpDir, "manifest.json"))
-            rpUuid = extractUuidFromManifest(rpManifest)
+        // Recolectar manifests originales de BP y RP
+        val originalBpManifests = bpDirs.mapNotNull { dir ->
+            val f = File(dir, "manifest.json")
+            if (f.exists()) f else null
         }
-        
-        return Pair(bpUuid, rpUuid)
+        val originalRpManifests = rpDirs.mapNotNull { dir ->
+            val f = File(dir, "manifest.json")
+            if (f.exists()) f else null
+        }
+
+        PackForgeLog.d(TAG, "Manifests BP originales: ${originalBpManifests.size}")
+        PackForgeLog.d(TAG, "Manifests RP originales: ${originalRpManifests.size}")
+
+        // UUIDs de headers de los RPs ORIGINALES (para revincular BP→RP)
+        val originalRpHeaderUuids = originalRpManifests.mapNotNull { rpManifest ->
+            try {
+                extractUuidFromManifest(rpManifest.readText())
+            } catch (e: Exception) {
+                PackForgeLog.e(TAG, "Error extrayendo UUID de RP original: ${e.message}")
+                null
+            }
+        }.toSet()
+
+PackForgeLog.d(TAG, "UUIDs de RPs originales: $originalRpHeaderUuids")
+
+        val hasRp = rpDirs.isNotEmpty() || originalRpManifests.isNotEmpty()
+
+        // ── Generar RP fusionado (solo si hay RPs originales) ──
+        var newRpHeaderUuid: String? = null
+        var rpManifestObj: JSONObject? = null
+        if (hasRp) {
+            rpManifestObj = ManifestGenerator.buildMergedRpManifest(
+                originalRpManifests = originalRpManifests,
+                packName = customName
+            )
+            newRpHeaderUuid = rpManifestObj.optJSONObject("header")?.optString("uuid")
+                ?: java.util.UUID.randomUUID().toString()
+        }
+
+        // Hay carpeta scripts/ en el BP fusionado?
+        val hasScriptsFolder = File(mergedBpDir, "scripts").exists()
+
+        // ── Generar manifest del BP fusionado ──
+        val bpManifestObj = ManifestGenerator.buildMergedBpManifest(
+            originalBpManifests = originalBpManifests,
+            originalRpHeaderUuids = originalRpHeaderUuids,
+            newRpHeaderUuid = if (hasRp) newRpHeaderUuid else null,
+            packName = customName,
+            hasScriptsFolder = hasScriptsFolder
+        )
+
+        val newBpHeaderUuid = bpManifestObj.optJSONObject("header")?.optString("uuid")
+            ?: java.util.UUID.randomUUID().toString()
+
+        // Escribir usando UTF-8 sin BOM
+        if (mergedBpDir.exists() || mergedBpDir.mkdirs()) {
+            ManifestGenerator.writeManifestToFile(bpManifestObj.toString(), File(mergedBpDir, "manifest.json"))
+        } else {
+            PackForgeLog.e(TAG, "No se pudo crear el directorio del BP: ${mergedBpDir.absolutePath}")
+        }
+        if (hasRp) {
+            if (mergedRpDir.exists() || mergedRpDir.mkdirs()) {
+                ManifestGenerator.writeManifestToFile(rpManifestObj.toString(), File(mergedRpDir, "manifest.json"))
+            } else {
+                PackForgeLog.e(TAG, "No se pudo crear el directorio del RP: ${mergedRpDir.absolutePath}")
+            }
+        }
+
+        PackForgeLog.d(TAG, "Manifests escritos con UTF-8 sin BOM")
+        PackForgeLog.d(TAG, "UUIDs - BP: $newBpHeaderUuid, RP: $newRpHeaderUuid")
+
+        return Pair(newBpHeaderUuid, newRpHeaderUuid)
     }
     
     /**
