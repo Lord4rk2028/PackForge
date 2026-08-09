@@ -681,8 +681,8 @@ object PackForgeOrchestrator {
     }
     
     /**
-     * Genera manifiestos vinculados BP↔RP usando el NUEVO generador que conserva
-     * min_engine_version, módulos script y dependencias @minecraft/ (librerías).
+     * Genera manifiestos vinculados BP↔RP usando el generador EXACTO que garantiza:
+     * min_engine_version obligatorio, módulo script y dependencias @minecraft/ (librerías).
      *
      * @param bpDirs Directorios de los Behavior Packs ORIGINALES extraídos
      * @param rpDirs Directorios de los Resource Packs ORIGINALES extraídos
@@ -714,66 +714,71 @@ object PackForgeOrchestrator {
         PackForgeLog.d(TAG, "Manifests BP originales: ${originalBpManifests.size}")
         PackForgeLog.d(TAG, "Manifests RP originales: ${originalRpManifests.size}")
 
-        // UUIDs de headers de los RPs ORIGINALES (para revincular BP→RP)
-        val originalRpHeaderUuids = originalRpManifests.mapNotNull { rpManifest ->
-            try {
-                extractUuidFromManifest(rpManifest.readText())
-            } catch (e: Exception) {
-                PackForgeLog.e(TAG, "Error extrayendo UUID de RP original: ${e.message}")
-                null
-            }
-        }.toSet()
+        // ══ GENERAR RP MANIFEST (función exacta) ══
+        val rpManifestObj = ManifestGenerator.generateRpManifest(customName)
+        val newRpHeaderUuid = rpManifestObj.optJSONObject("header")?.optString("uuid")
+            ?: java.util.UUID.randomUUID().toString()
 
-PackForgeLog.d(TAG, "UUIDs de RPs originales: $originalRpHeaderUuids")
-
-        val hasRp = rpDirs.isNotEmpty() || originalRpManifests.isNotEmpty()
-
-        // ── Generar RP fusionado (solo si hay RPs originales) ──
-        var newRpHeaderUuid: String? = null
-        var rpManifestObj: JSONObject? = null
-        if (hasRp) {
-            rpManifestObj = ManifestGenerator.buildMergedRpManifest(
-                originalRpManifests = originalRpManifests,
-                packName = customName,
-                packAuthor = customAuthor,
-                packVersion = customVersion,
-                packDescription = customDescription
-            )
-            newRpHeaderUuid = rpManifestObj.optJSONObject("header")?.optString("uuid")
-                ?: java.util.UUID.randomUUID().toString()
-        }
-
-        // Hay carpeta scripts/ en el BP fusionado?
-        val hasScriptsFolder = File(mergedBpDir, "scripts").exists()
-
-        // ── Generar manifest del BP fusionado ──
-        val bpManifestObj = ManifestGenerator.buildMergedBpManifest(
-            originalBpManifests = originalBpManifests,
-            originalRpHeaderUuids = originalRpHeaderUuids,
-            newRpHeaderUuid = if (hasRp) newRpHeaderUuid else null,
+        // ══ GENERAR BP MANIFEST (función exacta) ══
+        val bpManifestObj = ManifestGenerator.generateBpManifest(
             packName = customName,
-            hasScriptsFolder = hasScriptsFolder,
-            packAuthor = customAuthor,
-            packVersion = customVersion,
-            packDescription = customDescription
+            rpHeaderUuid = newRpHeaderUuid,
+            originalManifests = originalBpManifests
         )
 
         val newBpHeaderUuid = bpManifestObj.optJSONObject("header")?.optString("uuid")
             ?: java.util.UUID.randomUUID().toString()
 
-        // Escribir usando UTF-8 sin BOM
+        // ══ ESCRIBIR using UTF-8 sin BOM ══
+        val bpManifestFile = File(mergedBpDir, "manifest.json")
+        val rpManifestFile = File(mergedRpDir, "manifest.json")
         if (mergedBpDir.exists() || mergedBpDir.mkdirs()) {
-            ManifestGenerator.writeManifestToFile(bpManifestObj.toString(), File(mergedBpDir, "manifest.json"))
+            ManifestGenerator.writeManifestToFile(bpManifestObj.toString(), bpManifestFile)
         } else {
             PackForgeLog.e(TAG, "No se pudo crear el directorio del BP: ${mergedBpDir.absolutePath}")
         }
-        if (hasRp) {
-            if (mergedRpDir.exists() || mergedRpDir.mkdirs()) {
-                ManifestGenerator.writeManifestToFile(rpManifestObj.toString(), File(mergedRpDir, "manifest.json"))
-            } else {
-                PackForgeLog.e(TAG, "No se pudo crear el directorio del RP: ${mergedRpDir.absolutePath}")
-            }
+        if (mergedRpDir.exists() || mergedRpDir.mkdirs()) {
+            ManifestGenerator.writeManifestToFile(rpManifestObj.toString(), rpManifestFile)
+        } else {
+            PackForgeLog.e(TAG, "No se pudo crear el directorio del RP: ${mergedRpDir.absolutePath}")
         }
+
+        // ══ CAMBIO 1: IMPRIMIR MANIFIESTOS COMPLETOS EN LOGCAT ══
+        val bpManifestContent = bpManifestFile.readText()
+        android.util.Log.d("PackForge_Manifest", "═══════════════════════════════════════")
+        android.util.Log.d("PackForge_Manifest", "📄 BP MANIFEST COMPLETO (${bpManifestFile.length()} bytes):")
+        android.util.Log.d("PackForge_Manifest", bpManifestContent)
+        android.util.Log.d("PackForge_Manifest", "═══════════════════════════════════════")
+
+        val rpManifestContent = rpManifestFile.readText()
+        android.util.Log.d("PackForge_Manifest", "═══════════════════════════════════════")
+        android.util.Log.d("PackForge_Manifest", "📄 RP MANIFEST COMPLETO (${rpManifestFile.length()} bytes):")
+        android.util.Log.d("PackForge_Manifest", rpManifestContent)
+        android.util.Log.d("PackForge_Manifest", "═══════════════════════════════════════")
+
+        // ══ CAMBIO 3: VALIDACIONES OBLIGATORIAS ══
+        val bpContent = bpManifestFile.readText()
+        val bpJson = JSONObject(bpContent)
+        val bpHeader = bpJson.getJSONObject("header")
+
+        require(bpHeader.has("min_engine_version")) {
+            "❌ BP manifest NO tiene min_engine_version"
+        }
+        val mev = bpHeader.getJSONArray("min_engine_version")
+        require(mev.getInt(0) >= 1 && mev.getInt(1) >= 20) {
+            "❌ min_engine_version es muy bajo: ${mev}"
+        }
+        require(bpJson.getJSONArray("modules").length() >= 2) {
+            "❌ BP debe tener al menos 2 módulos (data + script)"
+        }
+        require(bpJson.getJSONArray("dependencies").length() >= 3) {
+            "❌ BP debe tener al menos 3 dependencies (RP + @minecraft/server + @minecraft/server-ui)"
+        }
+
+        android.util.Log.d(
+            "PackForge_Manifest",
+            "✅ BP manifest VALIDADO: min_engine_version=${mev}, modules=${bpJson.getJSONArray("modules").length()}, deps=${bpJson.getJSONArray("dependencies").length()}"
+        )
 
         PackForgeLog.d(TAG, "Manifests escritos con UTF-8 sin BOM")
         PackForgeLog.d(TAG, "UUIDs - BP: $newBpHeaderUuid, RP: $newRpHeaderUuid")

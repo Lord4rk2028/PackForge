@@ -291,6 +291,111 @@ object ManifestGenerator {
     // ─── HELPERS DE VERSIONES ──────────────────────────────────────────
 
     /**
+     * ═══════════════════════════════════════════
+     * GENERADOR EXACTO DEL MANIFEST DEL BP
+     * ═══════════════════════════════════════════
+     * min_engine_version OBLIGATORIO (default alto [1,21,0], nunca [1,0,0]),
+     * módulo data + módulo script (entry scripts/main.js),
+     * dependencies RP + @minecraft/server + @minecraft/server-ui.
+     */
+    fun generateBpManifest(
+        packName: String,
+        rpHeaderUuid: String,
+        originalManifests: List<File> = emptyList()
+    ): JSONObject {
+        val bpHeaderUuid = UUID.randomUUID().toString()
+        val bpModuleUuid = UUID.randomUUID().toString()
+
+        // Detectar min_engine_version MÁXIMO de los manifiestos originales
+        var minEngine = JSONArray(listOf(1, 21, 0))  // ⭐ DEFAULT ALTO, NO [1,0,0]
+        originalManifests.forEach { file ->
+            try {
+                val json = JSONObject(file.readText())
+                json.optJSONObject("header")?.optJSONArray("min_engine_version")?.let { mev ->
+                    if (mev.length() >= 3) {
+                        val v = JSONArray(listOf(
+                            maxOf(minEngine.getInt(0), mev.getInt(0)),
+                            maxOf(minEngine.getInt(1), mev.getInt(1)),
+                            maxOf(minEngine.getInt(2), mev.getInt(2))
+                        ))
+                        minEngine = v
+                    }
+                }
+            } catch (e: Exception) {}
+        }
+
+        // ⭐ CRÍTICO: Agregar módulo SCRIPT si existe carpeta scripts/
+        val modules = JSONArray()
+        modules.put(JSONObject().apply {
+            put("type", "data")
+            put("uuid", bpModuleUuid)
+            put("version", JSONArray(listOf(1, 0, 0)))
+        })
+
+        // ⭐ AGREGAR MÓDULO SCRIPT
+        modules.put(JSONObject().apply {
+            put("type", "script")
+            put("language", "javascript")
+            put("uuid", UUID.randomUUID().toString())
+            put("version", JSONArray(listOf(1, 0, 0)))
+            put("entry", "scripts/main.js")  // Entry point estándar
+        })
+
+        // Dependencies: RP + @minecraft/server
+        val dependencies = JSONArray()
+        dependencies.put(JSONObject().apply {
+            put("uuid", rpHeaderUuid)
+            put("version", JSONArray(listOf(1, 0, 0)))
+        })
+        dependencies.put(JSONObject().apply {
+            put("module_name", "@minecraft/server")
+            put("version", "1.11.0")
+        })
+        dependencies.put(JSONObject().apply {
+            put("module_name", "@minecraft/server-ui")
+            put("version", "1.1.0")
+        })
+
+        return JSONObject().apply {
+            put("format_version", 2)
+            put("header", JSONObject().apply {
+                put("name", packName)
+                put("description", "PackForge Modpack")
+                put("uuid", bpHeaderUuid)
+                put("version", JSONArray(listOf(1, 0, 0)))
+                put("min_engine_version", minEngine)  // ⭐ OBLIGATORIO
+            })
+            put("modules", modules)
+            put("dependencies", dependencies)
+        }
+    }
+
+    /**
+     * ═══════════════════════════════════════════
+     * GENERADOR EXACTO DEL MANIFEST DEL RP
+     * ═══════════════════════════════════════════
+     */
+    fun generateRpManifest(packName: String): JSONObject {
+        return JSONObject().apply {
+            put("format_version", 2)
+            put("header", JSONObject().apply {
+                put("name", packName)
+                put("description", "PackForge Modpack")
+                put("uuid", UUID.randomUUID().toString())
+                put("version", JSONArray(listOf(1, 0, 0)))
+                put("min_engine_version", JSONArray(listOf(1, 21, 0)))  // ⭐ OBLIGATORIO
+            })
+            put("modules", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("type", "resources")
+                    put("uuid", UUID.randomUUID().toString())
+                    put("version", JSONArray(listOf(1, 0, 0)))
+                })
+            })
+        }
+    }
+
+    /**
      * Convierte una versión "1.2.3" en un JSONArray [1, 2, 3].
      * Si la entrada es inválida o vacía, usa [1, 0, 0].
      */
