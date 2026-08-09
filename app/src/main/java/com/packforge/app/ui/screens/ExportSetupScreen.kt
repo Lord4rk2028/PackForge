@@ -1685,11 +1685,30 @@ private fun IconDebugDialog(
     androidx.compose.runtime.LaunchedEffect(coverUriString) {
         if (!coverUriString.isNullOrEmpty()) {
             try {
-                val uri = android.net.Uri.parse(coverUriString)
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    val bytes = input.readBytes()
-                    iconSize = bytes.size.toLong()
-                    iconExists = true
+                // CRÍTICO: la portada guardada en "My Modpacks" es una RUTA DE ARCHIVO
+                // absoluta ("/data/..."), no un content:// URI. contentResolver.openInputStream
+                // FALLA con rutas de archivo, por eso mostraba "No se pudo leer la imagen".
+                val isFilePath = coverUriString.startsWith("/") || coverUriString.startsWith("file://")
+
+                if (isFilePath) {
+                    val srcFile = if (coverUriString.startsWith("file://")) {
+                        java.io.File(java.net.URI(coverUriString))
+                    } else {
+                        java.io.File(coverUriString)
+                    }
+                    if (srcFile.exists()) {
+                        iconSize = srcFile.length()
+                        iconExists = true
+                    } else {
+                        iconExists = false
+                    }
+                } else {
+                    val uri = android.net.Uri.parse(coverUriString)
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        val bytes = input.readBytes()
+                        iconSize = bytes.size.toLong()
+                        iconExists = true
+                    }
                 }
             } catch (e: Exception) {
                 iconExists = false
