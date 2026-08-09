@@ -341,19 +341,19 @@ object ManifestGenerator {
             put("entry", "scripts/main.js")  // Entry point estándar
         })
 
-        // Dependencies: RP + @minecraft/server
+        // Dependencies: RP + @minecraft/server-ui + @minecraft/server
         val dependencies = JSONArray()
         dependencies.put(JSONObject().apply {
             put("uuid", rpHeaderUuid)
             put("version", JSONArray(listOf(1, 0, 0)))
         })
         dependencies.put(JSONObject().apply {
-            put("module_name", "@minecraft/server")
-            put("version", "1.11.0")
+            put("module_name", "@minecraft/server-ui")
+            put("version", "2.0.0")
         })
         dependencies.put(JSONObject().apply {
-            put("module_name", "@minecraft/server-ui")
-            put("version", "1.1.0")
+            put("module_name", "@minecraft/server")
+            put("version", "2.7.0")
         })
 
         return JSONObject().apply {
