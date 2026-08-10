@@ -2,16 +2,13 @@ package com.packforge.app.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.packforge.app.data.ThemePreferences
-import androidx.compose.material3.LocalMotionScheme
 
 @Composable
 fun PackForgeTheme(
@@ -19,7 +16,7 @@ fun PackForgeTheme(
     content: @Composable () -> Unit
 ) {
     val accent = Color(prefs.accentColor.hex)
-    
+
     val colorScheme = if (prefs.darkMode) {
         darkColorScheme(
             primary = accent,
@@ -40,27 +37,23 @@ fun PackForgeTheme(
             background = Color(0xFFEAF2ED)
         )
     }
-    
-    // ⭐ MATERIAL 3 EXPRESSIVE: Motion scheme con springs
-    val motionScheme = if (prefs.expressiveMotion) {
-        MotionScheme.expressive()
-    } else {
-        MotionScheme.default()
-    }
-    
-    CompositionLocalProvider(LocalMotionScheme provides motionScheme) {
-        MaterialTheme(
-            colorScheme = colorScheme,
-            typography = PackForgeTypography,
-            shapes = Shapes(
-                // Formas expresivas redondeadas
-                extraSmall = RoundedCornerShape(8.dp),
-                small = RoundedCornerShape(12.dp),
-                medium = RoundedCornerShape(16.dp),
-                large = RoundedCornerShape(24.dp),
-                extraLarge = RoundedCornerShape(32.dp)
-            ),
-            content = content
-        )
-    }
+
+    // MATERIAL 3 EXPRESSIVE: material3 1.4.0 ya usa animaciones con springs
+    // (motion expresivo) por defecto en todos sus componentes. La API pública
+    // de MotionScheme/LocalMotionScheme no está disponible en la versión estable
+    // 1.4.0 (es API interna), así que usamos el tema con las formas redondeadas
+    // expresivas y el color/accento dinámico.
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = PackForgeTypography,
+        shapes = Shapes(
+            // Formas expresivas redondeadas
+            extraSmall = RoundedCornerShape(8.dp),
+            small = RoundedCornerShape(12.dp),
+            medium = RoundedCornerShape(16.dp),
+            large = RoundedCornerShape(24.dp),
+            extraLarge = RoundedCornerShape(32.dp)
+        ),
+        content = content
+    )
 }

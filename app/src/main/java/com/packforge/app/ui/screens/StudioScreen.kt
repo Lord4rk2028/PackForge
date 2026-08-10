@@ -36,6 +36,7 @@ import com.packforge.app.util.PackForgeLog
 import com.packforge.app.domain.model.OperationProgress
 import com.packforge.app.domain.model.SavedModpack
 import com.packforge.app.ui.viewmodel.PackForgeViewModel
+import com.packforge.app.ui.viewmodel.ThemeViewModel
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -45,6 +46,7 @@ import java.util.Locale
 @Composable
 fun StudioScreen(
     viewModel: PackForgeViewModel,
+    themeViewModel: ThemeViewModel,
     savedModpacks: List<SavedModpack>,
     isImporting: Boolean,
     importProgress: OperationProgress,
@@ -57,6 +59,7 @@ fun StudioScreen(
     val activeWebSource by viewModel.activeWebSource.collectAsStateWithLifecycle()
     val lastWebUrls by viewModel.lastWebUrls.collectAsStateWithLifecycle()
     val showMyModpacks by viewModel.showMyModpacks.collectAsStateWithLifecycle()
+    val showThemeSettings by viewModel.showThemeSettings.collectAsStateWithLifecycle()
     val webImportSuccess by viewModel.webImportSuccess.collectAsStateWithLifecycle()
 
     // Manejo de navegadores internos con persistencia
@@ -88,6 +91,14 @@ fun StudioScreen(
             onImportFromUrl = onImportFromUrl,
             onClearError = onClearError,
             webView = persistentWebView
+        )
+        return
+    }
+
+    if (showThemeSettings) {
+        ThemeSettingsScreen(
+            viewModel = themeViewModel,
+            onBack = { viewModel.setShowThemeSettings(false) }
         )
         return
     }
@@ -134,6 +145,17 @@ fun StudioScreen(
                 badge = if(savedModpacks.isNotEmpty()) savedModpacks.size.toString() else null
             ) {
                 viewModel.setShowMyModpacks(true)
+            }
+        }
+
+        item {
+            StudioCard(
+                icon = Icons.Default.Settings, 
+                title = "Ajustes de Tema", 
+                description = "Modo oscuro, color de acento y animaciones", 
+                badge = null
+            ) {
+                viewModel.setShowThemeSettings(true)
             }
         }
 

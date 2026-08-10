@@ -64,7 +64,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -416,7 +416,7 @@ fun ExportSetupScreen(
                                             expanded = mcDropdownExpanded
                                         )
                                 },
-                                modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable, true),
+                                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable, true),
                                 shape = RoundedCornerShape(12.dp)
                             )
                             ExposedDropdownMenu(

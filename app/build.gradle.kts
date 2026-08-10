@@ -60,6 +60,9 @@ dependencies {
     // Coil para imágenes (logos y portadas)
     implementation("io.coil-kt:coil-compose:2.6.0")
     
+    // DataStore para preferencias de tema
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    
     // Asegurar BOM actualizado
     implementation(platform("androidx.compose:compose-bom:2025.05.00"))
     
@@ -79,4 +82,20 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+
+// ─── ALIASES DE TAREAS DE TEST ─────────────────────────────
+// Permite invocaciones tipo ":app:assemble :app:unitTestClasses :app:androidTestClasses"
+// que buscan tareas de compilación de tests. El nombre canónico de AGP es
+// "assembleUnitTest" (unit tests) y "assembleAndroidTest" (instrumented tests).
+tasks.register("unitTestClasses") {
+    group = "verification"
+    description = "Compila las clases de tests unitarios (alias de assembleUnitTest)."
+    dependsOn("assembleUnitTest")
+}
+
+tasks.register("androidTestClasses") {
+    group = "verification"
+    description = "Compila las clases de tests instrumentados (alias de assembleAndroidTest)."
+    dependsOn("assembleAndroidTest")
 }

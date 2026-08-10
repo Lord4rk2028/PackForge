@@ -149,6 +149,16 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         _showMyModpacks.value = show
     }
 
+    // ─── SUB-PANTALLA AJUSTES DE TEMA ─────────────────────
+    // Igual que "My Modpacks": permite a MainActivity ocultar la barra global
+    // cuando la pantalla de Ajustes de Tema está abierta.
+    private val _showThemeSettings = MutableStateFlow(false)
+    val showThemeSettings = _showThemeSettings.asStateFlow()
+
+    fun setShowThemeSettings(show: Boolean) {
+        _showThemeSettings.value = show
+    }
+
     // ─── ÉXITO DE IMPORTACIÓN WEB (check animado) ─────────
     // Timestamp del último addon importado desde la web. La UI lo muestra
     // como un check verde "Addon importado" y lo oculta tras unos segundos.
