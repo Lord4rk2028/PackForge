@@ -1,85 +1,64 @@
 package com.packforge.app.ui.theme
 
-import android.app.Activity
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalView
-import androidx.core.view.WindowCompat
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Emerald40,
-    onPrimary = NavyDark,
-    primaryContainer = Emerald10,
-    onPrimaryContainer = Emerald80,
-    secondary = Sky40,
-    onSecondary = NavyDark,
-    secondaryContainer = Slate20,
-    onSecondaryContainer = SnowWhite,
-    tertiary = Slate80,
-    onTertiary = NavyDark,
-    error = Rose40,
-    onError = SnowWhite,
-    errorContainer = Color(0xFF450A0A), // Very dark red
-    onErrorContainer = Rose40,
-    background = NavyDark,
-    onBackground = SnowWhite,
-    surface = NavySurface,
-    onSurface = SnowWhite,
-    surfaceVariant = NavyVariant,
-    onSurfaceVariant = SilverGrey,
-    outline = Slate40
+// Definiciones de colores base si es necesario, 
+// aunque el tema ahora es dinámico según las preferencias.
+
+val DarkColorScheme = darkColorScheme(
+    primary = Color(0xFF2ECC71),
+    onPrimary = Color(0xFF0A1A10),
+    primaryContainer = Color(0xFF1A3D2A),
+    onPrimaryContainer = Color(0xFF8FD6A8),
+    secondary = Color(0xFF4FC3F7),
+    onSecondary = Color(0xFF0A1A10),
+    secondaryContainer = Color(0xFF1A3D3A),
+    onSecondaryContainer = Color(0xFF8FD6A8),
+    tertiary = Color(0xFFEF5350),
+    onTertiary = Color(0xFF0A1A10),
+    error = Color(0xFFF44336),
+    onError = Color(0xFFFAFAFA),
+    errorContainer = Color(0xFF450A0A),
+    onErrorContainer = Color(0xFFFF6B35),
+    background = Color(0xFF0A0F0C),
+    onBackground = Color(0xFFE2E8E4),
+    surface = Color(0xFF0D1410),
+    onSurface = Color(0xFFE2E8E4),
+    surfaceVariant = Color(0xFF1C2B22),
+    onSurfaceVariant = Color(0xFF8FD6A8),
+    outline = Color(0xFF4CAF50),
+    outlineVariant = Color(0xFF2ECC71),
+    surfaceContainer = Color(0xFF15201A),
+    surfaceContainerHigh = Color(0xFF1C2B22),
+    surfaceContainerHighest = Color(0xFF2A3D33)
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = Emerald40,
-    onPrimary = SnowWhite,
-    primaryContainer = Color(0xFFD1FAE5), // Very light emerald
-    onPrimaryContainer = Emerald10,
-    secondary = Sky40,
-    onSecondary = SnowWhite,
-    secondaryContainer = SilverGrey,
-    onSecondaryContainer = Slate10,
-    tertiary = Slate40,
-    onTertiary = SnowWhite,
-    error = Rose40,
-    onError = SnowWhite,
-    errorContainer = Color(0xFFFECDD3), // Light rose
-    onErrorContainer = Color(0xFF881337), // Dark rose
-    background = GhostWhite,
-    onBackground = Slate10,
-    surface = SnowWhite,
-    onSurface = Slate10,
-    surfaceVariant = SilverGrey,
-    onSurfaceVariant = Slate20,
-    outline = Slate80
+val LightColorScheme = lightColorScheme(
+    primary = Color(0xFF2ECC71),
+    onPrimary = Color(0xFFFAFAFA),
+    primaryContainer = Color(0xFFD4F5DD),
+    onPrimaryContainer = Color(0xFF062E1A),
+    secondary = Color(0xFF38BDF8),
+    onSecondary = Color(0xFFFAFAFA),
+    secondaryContainer = Color(0xFFD4F5DD),
+    onSecondaryContainer = Color(0xFF062E1A),
+    tertiary = Color(0xFFEF5350),
+    onTertiary = Color(0xFFFAFAFA),
+    error = Color(0xFFF44336),
+    onError = Color(0xFFFAFAFA),
+    errorContainer = Color(0xFFFCE4EC),
+    onErrorContainer = Color(0xFF880E4F),
+    background = Color(0xFFEAF2ED),
+    onBackground = Color(0xFF0D1410),
+    surface = Color(0xFFF4F8F5),
+    onSurface = Color(0xFF0D1410),
+    surfaceVariant = Color(0xFFD4F5DD),
+    onSurfaceVariant = Color(0xFF0D1410),
+    outline = Color(0xFF2ECC71),
+    outlineVariant = Color(0xFF8FD6A8),
+    surfaceContainer = Color(0xFFE8F5ED),
+    surfaceContainerHigh = Color(0xFFD4F5DD),
+    surfaceContainerHighest = Color(0xFFC4EED8)
 )
-
-@Composable
-fun PackForgeTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    content: @Composable () -> Unit
-) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
-
-    val view = LocalView.current
-    if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as? Activity)?.window ?: return@SideEffect
-            val controller = WindowCompat.getInsetsController(window, view)
-            controller.isAppearanceLightStatusBars = !darkTheme
-            controller.isAppearanceLightNavigationBars = !darkTheme
-        }
-    }
-
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
-}

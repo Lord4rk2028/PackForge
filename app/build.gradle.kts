@@ -49,15 +49,26 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material3.adaptive)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.material)
+    
+    // Material 3 Expressive (requiere 1.4.0 o superior)
+    implementation("androidx.compose.material3:material3:1.4.0")
+    implementation("androidx.compose.material3:material3-window-size-class:1.4.0")
+    
+    // Coil para imágenes (logos y portadas)
+    implementation("io.coil-kt:coil-compose:2.6.0")
+    
+    // Asegurar BOM actualizado
+    implementation(platform("androidx.compose:compose-bom:2025.05.00"))
     
     // Room dependencies with KSP
     val room_version = "2.8.4"
     implementation("androidx.room:room-runtime:$room_version")
     implementation("androidx.room:room-ktx:$room_version")
     ksp("androidx.room:room-compiler:$room_version")
-
+    
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
     implementation(libs.okhttp)
