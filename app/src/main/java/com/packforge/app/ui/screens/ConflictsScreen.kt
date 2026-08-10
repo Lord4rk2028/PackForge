@@ -1,12 +1,26 @@
 package com.packforge.app.ui.screens
 
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.background
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -14,22 +28,45 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MergeType
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.packforge.app.domain.model.*
+import com.packforge.app.domain.model.Addon
+import com.packforge.app.domain.model.Conflict
+import com.packforge.app.domain.model.ConflictResolution
+import com.packforge.app.domain.model.ConflictSeverity
+import com.packforge.app.domain.model.ConflictStrategy
+import com.packforge.app.domain.model.ConflictType
 import com.packforge.app.domain.model.MergeConflict
 
 @Composable
@@ -39,8 +76,8 @@ fun ConflictsScreen(
     resolutions: Map<String, String>,
     onResolve: (conflictId: String, winnerId: String) -> Unit,
     onDismiss: (conflictId: String) -> Unit,
-    conflictStrategy: com.packforge.app.domain.model.ConflictStrategy = com.packforge.app.domain.model.ConflictStrategy.KEEP_FIRST,
-    onConflictStrategyChange: (com.packforge.app.domain.model.ConflictStrategy) -> Unit = {},
+    conflictStrategy: ConflictStrategy = ConflictStrategy.KEEP_FIRST,
+    onConflictStrategyChange: (ConflictStrategy) -> Unit = {},
     mergeConflicts: List<MergeConflict> = emptyList(),
     onResolveMergeConflict: (index: Int, resolution: String) -> Unit = { _, _ -> }
 ) {
@@ -51,8 +88,6 @@ fun ConflictsScreen(
 
     val resolvedCount = conflicts.count { resolutions.containsKey(it.id) }
     val totalCount = conflicts.size
-    val mergeResolvedCount = mergeConflicts.count { it.resolution != "UNRESOLVED" }
-    val mergeTotalCount = mergeConflicts.size
 
     val listState = rememberLazyListState()
 
@@ -66,7 +101,7 @@ fun ConflictsScreen(
             ConflictSummaryCard(total = totalCount, resolved = resolvedCount, conflicts = conflicts)
         }
 
-        // MERGE CONFLICTS SECTION
+        // MERGE CONFLICTS SECTION (BATALLA DE ADDONS)
         if (mergeConflicts.isNotEmpty()) {
             item {
                 MergeConflictsSection(
@@ -88,21 +123,21 @@ fun ConflictsScreen(
                 Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Estrategia de Conflicto", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text("Cómo actuar si dos addons modifican el mismo archivo (no fusionable):", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        com.packforge.app.domain.model.ConflictStrategy.values().forEach { strategy ->
+                        ConflictStrategy.values().forEach { strategy ->
                             val selected = conflictStrategy == strategy
                             FilterChip(
                                 selected = selected,
                                 onClick = { onConflictStrategyChange(strategy) },
-                                label = { 
+                                label = {
                                     Text(
                                         text = strategy.name.replace("_", " ").lowercase().replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() },
                                         style = MaterialTheme.typography.labelSmall
-                                    ) 
+                                    )
                                 },
                                 modifier = Modifier.weight(1f)
                             )
@@ -114,7 +149,7 @@ fun ConflictsScreen(
 
         // Dividir por severidad (TODAS, incluida WARNING)
         val grouped = conflicts.groupBy { it.severity }
-        
+
         listOf(
             ConflictSeverity.CRITICAL,
             ConflictSeverity.HIGH,
@@ -136,7 +171,7 @@ fun ConflictsScreen(
                 }
             }
         }
-        
+
         item { Spacer(modifier = Modifier.height(80.dp)) }
     }
 }
@@ -237,9 +272,9 @@ fun ConflictCard(conflict: Conflict, addons: List<Addon>, resolution: String?, o
                 ) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(conflict.description, style = MaterialTheme.typography.bodySmall)
-                    
+
                     Text("Ganador de la fusión:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                    
+
                     val affected = addons.filter { conflict.affectedAddonIds.contains(it.id) }
                     affected.forEach { addon ->
                         val selected = resolution == addon.id
@@ -284,8 +319,8 @@ fun ConflictCard(conflict: Conflict, addons: List<Addon>, resolution: String?, o
 
 @Composable
 fun borderStroke(selected: Boolean, color: Color = MaterialTheme.colorScheme.primary) =
-    if (selected) androidx.compose.foundation.BorderStroke(2.dp, color) 
-    else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    if (selected) BorderStroke(2.dp, color)
+    else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
 
 @Composable
 fun NoConflictsState() {
@@ -298,68 +333,75 @@ fun NoConflictsState() {
     }
 }
 
+// ═════════════════════════════════════════════════════════════
+// TAREA 4: CONFLICTOS = "BATALLA DE ADDONS"
+// ═════════════════════════════════════════════════════════════
+
+/**
+ * Sección "Batalla de Addons": cada conflicto de fusión se muestra
+ * como una tarjeta de batalla entre dos addons con espada "⚔️".
+ */
 @Composable
 fun MergeConflictsSection(
     mergeConflicts: List<MergeConflict>,
     onResolveMergeConflict: (index: Int, resolution: String) -> Unit
 ) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp)
-    ) {
-        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
                 Text(
-                    "Conflictos de Fusión",
+                    "⚔️ Batalla de Addons",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
-                Badge(containerColor = MaterialTheme.colorScheme.errorContainer) {
-                    Text(
-                        "${mergeConflicts.size}",
-                        color = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                }
-            }
-            
-            Text(
-                "Conflictos detectados durante la fusión de archivos JSON:",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            
-            mergeConflicts.forEachIndexed { index, conflict ->
-                MergeConflictCard(
-                    conflict = conflict,
-                    index = index,
-                    onResolve = onResolveMergeConflict
+                Text(
+                    "Conflictos detectados durante la fusión de archivos JSON",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            Badge(containerColor = MaterialTheme.colorScheme.errorContainer) {
+                Text(
+                    "${mergeConflicts.size}",
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+        }
+
+        mergeConflicts.forEachIndexed { index, conflict ->
+            ConflictBattleCard(
+                conflict = conflict,
+                isResolved = conflict.resolution != "UNRESOLVED",
+                onResolve = { resolution ->
+                    onResolveMergeConflict(index, resolution)
+                }
+            )
         }
     }
 }
 
+/**
+ * Tarjeta de batalla entre dos addons (KEEP_SOURCE vs KEEP_TARGET),
+ * con borde coloreado según la severidad del conflicto.
+ */
 @Composable
-fun MergeConflictCard(
+fun ConflictBattleCard(
     conflict: MergeConflict,
-    index: Int,
-    onResolve: (index: Int, resolution: String) -> Unit
+    isResolved: Boolean = false,
+    onResolve: (String) -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    val isResolved = conflict.resolution != "UNRESOLVED"
-    
-    val severityColor = when (conflict.severity) {
-        ConflictSeverity.CRITICAL -> Color(0xFFF44336)   // Rojo
-        ConflictSeverity.HIGH -> Color(0xFFFF9800)       // Naranja
-        ConflictSeverity.MEDIUM -> Color(0xFFFFC107)     // Amarillo
-        ConflictSeverity.LOW -> Color(0xFF4CAF50)        // Verde
-        ConflictSeverity.WARNING -> Color(0xFFB0BEC5)    // Gris/Ámbar suave
+    val borderColor = when (conflict.severity) {
+        ConflictSeverity.LOW -> Color(0xFF4CAF50)
+        ConflictSeverity.MEDIUM -> Color(0xFFFFC107)
+        ConflictSeverity.HIGH -> Color(0xFFFF9800)
+        ConflictSeverity.CRITICAL -> Color(0xFFF44336)
+        ConflictSeverity.WARNING -> Color(0xFFB0BEC5)
     }
-    
+
     val conflictTypeLabel = when (conflict.conflictType) {
         "ITEM_OVERWRITE" -> "Ítem sobrescrito"
         "ENTITY_OVERWRITE" -> "Entidad sobrescrita"
@@ -370,139 +412,144 @@ fun MergeConflictCard(
         "MANIFEST_UUID_COLLISION" -> "UUID de manifiesto duplicado"
         else -> "Valor primitivo sobrescrito"
     }
-    
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth().border(
-            2.dp,
-            if (isResolved) Color(0xFF4CAF50).copy(0.4f) else severityColor,
-            RoundedCornerShape(12.dp)
-        ),
-        shape = RoundedCornerShape(12.dp)
+
+    Card(
+        border = BorderStroke(2.dp, if (isResolved) Color(0xFF4CAF50).copy(alpha = 0.4f) else borderColor),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Column {
-            Row(
-                Modifier.fillMaxWidth()
-                    .clickable { expanded = !expanded }
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // ── Encabezado con severidad ─────────────────────
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    if (isResolved) Icons.Default.CheckCircle else Icons.Default.Warning,
-                    null,
-                    tint = if (isResolved) Color(0xFF4CAF50) else severityColor,
+                    imageVector = if (isResolved) Icons.Default.CheckCircle else Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = if (isResolved) Color(0xFF4CAF50) else borderColor,
                     modifier = Modifier.size(20.dp)
                 )
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        conflictTypeLabel,
+                        text = conflictTypeLabel,
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        conflict.filePath,
+                        text = conflict.filePath,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                // Etiqueta de severidad
-                Surface(shape = RoundedCornerShape(8.dp), color = severityColor.copy(alpha = 0.15f)) {
+                Surface(shape = RoundedCornerShape(8.dp), color = borderColor.copy(alpha = 0.15f)) {
                     Text(
-                        text = conflict.severity.name,
+                        text = if (isResolved) "RESUELTO" else conflict.severity.name,
                         style = MaterialTheme.typography.labelSmall,
-                        color = severityColor,
+                        color = if (isResolved) Color(0xFF4CAF50) else borderColor,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
-                Spacer(Modifier.width(4.dp))
-                Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
             }
-            
-            AnimatedVisibility(visible = expanded) {
-                Column(
-                    Modifier.fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(0.3f))
-                        .padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (conflict.description.isNotBlank()) {
-                        Text(
-                            conflict.description,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Text(
-                        "Archivo: ${conflict.filePath}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "Addon que sobrescribe: ${conflict.sourceAddon}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        "Addon sobrescrito: ${conflict.targetAddon}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFF44336)
-                    )
-                    
-                    Text(
-                        "Resolución:",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = { onResolve(index, MergeConflict.RESOLUTION_KEEP_SOURCE) },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (conflict.resolution == MergeConflict.RESOLUTION_KEEP_SOURCE)
-                                    MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
-                            ),
-                            border = if (conflict.resolution == MergeConflict.RESOLUTION_KEEP_SOURCE)
-                                null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                        ) {
-                            Text("Mantener ${conflict.sourceAddon}", fontSize = 11.sp, maxLines = 1)
-                        }
-                        
-                        Button(
-                            onClick = { onResolve(index, MergeConflict.RESOLUTION_KEEP_TARGET) },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (conflict.resolution == MergeConflict.RESOLUTION_KEEP_TARGET)
-                                    MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface
-                            ),
-                            border = if (conflict.resolution == MergeConflict.RESOLUTION_KEEP_TARGET)
-                                null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                        ) {
-                            Text("Mantener ${conflict.targetAddon}", fontSize = 11.sp, maxLines = 1)
-                        }
-                    }
-                    
-                    Button(
-                        onClick = { onResolve(index, MergeConflict.RESOLUTION_MERGE) },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (conflict.resolution == MergeConflict.RESOLUTION_MERGE)
-                                MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.surface
-                        ),
-                        border = if (conflict.resolution == MergeConflict.RESOLUTION_MERGE)
-                            null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.MergeType, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Fusionar", fontSize = 12.sp)
-                    }
-                }
+
+            // ── Batalla: dos lados enfrentados ───────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                BattleSide(
+                    name = conflict.sourceAddon,
+                    selected = conflict.resolution == MergeConflict.RESOLUTION_KEEP_SOURCE,
+                    color = borderColor,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onResolve(MergeConflict.RESOLUTION_KEEP_SOURCE) }
+                )
+
+                Text("⚔️", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 4.dp))
+
+                BattleSide(
+                    name = conflict.targetAddon,
+                    selected = conflict.resolution == MergeConflict.RESOLUTION_KEEP_TARGET,
+                    color = borderColor,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onResolve(MergeConflict.RESOLUTION_KEEP_TARGET) }
+                )
             }
+
+            // ── Descripción (si existe) ──────────────────────
+            if (conflict.description.isNotBlank()) {
+                Text(
+                    text = conflict.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // ── Fusionar ambos ───────────────────────────────
+            val isMerge = conflict.resolution == MergeConflict.RESOLUTION_MERGE
+            TextButton(
+                onClick = { onResolve(MergeConflict.RESOLUTION_MERGE) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.textButtonColors(
+                    containerColor = if (isMerge)
+                        MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f)
+                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                )
+            ) {
+                Icon(Icons.AutoMirrored.Filled.MergeType, null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (isMerge) "✓ Fusionados" else "Fusionar ambos", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+/**
+ * Un lado de la batalla: tarjeta clicable para elegir ganador.
+ */
+@Composable
+fun BattleSide(
+    name: String,
+    selected: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onClick() },
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) color.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            if (selected) 2.dp else 1.dp,
+            if (selected) color else MaterialTheme.colorScheme.outlineVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = if (selected) "🏆" else "🛡️",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                text = name,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            Text(
+                text = if (selected) "Ganador" else "Elegir",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (selected) color else MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

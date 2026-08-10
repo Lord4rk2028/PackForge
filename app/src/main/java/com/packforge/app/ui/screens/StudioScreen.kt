@@ -8,7 +8,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,14 +26,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.packforge.app.ui.components.CachedAsyncImage
+import com.packforge.app.ui.components.MorphingFab
+import com.packforge.app.ui.components.MorphingFabItem
 import com.packforge.app.ui.components.PackForgeTopBar
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.domain.model.OperationProgress
@@ -108,138 +115,169 @@ fun StudioScreen(
             modpacks = savedModpacks,
             onBack = { viewModel.setShowMyModpacks(false) },
             onDelete = onDeleteModpack,
-            onLoad = onLoadModpack
+            onLoad = onLoadModpack,
+            onOpenSources = { viewModel.setShowMyModpacks(false) }
         )
         return
     }
 
     val listState = rememberLazyListState()
 
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(16.dp)
-    ) {
-        item {
-            Column(modifier = Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "PackForge Studio", 
-                    style = MaterialTheme.typography.headlineMedium, 
-                    fontWeight = FontWeight.Bold, 
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "Gestiona tus creaciones y fuentes de contenido", 
-                    style = MaterialTheme.typography.bodyMedium, 
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        item {
-            StudioCard(
-                icon = Icons.Default.Folder, 
-                title = "My Modpacks", 
-                description = "Edita, comparte o borra tus modpacks guardados", 
-                badge = if(savedModpacks.isNotEmpty()) savedModpacks.size.toString() else null
-            ) {
-                viewModel.setShowMyModpacks(true)
-            }
-        }
-
-        item {
-            StudioCard(
-                icon = Icons.Default.Settings, 
-                title = "Ajustes de Tema", 
-                description = "Modo oscuro, color de acento y animaciones", 
-                badge = null
-            ) {
-                viewModel.setShowThemeSettings(true)
-            }
-        }
-
-        item { 
-            Text(
-                text = "Fuentes Bedrock", 
-                style = MaterialTheme.typography.titleLarge, 
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 8.dp)
-            ) 
-        }
-
-        item {
-            StudioCard(
-                icon = Icons.Default.Search, 
-                title = "MCPEDL", 
-                description = "Addons y mapas de la comunidad", 
-                badge = "Popular"
-            ) {
-                viewModel.setActiveWebSource("MCPEDL")
-            }
-        }
-
-        item {
-            StudioCard(
-                icon = Icons.Outlined.Extension, 
-                title = "CurseForge", 
-                description = "Addons verificados de alta calidad", 
-                badge = null
-            ) {
-                viewModel.setActiveWebSource("CurseForge")
-            }
-        }
-
-        item {
-            StudioCard(
-                icon = Icons.Default.Star, 
-                title = "ModBay", 
-                description = "Texturas, skins y complementos", 
-                badge = null
-            ) {
-                viewModel.setActiveWebSource("ModBay")
-            }
-        }
-
-        item {
-            Surface(
-                shape = RoundedCornerShape(16.dp), 
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.padding(top = 8.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp), 
-                    horizontalArrangement = Arrangement.spacedBy(12.dp), 
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("💡", fontSize = 18.sp)
-                    }
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp)
+        ) {
+            item {
+                Column(modifier = Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "Navega y pulsa 'Descargar' en cualquier fuente. PackForge detectará el archivo automáticamente y te avisará al finalizar.", 
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "Biblioteca de Modpacks",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Gestiona tus creaciones y fuentes de contenido",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
+
+            item {
+                StudioCard(
+                    icon = Icons.Default.Folder,
+                    title = "My Modpacks",
+                    description = "Edita, comparte o borra tus modpacks guardados",
+                    badge = if(savedModpacks.isNotEmpty()) savedModpacks.size.toString() else null,
+                    accent = Color(0xFF2ECC71)
+                ) {
+                    viewModel.setShowMyModpacks(true)
+                }
+            }
+
+            item {
+                StudioCard(
+                    icon = Icons.Default.Settings,
+                    title = "Ajustes de Tema",
+                    description = "Modo oscuro, color de acento y animaciones",
+                    badge = null,
+                    accent = MaterialTheme.colorScheme.tertiary
+                ) {
+                    viewModel.setShowThemeSettings(true)
+                }
+            }
+
+            item {
+                Text(
+                    text = "Fuentes Bedrock",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+
+            item {
+                StudioCard(
+                    icon = Icons.Default.Search,
+                    title = "MCPEDL",
+                    description = "Addons y mapas de la comunidad",
+                    badge = "Popular",
+                    accent = Color(0xFFFF9800)
+                ) {
+                    viewModel.setActiveWebSource("MCPEDL")
+                }
+            }
+
+            item {
+                StudioCard(
+                    icon = Icons.Outlined.Extension,
+                    title = "CurseForge",
+                    description = "Addons verificados de alta calidad",
+                    badge = null,
+                    accent = Color(0xFFF57C00)
+                ) {
+                    viewModel.setActiveWebSource("CurseForge")
+                }
+            }
+
+            item {
+                StudioCard(
+                    icon = Icons.Default.Star,
+                    title = "ModBay",
+                    description = "Texturas, skins y complementos",
+                    badge = null,
+                    accent = Color(0xFF4FC3F7)
+                ) {
+                    viewModel.setActiveWebSource("ModBay")
+                }
+            }
+
+            item {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.padding(top = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("💡", fontSize = 18.sp)
+                        }
+                        Text(
+                            text = "Navega y pulsa 'Descargar' en cualquier fuente. PackForge detectará el archivo automáticamente y te avisará al finalizar.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
 
-        item { Spacer(modifier = Modifier.height(80.dp)) }
+        // FAB EXPRESIVO con morphing: atajos a las fuentes
+        MorphingFab(
+            items = listOf(
+                MorphingFabItem("MCPEDL", Icons.Default.Search) {
+                    viewModel.setActiveWebSource("MCPEDL")
+                },
+                MorphingFabItem("CurseForge", Icons.Outlined.Extension) {
+                    viewModel.setActiveWebSource("CurseForge")
+                },
+                MorphingFabItem("ModBay", Icons.Default.Star) {
+                    viewModel.setActiveWebSource("ModBay")
+                }
+            ),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 20.dp, bottom = 16.dp)
+        )
     }
 }
 
 @Composable
-fun StudioCard(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, description: String, badge: String?, onClick: () -> Unit) {
+fun StudioCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String,
+    badge: String?,
+    accent: Color,
+    onClick: () -> Unit
+) {
     ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onClick() }, shape = RoundedCornerShape(16.dp)) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
-                Icon(icon, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(26.dp))
+            Box(Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = accent, modifier = Modifier.size(26.dp))
             }
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -252,16 +290,26 @@ fun StudioCard(icon: androidx.compose.ui.graphics.vector.ImageVector, title: Str
     }
 }
 
+// ═════════════════════════════════════════════════════════════
+// TAREA 5: STUDIO = BIBLIOTECA DE MODPACKS (grid tipo Steam)
+// ═════════════════════════════════════════════════════════════
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MyModpacksScreen(modpacks: List<SavedModpack>, onBack: () -> Unit, onDelete: (String) -> Unit, onLoad: (SavedModpack) -> Unit) {
+fun MyModpacksScreen(
+    modpacks: List<SavedModpack>,
+    onBack: () -> Unit,
+    onDelete: (String) -> Unit,
+    onLoad: (SavedModpack) -> Unit,
+    onOpenSources: () -> Unit = {}
+) {
     val context = LocalContext.current
     var modpackToDelete by remember { mutableStateOf<SavedModpack?>(null) }
 
     Scaffold(
         topBar = {
             PackForgeTopBar(
-                title = "My Modpacks",
+                title = "Biblioteca de Modpacks",
                 onBackClick = onBack
             )
         }
@@ -271,34 +319,59 @@ fun MyModpacksScreen(modpacks: List<SavedModpack>, onBack: () -> Unit, onDelete:
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Icon(Icons.Outlined.FolderOpen, null, Modifier.size(64.dp).alpha(0.4f))
                     Text("Sin modpacks guardados", style = MaterialTheme.typography.titleMedium, modifier = Modifier.alpha(0.6f))
+                    Text(
+                        "Toca + para explorar fuentes y crear tu primer modpack",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 32.dp)
+                    )
                 }
             }
         } else {
-            val modpackListState = rememberLazyListState()
-            LazyColumn(
-                state = modpackListState,
+            // ── GRID 2 columnas tipo Steam ───────────────────
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize().padding(padding),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
                 contentPadding = PaddingValues(16.dp)
             ) {
                 items(modpacks, key = { it.id }, contentType = { "modpack" }) { modpack ->
-                    val onLoad = remember(modpack.id) { { onLoad(modpack); onBack() } }
-                    val onDelete = remember(modpack.id) { { modpackToDelete = modpack } }
-                    val onShare = remember(modpack.id) { { shareModpack(context, modpack) } }
-                    SavedModpackCard(
+                    val onLoadThis = remember(modpack.id) { { onLoad(modpack); onBack() } }
+                    val onDeleteThis = remember(modpack.id) { { modpackToDelete = modpack } }
+                    val onShareThis = remember(modpack.id) { { shareModpack(context, modpack) } }
+                    ModpackLibraryCard(
                         modpack = modpack,
-                        onLoad = onLoad,
-                        onDelete = onDelete,
-                        onShare = onShare
+                        onLoad = onLoadThis,
+                        onDelete = onDeleteThis,
+                        onShare = onShareThis
                     )
                 }
-                item { Spacer(modifier = Modifier.height(80.dp)) }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Spacer(modifier = Modifier.height(80.dp))
+                }
             }
         }
     }
 
+    // FAB EXPRESIVO con morphing
+    Box(modifier = Modifier.fillMaxSize()) {
+        MorphingFab(
+            items = listOf(
+                MorphingFabItem("Explorar fuentes", Icons.Default.Search, onClick = onOpenSources),
+                MorphingFabItem("Compartir uno", Icons.Default.Share) {
+                    modpacks.firstOrNull()?.let { shareModpack(context, it) }
+                }
+            ),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 20.dp, bottom = 24.dp)
+        )
+    }
+
     modpackToDelete?.let { m ->
-        AlertDialog(onDismissRequest = { modpackToDelete = null }, title = { Text("Eliminar modpack") }, 
+        AlertDialog(onDismissRequest = { modpackToDelete = null }, title = { Text("Eliminar modpack") },
             text = { Text("¿Eliminar '${m.name}'? Se borrará del historial de PackForge.") },
             confirmButton = { TextButton(onClick = { onDelete(m.id); modpackToDelete = null }) { Text("Eliminar", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { modpackToDelete = null }) { Text("Cancelar") } }
@@ -314,10 +387,10 @@ fun shareModpack(context: android.content.Context, modpack: SavedModpack) {
         File(context.filesDir, modpack.fileName),
         File(modpack.filePath) // Ruta guardada en el historial
     )
-    
+
     // Buscar el primer archivo que exista y tenga contenido
     val file = possiblePaths.firstOrNull { it.exists() && it.length() > 0 }
-    
+
     if (file != null) {
         try {
             // Verificar que el archivo tenga contenido
@@ -325,7 +398,7 @@ fun shareModpack(context: android.content.Context, modpack: SavedModpack) {
                 android.widget.Toast.makeText(context, "El archivo está vacío (0 bytes)", android.widget.Toast.LENGTH_SHORT).show()
                 return
             }
-            
+
             val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = "application/zip" // Usar MIME type correcto para .mcpack
@@ -345,45 +418,150 @@ fun shareModpack(context: android.content.Context, modpack: SavedModpack) {
     }
 }
 
+/**
+ * Tarjeta tipo Steam: portada grande 16:9, nombre, fecha y nº de addons.
+ */
 @Composable
-fun SavedModpackCard(modpack: SavedModpack, onLoad: () -> Unit, onDelete: () -> Unit, onShare: () -> Unit) {
-    val addonNames = try { org.json.JSONArray(modpack.addonNames).let { a -> (0 until a.length()).map { a.getString(it) } } } catch(e: Exception) { emptyList() }
+fun ModpackLibraryCard(
+    modpack: SavedModpack,
+    onLoad: () -> Unit,
+    onDelete: () -> Unit,
+    onShare: () -> Unit
+) {
+    val coverPath = modpack.coverUriString
+    val hasValidCover = !coverPath.isNullOrBlank() && (!coverPath.startsWith("/") || File(coverPath).exists())
 
-    ElevatedCard(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
-        Column(Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
-                    val coverPath = modpack.coverUriString
-                    if (!coverPath.isNullOrBlank()) {
-                        val fileExists = !coverPath.startsWith("/") || File(coverPath).exists()
-                        if (fileExists) {
-                            CachedAsyncImage(
-                                model = coverPath,
-                                contentDescription = "Portada de ${modpack.name}",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onLoad() },
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 4.dp)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            // ── Portada 16:9 ─────────────────────────────────
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                when {
+                    coverPath != null && hasValidCover -> {
+                        CachedAsyncImage(
+                            model = coverPath,
+                            contentDescription = "Portada de ${modpack.name}",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+                    else -> {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                Icons.Default.Extension,
+                                null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
+                                modifier = Modifier.size(28.dp)
                             )
-                        } else {
-                            Icon(Icons.Default.Extension, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(30.dp))
+                            Text(
+                                text = modpack.name.take(12),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
-                    } else {
-                        Icon(Icons.Default.Extension, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(30.dp))
                     }
                 }
-                Column(Modifier.weight(1f)) {
-                    Text(modpack.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("v${modpack.version} · MC ${modpack.mcVersion} · ${modpack.addonCount} addons", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                // Badge de nº de addons
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        text = "🧩 ${modpack.addonCount}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
                 }
             }
-            Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = onLoad, Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) { 
-                    Icon(Icons.Default.Refresh, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Cargar/Editar")
+
+            // ── Metadatos ────────────────────────────────────
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = modpack.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "v${modpack.version} · MC ${modpack.mcVersion}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = formatModpackDate(modpack.createdAt),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
+
+            // ── Acciones ─────────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilledTonalButton(
+                    onClick = onLoad,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp)
+                ) {
+                    Icon(Icons.Default.Refresh, null, Modifier.size(15.dp))
+                    Text("Editar", style = MaterialTheme.typography.labelSmall)
                 }
-                FilledTonalButton(onClick = onShare, Modifier.weight(1f), shape = RoundedCornerShape(10.dp)) { 
-                    Icon(Icons.Default.Share, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Compartir") 
+                FilledTonalIconButton(
+                    onClick = onShare,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(Icons.Default.Share, null, Modifier.size(16.dp))
                 }
-                IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) }
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         }
+    }
+}
+
+private fun formatModpackDate(timestamp: Long): String {
+    return try {
+        SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+            .format(Date(timestamp))
+    } catch (e: Exception) {
+        ""
     }
 }

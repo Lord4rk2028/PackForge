@@ -731,9 +731,20 @@ private fun RowScope.AddonCardInfo(
             }
         }
         Text(
-            text = addon.type.displayName,
+            text = when (addon.type) {
+                AddonType.BEHAVIOR_ONLY -> "🔵 Behavior"
+                AddonType.RESOURCE_ONLY -> "🟢 Resource"
+                AddonType.BEHAVIOR_AND_RESOURCE -> "🟣 Completo"
+                AddonType.UNKNOWN -> "⚪ Desconocido"
+            },
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.primary
+            fontWeight = FontWeight.SemiBold,
+            color = when (addon.type) {
+                AddonType.BEHAVIOR_ONLY -> Color(0xFF2196F3)
+                AddonType.RESOURCE_ONLY -> Color(0xFF4CAF50)
+                AddonType.BEHAVIOR_AND_RESOURCE -> Color(0xFF9C27B0)
+                AddonType.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
         )
         Text(
             text = "v${addon.version} · ${

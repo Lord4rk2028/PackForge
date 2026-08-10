@@ -14,6 +14,8 @@ import androidx.compose.animation.shrinkVertically
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.packforge.app.ui.components.CachedAsyncImage
+import com.packforge.app.ui.components.CraftingTableLayout
+import com.packforge.app.ui.components.MinecraftProgressBar
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -121,6 +123,7 @@ fun ExportSetupScreen(
 ) {
     val conflictStrategy by viewModel.conflictStrategy.collectAsStateWithLifecycle()
     val mergeResult by viewModel.mergeResult.collectAsStateWithLifecycle()
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     // ── ESTADOS ─────────────────────────────────────────────
     var importToMinecraft by remember { mutableStateOf(minecraftUri != null) }
@@ -144,15 +147,11 @@ fun ExportSetupScreen(
         .replace("[^a-zA-Z0-9_\\-]".toRegex(), "")
         .ifBlank { "modpack" }
 
-    // ── LAUNCHERS ────────────────────────────────────────────
-    val createDocumentLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument(
-            "application/zip"
-        )
-    ) { uri ->
-        if (uri != null) {
-            customUri = uri
-            useCustomPath = true
+    val addonImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            viewModel.importAddons(context, uris, false)
         }
     }
 
@@ -171,6 +170,15 @@ fun ExportSetupScreen(
     ) { uri ->
         if (uri != null) {
             onConnectMinecraft(uri)
+        }
+    }
+
+    val createDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        if (uri != null) {
+            customUri = uri
+            useCustomPath = true
         }
     }
 
@@ -201,6 +209,30 @@ fun ExportSetupScreen(
                 activeAddons = activeAddons.size,
                 selectedTemplateIndex = -1
             )
+        }
+
+        // MESA DE CRAFTEO
+        item {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                )
+            ) {
+                CraftingTableLayout(
+                    addons = addons,
+                    onAddAddon = {
+                        addonImportLauncher.launch(arrayOf("*/*"))
+                    },
+                    onExport = {
+                        onExport(
+                            if (useCustomPath) customUri else null,
+                            importToMinecraft
+                        )
+                    }
+                )
+            }
         }
 
         // PERSONALIZACIÓN
@@ -737,28 +769,9 @@ fun ExportSetupScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = exportState.message,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "${exportState.percent}%",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        LinearProgressIndicator(
-                            progress = { exportState.percent / 100f },
-                            modifier = Modifier.fillMaxWidth().height(8.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                            strokeCap = StrokeCap.Round,
+                        MinecraftProgressBar(
+                            progress = exportState.percent / 100f,
+                            message = thematicExportMessage(exportState.message)
                         )
                     }
                 }
@@ -1168,6 +1181,23 @@ fun ExportSetupScreen(
             }
         )
     }
+}
+
+/**
+ * Convierte los mensajes internos del exportador en mensajes
+ * temáticos estilo Minecraft (solo UI, no toca la lógica).
+ */
+private fun thematicExportMessage(raw: String): String = when {
+    raw.contains("Extrayendo", ignoreCase = true) ||
+        raw.contains("Clasificando", ignoreCase = true) -> "⛏️ Minando addons..."
+    raw.contains("Fusionando", ignoreCase = true) -> "🔥 Fundiendo JSONs en el horno..."
+    raw.contains("manifiesto", ignoreCase = true) ||
+        raw.contains("Generando", ignoreCase = true) -> "✨ Encantando manifiestos..."
+    raw.contains("Empaquetando", ignoreCase = true) ||
+        raw.contains("ZIP", ignoreCase = true) -> "📦 Empaquetando tu modpack..."
+    raw.contains("Validando", ignoreCase = true) -> "🔍 Inspeccionando tesoros..."
+    raw.contains("Limpiando", ignoreCase = true) -> "🧹 Limpiando cofres..."
+    else -> raw
 }
 
 @Composable
