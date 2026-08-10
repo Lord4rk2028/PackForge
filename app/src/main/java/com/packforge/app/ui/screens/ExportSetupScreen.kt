@@ -14,7 +14,6 @@ import androidx.compose.animation.shrinkVertically
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.packforge.app.ui.components.CachedAsyncImage
-import com.packforge.app.ui.components.CraftingTableLayout
 import com.packforge.app.ui.components.MinecraftProgressBar
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.Image
@@ -123,7 +122,6 @@ fun ExportSetupScreen(
 ) {
     val conflictStrategy by viewModel.conflictStrategy.collectAsStateWithLifecycle()
     val mergeResult by viewModel.mergeResult.collectAsStateWithLifecycle()
-    val context = androidx.compose.ui.platform.LocalContext.current
 
     // ── ESTADOS ─────────────────────────────────────────────
     var importToMinecraft by remember { mutableStateOf(minecraftUri != null) }
@@ -146,14 +144,6 @@ fun ExportSetupScreen(
         .replace(" ", "_")
         .replace("[^a-zA-Z0-9_\\-]".toRegex(), "")
         .ifBlank { "modpack" }
-
-    val addonImportLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris ->
-        if (uris.isNotEmpty()) {
-            viewModel.importAddons(context, uris, false)
-        }
-    }
 
     val coverPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -209,30 +199,6 @@ fun ExportSetupScreen(
                 activeAddons = activeAddons.size,
                 selectedTemplateIndex = -1
             )
-        }
-
-        // MESA DE CRAFTEO
-        item {
-            ElevatedCard(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.elevatedCardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                )
-            ) {
-                CraftingTableLayout(
-                    addons = addons,
-                    onAddAddon = {
-                        addonImportLauncher.launch(arrayOf("*/*"))
-                    },
-                    onExport = {
-                        onExport(
-                            if (useCustomPath) customUri else null,
-                            importToMinecraft
-                        )
-                    }
-                )
-            }
         }
 
         // PERSONALIZACIÓN

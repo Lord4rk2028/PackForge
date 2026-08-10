@@ -82,6 +82,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.packforge.app.ui.components.CachedAsyncImage
+import com.packforge.app.ui.components.CraftingTableLayout
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.AddonType
 import com.packforge.app.domain.model.Conflict
@@ -139,6 +140,19 @@ fun ImportScreen(
                     launcher.launch(arrayOf("*/*"))
                 }
             )
+        }
+
+        // ─── MESA DE CRAFTEO DINÁMICA ────────────────────────
+        // Refleja en vivo los addons importados en la rejilla 3x3.
+        if (addons.isNotEmpty() && !isImporting) {
+            item {
+                CraftingTableLayout(
+                    addons = addons,
+                    onAddAddon = { launcher.launch(arrayOf("*/*")) },
+                    onExport = {},
+                    showResultSlot = false
+                )
+            }
         }
 
         // ─── SCORE DE COMPATIBILIDAD ─────────────────────────

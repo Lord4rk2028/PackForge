@@ -175,6 +175,16 @@ object ConflictEngine {
 
         active.forEach { addon ->
             addon.files.forEach { file ->
+                val fileName = file.substringAfterLast("/")
+
+                // PackForge REGENERA estos archivos al exportar (manifiestos
+                // fusionados por ManifestGenerator y pack_icon.png desde la
+                // portada personalizada), así que no son conflictos reales
+                // entre addons y no deben mostrarse como advertencias.
+                if (fileName == "manifest.json" || fileName == "pack_icon.png") {
+                    return@forEach
+                }
+
                 // Solo archivos importantes, ignorar subdirectorios vacíos
                 if (file.endsWith(".json") || file.endsWith(".js") ||
                     file.endsWith(".png") || file.endsWith(".ogg") ||

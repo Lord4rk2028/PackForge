@@ -28,7 +28,8 @@ import java.io.File
 fun CraftingTableLayout(
     addons: List<Addon>,
     onAddAddon: () -> Unit,
-    onExport: () -> Unit
+    onExport: () -> Unit,
+    showResultSlot: Boolean = true
 ) {
     Column(modifier = Modifier.padding(16.dp)) {
         Row(
@@ -88,13 +89,15 @@ fun CraftingTableLayout(
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        if (showResultSlot) {
+            Spacer(modifier = Modifier.height(20.dp))
 
-        // ── Slot de resultado con brillo animado ────────────
-        ResultSlot(
-            addonCount = addons.size,
-            onClick = onExport
-        )
+            // ── Slot de resultado con brillo animado ──────────
+            ResultSlot(
+                addonCount = addons.size,
+                onClick = onExport
+            )
+        }
     }
 }
 
