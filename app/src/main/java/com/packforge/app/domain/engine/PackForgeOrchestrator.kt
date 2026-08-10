@@ -217,6 +217,14 @@ object PackForgeOrchestrator {
             PackForgeLog.d("PackForge_Export", "📊 RESUMEN DE CLASIFICACIÓN:")
             PackForgeLog.d("PackForge_Export", "  BPs detectados: ${bpDirs.size}")
             PackForgeLog.d("PackForge_Export", "  RPs detectados: ${rpDirs.size}")
+
+            // ═══ RENAMESPACER: hacer compatibles addons que definen el MISMO
+            // identificador (entity/item/recipe). Renombra los que colisionan y
+            // reescribe sus referencias ANTES de fusionar para que coexistan.
+            IdentifierRemapper.run(
+                behaviorDirs = bpDirs.map { File(it) },
+                resourceDirs = rpDirs.map { File(it) }
+            )
             
             // c) FUSIONAR BEHAVIOR PACKS
             val mergedBpDir = File(tempDir, "merged_bp")
