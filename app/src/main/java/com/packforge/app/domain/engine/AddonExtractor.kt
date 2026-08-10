@@ -1,6 +1,7 @@
 package com.packforge.app.domain.engine
 
 import com.packforge.app.util.PackForgeLog
+import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -34,6 +35,10 @@ object AddonExtractor {
         data class BOTH(
             val bpSubfolder: File,
             val rpSubfolder: File
+        ) : AddonClassification()
+        /** Varios packs anidados (.mcpack/.zip dentro del addon). Cada uno se clasifica por separado. */
+        data class MULTI(
+            val packs: List<File>
         ) : AddonClassification()
         object UNKNOWN : AddonClassification()
     }
@@ -128,8 +133,15 @@ object AddonExtractor {
         // Buscar recursivamente todos los archivos JSON
         findJsonFiles(extractedDir, "", manifestFiles, itemFiles, entityFiles, lootFiles, recipeFiles, otherJsonFiles)
 
-        // Detectar tipo de addon
-        val (addonClassification, addonType) = detectAddonType(manifestFiles, extractedDir)
+        // Detectar tipo de addon clasificando por CONTENIDO del manifest (no por nombre).
+        val addonClassification = classify(extractedDir)
+        val addonType = when (addonClassification) {
+            is AddonClassification.BEHAVIOR_PACK -> AddonType.BEHAVIOR_PACK
+            is AddonClassification.RESOURCE_PACK -> AddonType.RESOURCE_PACK
+            is AddonClassification.BOTH,
+            is AddonClassification.MULTI -> AddonType.BOTH
+            is AddonClassification.UNKNOWN -> AddonType.UNKNOWN
+        }
 
         val totalJsonFiles = manifestFiles.size + itemFiles.size + entityFiles.size + 
                            lootFiles.size + recipeFiles.size + otherJsonFiles.size
@@ -209,176 +221,109 @@ object AddonExtractor {
     }
 
     /**
-     * Detecta el tipo de addon basándose en la estructura de archivos
-     * Retorna AddonClassification con rutas de subcarpetas si es BOTH
+     * CLASIFICACIÓN UNIVERSAL por CONTENIDO del manifest.json (no por nombre de carpeta).
+     *
+     * 1. manifest.json en la raíz → tipo según modules[].type (JEI)
+     * 2. ZIPs anidados (.mcpack/.zip) → se extraen a subcarpetas (More Tools) y se devuelven como MULTI
+     * 3. Subcarpetas con manifest.json → cada una se clasifica por contenido (Corecraft, The Lost Mobs)
      */
-    private fun detectAddonType(manifestFiles: List<String>, extractedDir: File): Pair<AddonClassification, AddonType> {
-        PackForgeLog.d("PackForge_Classify", "=== INICIO DETECCIÓN DE TIPO ===")
-        PackForgeLog.d("PackForge_Classify", "Manifest files encontrados: ${manifestFiles.map { it }}")
-        
-        // Buscar manifest.json en diferentes ubicaciones
-        val hasRootManifest = manifestFiles.any { it == "manifest.json" }
-        val hasBehaviorPack = extractedDir.walk().any { 
-            it.isDirectory && it.name.equals("behavior_packs", ignoreCase = true) 
+    fun classify(dir: File): AddonClassification {
+        // CASO 1: manifest.json en la raíz → clasificar por contenido
+        val rootManifest = File(dir, "manifest.json")
+        if (rootManifest.exists()) {
+            return classifyByManifestContent(rootManifest)
         }
-        val hasResourcePack = extractedDir.walk().any { 
-            it.isDirectory && it.name.equals("resource_packs", ignoreCase = true) 
-        }
-        
-        // Detectar carpetas BP_* y RP_* (como BP_CCR_CCR, RP_CCR_CCR)
-        val hasBpSubfolder = extractedDir.walk().any { 
-            it.isDirectory && it.name.startsWith("BP_", ignoreCase = true) 
-        }
-        val hasRpSubfolder = extractedDir.walk().any { 
-            it.isDirectory && it.name.startsWith("RP_", ignoreCase = true) 
-        }
-        
-        // Verificar manifests en subcarpetas BP_*/RP_* (CRÍTICO para Corecraft)
-        val hasBpManifest = manifestFiles.any { manifestPath ->
-            val lowerPath = manifestPath.lowercase()
-            (lowerPath.startsWith("bp_") || lowerPath.contains("/bp_") || lowerPath.contains("\\bp_")) && 
-            lowerPath.contains("manifest.json")
-        }
-        val hasRpManifest = manifestFiles.any { manifestPath ->
-            val lowerPath = manifestPath.lowercase()
-            (lowerPath.startsWith("rp_") || lowerPath.contains("/rp_") || lowerPath.contains("\\rp_")) && 
-            lowerPath.contains("manifest.json")
-        }
-        
-        PackForgeLog.d("PackForge_Classify", "hasRootManifest: $hasRootManifest")
-        PackForgeLog.d("PackForge_Classify", "hasBehaviorPack: $hasBehaviorPack")
-        PackForgeLog.d("PackForge_Classify", "hasResourcePack: $hasResourcePack")
-        PackForgeLog.d("PackForge_Classify", "hasBpSubfolder: $hasBpSubfolder")
-        PackForgeLog.d("PackForge_Classify", "hasRpSubfolder: $hasRpSubfolder")
-        PackForgeLog.d("PackForge_Classify", "hasBpManifest: $hasBpManifest")
-        PackForgeLog.d("PackForge_Classify", "hasRpManifest: $hasRpManifest")
 
-        // CRÍTICO: Priorizar detección BOTH con subcarpetas BP_*/RP_* (caso Corecraft)
-        // Este es el caso más común para addons que tienen ambos packs
-        if (hasBpManifest && hasRpManifest) {
-            // Encontrar las rutas específicas de los manifests
-            val bpManifestPath = manifestFiles.find { manifestPath ->
-                val lowerPath = manifestPath.lowercase()
-                (lowerPath.startsWith("bp_") || lowerPath.contains("/bp_") || lowerPath.contains("\\bp_")) && 
-                lowerPath.contains("manifest.json")
-            }
-            val rpManifestPath = manifestFiles.find { manifestPath ->
-                val lowerPath = manifestPath.lowercase()
-                (lowerPath.startsWith("rp_") || lowerPath.contains("/rp_") || lowerPath.contains("\\rp_")) && 
-                lowerPath.contains("manifest.json")
-            }
-            
-            // Encontrar las carpetas padre de los manifests (las subcarpetas BP_* y RP_*)
-            val bpSubfolder = bpManifestPath?.let { path ->
-                val parts = path.split("/", "\\")
-                if (parts.isNotEmpty()) {
-                    val folderName = parts[0]
-                    extractedDir.listFiles()?.find { it.name == folderName }
-                } else null
-            }
-            val rpSubfolder = rpManifestPath?.let { path ->
-                val parts = path.split("/", "\\")
-                if (parts.isNotEmpty()) {
-                    val folderName = parts[0]
-                    extractedDir.listFiles()?.find { it.name == folderName }
-                } else null
-            }
-            
-            if (bpSubfolder != null && rpSubfolder != null) {
-                PackForgeLog.d("PackForge_Classify", "✅ BOTH detectado:")
-                PackForgeLog.d("PackForge_Classify", "   BP subfolder: ${bpSubfolder.name}")
-                PackForgeLog.d("PackForge_Classify", "   RP subfolder: ${rpSubfolder.name}")
-                return Pair(AddonClassification.BOTH(bpSubfolder, rpSubfolder), AddonType.BOTH)
-            }
-            
-            PackForgeLog.d("PackForge_Classify", "✅ Clasificado como BOTH - BP: $bpManifestPath, RP: $rpManifestPath")
-            // Fallback: BOTH sin subcarpetas específicas (se usará separateBothAddon original)
-            return Pair(AddonClassification.BOTH(extractedDir, extractedDir), AddonType.BOTH)
-        }
-        
-        // Analizar el contenido del manifest.json si existe en raíz
-        if (hasRootManifest) {
-            val manifestFile = File(extractedDir, "manifest.json")
-            if (manifestFile.exists()) {
-                try {
-                    val manifestContent = manifestFile.readText()
-                    val isData = manifestContent.contains("\"type\"", ignoreCase = true) && 
-                                 manifestContent.contains("\"data\"", ignoreCase = true)
-                    val isResources = manifestContent.contains("\"type\"", ignoreCase = true) && 
-                                      manifestContent.contains("\"resources\"", ignoreCase = true)
-                    
-                    PackForgeLog.d("PackForge_Classify", "Manifest en raíz - isData: $isData, isResources: $isResources")
-                    
-                    return when {
-                        isData && isResources -> {
-                            PackForgeLog.d("PackForge_Classify", "Clasificado como: BOTH (manifest raíz)")
-                            Pair(AddonClassification.BOTH(extractedDir, extractedDir), AddonType.BOTH)
-                        }
-                        isData -> {
-                            PackForgeLog.d("PackForge_Classify", "Clasificado como: BEHAVIOR_PACK (manifest raíz)")
-                            Pair(AddonClassification.BEHAVIOR_PACK, AddonType.BEHAVIOR_PACK)
-                        }
-                        isResources -> {
-                            PackForgeLog.d("PackForge_Classify", "Clasificado como: RESOURCE_PACK (manifest raíz)")
-                            Pair(AddonClassification.RESOURCE_PACK, AddonType.RESOURCE_PACK)
-                        }
-                        else -> {
-                            PackForgeLog.d("PackForge_Classify", "Clasificado como: UNKNOWN (manifest raíz sin tipo reconocido)")
-                            Pair(AddonClassification.UNKNOWN, AddonType.UNKNOWN)
-                        }
-                    }
-                } catch (e: Exception) {
-                    PackForgeLog.e("PackForge_Classify", "Error al leer manifest.json: ${e.message}")
+        // CASO 2: ZIPs anidados (.mcpack o .zip dentro) → extraer y clasificar cada uno
+        val nestedZips = dir.walkTopDown()
+            .filter { it.isFile && (it.extension.equals("mcpack", true) || it.extension.equals("zip", true)) }
+            .toList()
+
+        if (nestedZips.isNotEmpty()) {
+            PackForgeLog.d("PackForge_Classify", "📦 ZIPs anidados detectados: ${nestedZips.size}")
+            val packs = mutableListOf<File>()
+            nestedZips.forEach { zip ->
+                val packDir = File(dir, "nested_${zip.nameWithoutExtension}")
+                packDir.mkdirs()
+                val extracted = extractAddon(zip.absolutePath, packDir.absolutePath)
+                if (extracted != null) {
+                    zip.delete()
+                    packs.add(packDir)
+                    PackForgeLog.d("PackForge_Classify", "  ✅ Extraído: ${zip.name}")
                 }
             }
-        }
-        
-        // Detectar BP solo en subcarpeta BP_*
-        if (hasBpManifest && !hasRpManifest) {
-            PackForgeLog.d("PackForge_Classify", "Clasificado como: BEHAVIOR_PACK (manifest en subcarpeta BP_*)")
-            return Pair(AddonClassification.BEHAVIOR_PACK, AddonType.BEHAVIOR_PACK)
-        }
-        
-        // Detectar RP solo en subcarpeta RP_*
-        if (hasRpManifest && !hasBpManifest) {
-            PackForgeLog.d("PackForge_Classify", "Clasificado como: RESOURCE_PACK (manifest en subcarpeta RP_*)")
-            return Pair(AddonClassification.RESOURCE_PACK, AddonType.RESOURCE_PACK)
+            return AddonClassification.MULTI(packs)
         }
 
-        // Fallback basado en estructura de carpetas
-        val result = when {
-            hasBehaviorPack && hasResourcePack -> {
-                PackForgeLog.d("PackForge_Classify", "Clasificado como: BOTH (carpetas behavior_packs + resource_packs)")
-                Pair(AddonClassification.BOTH(extractedDir, extractedDir), AddonType.BOTH)
+        // CASO 3: subcarpetas con manifest.json (Corecraft, Lost Mobs) → clasificar CADA UNA por contenido
+        val subManifests = dir.listFiles()
+            ?.filter { it.isDirectory && File(it, "manifest.json").exists() }
+            ?: emptyList()
+
+        if (subManifests.size >= 2) {
+            var bpFolder: File? = null
+            var rpFolder: File? = null
+
+            subManifests.forEach { folder ->
+                when (classifyByManifestContent(File(folder, "manifest.json"))) {
+                    is AddonClassification.BEHAVIOR_PACK -> bpFolder = folder
+                    is AddonClassification.RESOURCE_PACK -> rpFolder = folder
+                    else -> {}
+                }
             }
-            hasBehaviorPack -> {
-                PackForgeLog.d("PackForge_Classify", "Clasificado como: BEHAVIOR_PACK (carpeta behavior_packs)")
-                Pair(AddonClassification.BEHAVIOR_PACK, AddonType.BEHAVIOR_PACK)
-            }
-            hasResourcePack -> {
-                PackForgeLog.d("PackForge_Classify", "Clasificado como: RESOURCE_PACK (carpeta resource_packs)")
-                Pair(AddonClassification.RESOURCE_PACK, AddonType.RESOURCE_PACK)
-            }
-            hasBpSubfolder && hasRpSubfolder -> {
-                PackForgeLog.d("PackForge_Classify", "Clasificado como: BOTH (subcarpetas BP_* + RP_*)")
-                Pair(AddonClassification.BOTH(extractedDir, extractedDir), AddonType.BOTH)
-            }
-            hasBpSubfolder -> {
-                PackForgeLog.d("PackForge_Classify", "Clasificado como: BEHAVIOR_PACK (subcarpeta BP_*)")
-                Pair(AddonClassification.BEHAVIOR_PACK, AddonType.BEHAVIOR_PACK)
-            }
-            hasRpSubfolder -> {
-                PackForgeLog.d("PackForge_Classify", "Clasificado como: RESOURCE_PACK (subcarpeta RP_*)")
-                Pair(AddonClassification.RESOURCE_PACK, AddonType.RESOURCE_PACK)
-            }
-            else -> {
-                PackForgeLog.w("PackForge_Classify", "Clasificado como: UNKNOWN (estructura no reconocida)")
-                Pair(AddonClassification.UNKNOWN, AddonType.UNKNOWN)
+
+            if (bpFolder != null && rpFolder != null) {
+                PackForgeLog.d("PackForge_Classify", "🔀 BOTH detectado por contenido:")
+                PackForgeLog.d("PackForge_Classify", "   BP: ${bpFolder.name}")
+                PackForgeLog.d("PackForge_Classify", "   RP: ${rpFolder.name}")
+                return AddonClassification.BOTH(bpFolder, rpFolder)
             }
         }
-        
-        PackForgeLog.d("PackForge_Classify", "=== FIN DETECCIÓN DE TIPO ===")
-        return result
+
+        if (subManifests.size == 1) {
+            return classifyByManifestContent(File(subManifests[0], "manifest.json"))
+        }
+
+        PackForgeLog.w("PackForge_Classify", "⚠️ Sin clasificación: ${dir.name}")
+        return AddonClassification.UNKNOWN
+    }
+
+    /**
+     * ⭐ LA CLAVE: clasificar por CONTENIDO del manifest, no por nombre ⭐
+     * Lee modules[].type: "data" → BEHAVIOR_PACK, "resources" → RESOURCE_PACK.
+     * Funciona con CUALQUIER nombre de carpeta.
+     */
+    fun classifyByManifestContent(manifestFile: File): AddonClassification {
+        return try {
+            val json = JSONObject(manifestFile.readText(Charsets.UTF_8))
+            val modules = json.optJSONArray("modules") ?: return AddonClassification.UNKNOWN
+            for (i in 0 until modules.length()) {
+                when (modules.getJSONObject(i).optString("type")) {
+                    "data" -> {
+                        PackForgeLog.d("PackForge_Classify", "🔵 BP por contenido: ${manifestFile.parentFile?.name}")
+                        return AddonClassification.BEHAVIOR_PACK
+                    }
+                    "resources" -> {
+                        PackForgeLog.d("PackForge_Classify", "🟢 RP por contenido: ${manifestFile.parentFile?.name}")
+                        return AddonClassification.RESOURCE_PACK
+                    }
+                }
+            }
+            AddonClassification.UNKNOWN
+        } catch (e: Exception) {
+            PackForgeLog.e("PackForge_Classify", "❌ Error leyendo manifest: ${e.message}")
+            AddonClassification.UNKNOWN
+        }
+    }
+
+    /**
+     * Raíz real de un pack anidado: la carpeta que contiene manifest.json.
+     * Si el manifest está en la raíz de `dir`, se devuelve `dir` mismo.
+     */
+    fun resolvePackRoot(dir: File): File {
+        val manifest = dir.walkTopDown()
+            .firstOrNull { it.isFile && it.name.equals("manifest.json", ignoreCase = true) }
+        return manifest?.parentFile ?: dir
     }
 
     /**

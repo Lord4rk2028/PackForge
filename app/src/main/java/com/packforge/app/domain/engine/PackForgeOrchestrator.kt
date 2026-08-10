@@ -158,6 +158,40 @@ object PackForgeOrchestrator {
                             PackForgeLog.d("PackForge_Debug", "  -> RP separado en: $rpPath")
                         }
                     }
+                    is AddonExtractor.AddonClassification.MULTI -> {
+                        // 📦 Addon con packs anidados (.mcpack/.zip): clasificar y fusionar cada uno.
+                        // CASO "More Tools": el .mcaddon contiene BP.mcpack y RP.mcpack.
+                        val packs = analysis.addonClassification.packs
+                        PackForgeLog.d("PackForge_Process", "📦 Procesando MULTI (${packs.size} packs anidados): ${File(extractedDir).name}")
+                        packs.forEach { packDir ->
+                            when (val sub = AddonExtractor.classify(packDir)) {
+                                is AddonExtractor.AddonClassification.BEHAVIOR_PACK -> {
+                                    val root = AddonExtractor.resolvePackRoot(packDir)
+                                    bpDirs.add(root.absolutePath)
+                                    PackForgeLog.d("PackForge_Debug", "  -> Pack anidado BP: ${root.name}")
+                                }
+                                is AddonExtractor.AddonClassification.RESOURCE_PACK -> {
+                                    val root = AddonExtractor.resolvePackRoot(packDir)
+                                    rpDirs.add(root.absolutePath)
+                                    PackForgeLog.d("PackForge_Debug", "  -> Pack anidado RP: ${root.name}")
+                                }
+                                is AddonExtractor.AddonClassification.BOTH -> {
+                                    val (bpPath, rpPath) = separateBothAddonDirect(
+                                        sub.bpSubfolder, sub.rpSubfolder, tempDir
+                                    )
+                                    if (bpPath != null) {
+                                        bpDirs.add(bpPath)
+                                        PackForgeLog.d("PackForge_Debug", "  -> Pack anidado BOTH -> BP en: $bpPath")
+                                    }
+                                    if (rpPath != null) {
+                                        rpDirs.add(rpPath)
+                                        PackForgeLog.d("PackForge_Debug", "  -> Pack anidado BOTH -> RP en: $rpPath")
+                                    }
+                                }
+                                else -> PackForgeLog.w("PackForge_Debug", "⚠️ Pack anidado ignorado: ${packDir.name}")
+                            }
+                        }
+                    }
                     is AddonExtractor.AddonClassification.UNKNOWN -> {
                         PackForgeLog.w("PackForge_Debug", "  -> Addon UNKNOWN, intentando detectar por manifest")
                         // Intentar detectar por estructura de carpetas
