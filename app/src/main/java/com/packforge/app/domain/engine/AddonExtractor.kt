@@ -290,8 +290,9 @@ object AddonExtractor {
 
     /**
      * ⭐ LA CLAVE: clasificar por CONTENIDO del manifest, no por nombre ⭐
-     * Lee modules[].type: "data" → BEHAVIOR_PACK, "resources" → RESOURCE_PACK.
-     * Funciona con CUALQUIER nombre de carpeta.
+     * Lee modules[].type: "data" → BEHAVIOR_PACK, "resources"/"resource" → RESOURCE_PACK.
+     * Funciona con CUALQUIER nombre de carpeta y con TODAS las versiones del manifest
+     * (format_version 0/1 usa "resource" en singular; format_version 2/3 usa "resources").
      */
     fun classifyByManifestContent(manifestFile: File): AddonClassification {
         return try {
@@ -303,7 +304,7 @@ object AddonExtractor {
                         PackForgeLog.d("PackForge_Classify", "🔵 BP por contenido: ${manifestFile.parentFile?.name}")
                         return AddonClassification.BEHAVIOR_PACK
                     }
-                    "resources" -> {
+                    "resources", "resource" -> {
                         PackForgeLog.d("PackForge_Classify", "🟢 RP por contenido: ${manifestFile.parentFile?.name}")
                         return AddonClassification.RESOURCE_PACK
                     }

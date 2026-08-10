@@ -135,9 +135,9 @@ object AddonParser {
                     }
                     
                     when {
-                        moduleTypes.contains("data") && moduleTypes.contains("resources") -> AddonType.BEHAVIOR_AND_RESOURCE
+                        moduleTypes.contains("data") && (moduleTypes.contains("resources") || moduleTypes.contains("resource")) -> AddonType.BEHAVIOR_AND_RESOURCE
                         moduleTypes.contains("data") -> AddonType.BEHAVIOR_ONLY
-                        moduleTypes.contains("resources") -> AddonType.RESOURCE_ONLY
+                        moduleTypes.contains("resources") || moduleTypes.contains("resource") -> AddonType.RESOURCE_ONLY
                         else -> {
                             // Fallback a detección por archivos
                             when {
