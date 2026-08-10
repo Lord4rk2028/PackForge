@@ -34,7 +34,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import com.packforge.app.domain.model.OperationProgress
+import com.packforge.app.ui.components.AddonSite
 import com.packforge.app.ui.components.PackForgeTopBar
+import com.packforge.app.ui.components.SiteSelector
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,11 +46,13 @@ fun WebBrowserScreen(
     title: String,
     currentUrl: String,
     initialUrl: String,
+    currentSite: AddonSite,
     importError: String?,
     isImporting: Boolean,
     importProgress: OperationProgress,
     webImportSuccess: Long?,
     onBack: () -> Unit,
+    onSiteSelect: (AddonSite) -> Unit,
     onUrlChanged: (String) -> Unit,
     onImportFromUrl: (String) -> Unit,
     onClearError: () -> Unit,
@@ -116,6 +120,20 @@ fun WebBrowserScreen(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
 
+            // ── SELECTOR DE SITIOS (cambiar de fuente sin salir) ──
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.7f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                SiteSelector(
+                    currentSite = currentSite,
+                    onSelect = { site ->
+                        if (site != currentSite) onSiteSelect(site)
+                    },
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)
+                )
+            }
+
             if (isLoadingPage) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 
             // ─── Estado de descarga/importación con transición suave ───
@@ -167,7 +185,40 @@ fun WebBrowserScreen(
                             useWideViewPort = true
                             loadWithOverviewMode = true
                         }
-                        webView.webChromeClient = WebChromeClient()
+                        webView.webChromeClient = object : WebChromeClient() {
+                            // FIX NAVEGACIÓN: las ventanas emergentes (window.open /
+                            // target="_blank" usadas por descargas y enlaces de MCPEDL,
+                            // CurseForge o Modbay) se redirigen a la MISMA WebView para
+                            // que no queden en una pantalla en blanco huérfana.
+                            override fun onCreateWindow(
+                                view: WebView?,
+                                isDialog: Boolean,
+                                isUserGesture: Boolean,
+                                resultMsg: android.os.Message?
+                            ): Boolean {
+                                val mainView = webView
+                                val childWebView = WebView(view?.context ?: mainView.context)
+                                childWebView.settings.javaScriptEnabled = true
+                                childWebView.webViewClient = object : WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(
+                                        childView: WebView?,
+                                        request: WebResourceRequest?
+                                    ): Boolean {
+                                        val url = request?.url?.toString() ?: return false
+                                        if (isAddonDownloadUrl(url)) {
+                                            onImportFromUrl(url)
+                                        } else {
+                                            mainView.loadUrl(url)
+                                        }
+                                        // La ventana emergente nunca carga su propio contenido:
+                                        // todo se reenvía a la WebView principal visible.
+                                        return true
+                                    }
+                                }
+                                resultMsg?.obj = childWebView
+                                return true
+                            }
+                        }
                         webView.webViewClient = object : WebViewClient() {
                             override fun onPageStarted(v: WebView?, u: String?, f: Bitmap?) {
                                 isLoadingPage = true
@@ -183,6 +234,23 @@ fun WebBrowserScreen(
                                 // cada subrecurso (imágenes, CSS, JS) ralentiza la carga.
                                 if (r?.isForMainFrame != true) return false
                                 val url = r.url?.toString() ?: return false
+                                val scheme = r.url?.scheme?.lowercase()
+
+                                // FIX NAVEGACIÓN: esquemas que el WebView no puede mostrar
+                                // (intent://, market://, mailto:, tel:, whatsapp://...) se
+                                // abren en la app externa que los maneja.
+                                if (scheme != null && scheme != "http" && scheme != "https" &&
+                                    scheme != "about" && scheme != "javascript") {
+                                    try {
+                                        context.startActivity(
+                                            android.content.Intent(android.content.Intent.ACTION_VIEW, r.url)
+                                        )
+                                    } catch (e: Exception) {
+                                        // No hay app registrada para ese esquema: ignorar.
+                                    }
+                                    return true
+                                }
+
                                 if (isAddonDownloadUrl(url)) {
                                     onImportFromUrl(url)
                                     return true

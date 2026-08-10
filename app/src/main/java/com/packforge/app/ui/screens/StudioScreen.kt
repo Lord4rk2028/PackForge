@@ -36,9 +36,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.packforge.app.ui.components.CachedAsyncImage
+import com.packforge.app.ui.components.AddonSite
 import com.packforge.app.ui.components.MorphingFab
 import com.packforge.app.ui.components.MorphingFabItem
 import com.packforge.app.ui.components.PackForgeTopBar
+import com.packforge.app.ui.components.SiteSelector
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.domain.model.OperationProgress
 import com.packforge.app.domain.model.SavedModpack
@@ -71,18 +73,14 @@ fun StudioScreen(
 
     // Manejo de navegadores internos con persistencia
     activeWebSource?.let { source ->
+        val site = AddonSite.fromSourceKey(source)
         val currentUrl = lastWebUrls[source] ?: ""
-        val initialUrl = when(source) {
-            "MCPEDL" -> "https://mcpedl.com/category/mods-addons/"
-            "CurseForge" -> "https://www.curseforge.com/minecraft-bedrock"
-            "ModBay" -> "https://modbay.org/mods/"
-            else -> ""
-        }
         val persistentWebView = viewModel.getPersistentWebView(source, LocalContext.current)
         WebBrowserScreen(
-            title = source,
+            title = site.displayName,
             currentUrl = currentUrl,
-            initialUrl = initialUrl,
+            initialUrl = site.browseUrl,
+            currentSite = site,
             importError = webImportError,
             isImporting = isImporting,
             importProgress = importProgress,
@@ -93,6 +91,10 @@ fun StudioScreen(
                 if (!viewModel.onStudioWebBackPressed()) {
                     viewModel.setActiveWebSource(null)
                 }
+            },
+            onSiteSelect = { newSite ->
+                // Cambiar de sitio: se reconfigura el WebView persistente del nuevo.
+                viewModel.setActiveWebSource(newSite.sourceKey)
             },
             onUrlChanged = { newUrl -> viewModel.updateWebUrl(source, newUrl) },
             onImportFromUrl = onImportFromUrl,
@@ -179,39 +181,32 @@ fun StudioScreen(
                 )
             }
 
+            // ── SELECTOR DE SITIOS CON LOGOS ─────────────────
             item {
-                StudioCard(
-                    icon = Icons.Default.Search,
-                    title = "MCPEDL",
-                    description = "Addons y mapas de la comunidad",
-                    badge = "Popular",
-                    accent = Color(0xFFFF9800)
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    viewModel.setActiveWebSource("MCPEDL")
-                }
-            }
-
-            item {
-                StudioCard(
-                    icon = Icons.Outlined.Extension,
-                    title = "CurseForge",
-                    description = "Addons verificados de alta calidad",
-                    badge = null,
-                    accent = Color(0xFFF57C00)
-                ) {
-                    viewModel.setActiveWebSource("CurseForge")
-                }
-            }
-
-            item {
-                StudioCard(
-                    icon = Icons.Default.Star,
-                    title = "ModBay",
-                    description = "Texturas, skins y complementos",
-                    badge = null,
-                    accent = Color(0xFF4FC3F7)
-                ) {
-                    viewModel.setActiveWebSource("ModBay")
+                    Column(
+                        modifier = Modifier.padding(vertical = 14.dp, horizontal = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        SiteSelector(
+                            currentSite = AddonSite.fromSourceKey(activeWebSource),
+                            onSelect = { site ->
+                                viewModel.setActiveWebSource(site.sourceKey)
+                            }
+                        )
+                        Text(
+                            text = "Toca un sitio para navegar y descargar addons",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                        )
+                    }
                 }
             }
 
