@@ -394,17 +394,28 @@ fun shareModpack(context: android.content.Context, modpack: SavedModpack, scope:
     )
 
     // Buscar el primer archivo que exista y tenga contenido
-    val file = possiblePaths.firstOrNull { it.exists() && it.length() > 0 }
+    var file = possiblePaths.firstOrNull { it.exists() && it.length() > 0 }
+
+    // Coincidencia flexible en la carpeta de exports: el nombre guardado puede
+    // diferir en mayúsculas o usar "_" en lugar de espacios según la versión.
+    if (file == null) {
+        file = exportsDir.listFiles()?.firstOrNull { f ->
+            f.length() > 0 &&
+                (f.name.equals(modpack.fileName, ignoreCase = true) ||
+                    f.name.equals(modpack.fileName.replace(" ", "_"), ignoreCase = true))
+        }
+    }
 
     if (file != null) {
         launchShareIntent(context, modpack, file)
         return
     }
 
-    // Fallback: si el historial guarda una content:// URI (exportación vía
-    // "Elegir ubicación" SAF), copiarla a cache EN SEGUNDO PLANO y compartir.
+    // Fallback: si el historial guarda una content:// o file:// URI (exportación
+    // vía "Elegir ubicación" SAF), copiarla a cache EN SEGUNDO PLANO y compartir.
     // La copia de un archivo grande no debe bloquear el hilo de UI (jank/ANR).
-    if (modpack.filePath.startsWith("content://")) {
+    val storedPath = modpack.filePath
+    if (storedPath.startsWith("content://") || storedPath.startsWith("file://")) {
         scope.launch {
             val copied = withContext(Dispatchers.IO) {
                 try {
@@ -413,26 +424,40 @@ fun shareModpack(context: android.content.Context, modpack: SavedModpack, scope:
                         ?.filter { it.name.startsWith("share_") }
                         ?.forEach { it.delete() }
                     val cacheCopy = File(context.cacheDir, "share_${System.currentTimeMillis()}_${modpack.fileName}")
-                    context.contentResolver.openInputStream(Uri.parse(modpack.filePath))?.use { input ->
+                    val src = if (storedPath.startsWith("content://")) {
+                        context.contentResolver.openInputStream(Uri.parse(storedPath))
+                    } else {
+                        try { File(java.net.URI(storedPath)).inputStream() } catch (e: Exception) { null }
+                    }
+                    src?.use { input ->
                         cacheCopy.outputStream().use { out -> input.copyTo(out) }
                     }
                     if (cacheCopy.exists() && cacheCopy.length() > 0) cacheCopy else null
                 } catch (e: Exception) {
-                    PackForgeLog.e("StudioScreen", "No se pudo copiar content:// para compartir: ${e.message}")
+                    PackForgeLog.e("StudioScreen", "No se pudo copiar URI para compartir: ${e.message}")
                     null
                 }
             }
             if (copied != null) {
                 launchShareIntent(context, modpack, copied)
             } else {
-                android.widget.Toast.makeText(context, "El archivo ya no existe en el almacenamiento", android.widget.Toast.LENGTH_SHORT).show()
+                shareNotFoundToast(context)
             }
         }
         return
     }
 
     PackForgeLog.e("StudioScreen", "Archivo no encontrado en ninguna ruta. Rutas intentadas: ${possiblePaths.map { it.absolutePath }}")
-    android.widget.Toast.makeText(context, "El archivo ya no existe en el almacenamiento", android.widget.Toast.LENGTH_SHORT).show()
+    shareNotFoundToast(context)
+}
+
+/** Aviso claro y accionable cuando el modpack no se encuentra en el dispositivo. */
+private fun shareNotFoundToast(context: android.content.Context) {
+    android.widget.Toast.makeText(
+        context,
+        "El modpack no está en el dispositivo. Expórtalo de nuevo y compártelo desde la exportación.",
+        android.widget.Toast.LENGTH_LONG
+    ).show()
 }
 
 /** Lanza el Intent de compartir de un archivo ya resuelto (debe llamarse en hilo principal). */

@@ -168,17 +168,18 @@ fun WebBrowserScreen(
                 }
             }
 
-            AndroidView(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                factory = { ctx ->
-                    // Devolvemos la WebView persistente sin configurarla aquí:
-                    // factory solo se ejecuta UNA vez por slot de composición, y al
-                    // cambiar de sitio el AndroidView reutiliza este slot con OTRA
-                    // instancia de WebView, por lo que la inicialización debe ir en
-                    // `update` para que se aplique a la instancia recién mostrada.
-                    webViewRef = webView
-                    webView
-                },
+            key(currentSite.sourceKey) {
+                AndroidView(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    factory = { ctx ->
+                        // Devolvemos la WebView persistente sin configurarla aquí:
+                        // factory solo se ejecuta UNA vez por slot de composición. Al
+                        // cambiar de SITIO cambiamos la clave (key) y AndroidView se
+                        // recrea, ejecutando de nuevo factory con la WebView del nuevo
+                        // sitio; la inicialización en `update` se aplica a esa instancia.
+                        webViewRef = webView
+                        webView
+                    },
                 update = { wv ->
                     // Configurar listeners y cargar la URL solo la primera vez que
                     // aparece ESTA instancia de WebView (tag == null).
@@ -285,6 +286,7 @@ fun WebBrowserScreen(
                     wv.invalidate()
                 }
             )
+            }
         }
     }
 }

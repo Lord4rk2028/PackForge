@@ -1,12 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
+    <!-- filesDir interno de la app (filesDir/exports, filesDir/modpack_icons):
+         necesario para COMPARTIR los modpacks guardados en almacenamiento interno -->
+    <files-path
+        name="internal_files"
+        path="." />
     <external-files-path
         name="external_files"
         path="." />
     <external-path
         name="external_storage"
         path="." />
+    <!-- cacheDir completo: incluye los temporales share_* creados al compartir
+         vía content:// y la carpeta modrinth/ de descargas -->
     <cache-path
         name="cache"
-        path="modrinth/" />
+        path="." />
 </paths>
