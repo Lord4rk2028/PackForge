@@ -171,12 +171,20 @@ fun WebBrowserScreen(
             AndroidView(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 factory = { ctx ->
-                    // REUTILIZAR la WebView persistente: conserva la página en memoria
-                    // (sin recargar URL → no aparece "página web no disponible").
-                    // Configurar listeners solo la primera vez.
-                    if (webView.tag == null) {
-                        webView.tag = "configured"
-                        webView.settings.apply {
+                    // Devolvemos la WebView persistente sin configurarla aquí:
+                    // factory solo se ejecuta UNA vez por slot de composición, y al
+                    // cambiar de sitio el AndroidView reutiliza este slot con OTRA
+                    // instancia de WebView, por lo que la inicialización debe ir en
+                    // `update` para que se aplique a la instancia recién mostrada.
+                    webViewRef = webView
+                    webView
+                },
+                update = { wv ->
+                    // Configurar listeners y cargar la URL solo la primera vez que
+                    // aparece ESTA instancia de WebView (tag == null).
+                    if (wv.tag == null) {
+                        wv.tag = "configured"
+                        wv.settings.apply {
                             javaScriptEnabled = true
                             domStorageEnabled = true
                             setSupportMultipleWindows(false)
@@ -185,7 +193,7 @@ fun WebBrowserScreen(
                             useWideViewPort = true
                             loadWithOverviewMode = true
                         }
-                        webView.webChromeClient = object : WebChromeClient() {
+                        wv.webChromeClient = object : WebChromeClient() {
                             // FIX NAVEGACIÓN: las ventanas emergentes (window.open /
                             // target="_blank" usadas por descargas y enlaces de MCPEDL,
                             // CurseForge o Modbay) se redirigen a la MISMA WebView para
@@ -196,7 +204,7 @@ fun WebBrowserScreen(
                                 isUserGesture: Boolean,
                                 resultMsg: android.os.Message?
                             ): Boolean {
-                                val mainView = webView
+                                val mainView = wv
                                 val childWebView = WebView(view?.context ?: mainView.context)
                                 childWebView.settings.javaScriptEnabled = true
                                 childWebView.webViewClient = object : WebViewClient() {
@@ -219,7 +227,7 @@ fun WebBrowserScreen(
                                 return true
                             }
                         }
-                        webView.webViewClient = object : WebViewClient() {
+                        wv.webViewClient = object : WebViewClient() {
                             override fun onPageStarted(v: WebView?, u: String?, f: Bitmap?) {
                                 isLoadingPage = true
                             }
@@ -258,27 +266,18 @@ fun WebBrowserScreen(
                                 return false
                             }
                         }
-                        webView.setDownloadListener { url, _, _, _, _ ->
+                        wv.setDownloadListener { url, _, _, _, _ ->
                             if (url != null) onImportFromUrl(url)
                         }
-                        // Cargar la URL inicial si la WebView está vacía (primera visita
-                        // o tras recrearse por rotación de pantalla)
-                        if (webView.url.isNullOrEmpty()) {
-                            webView.loadUrl(currentUrl.ifEmpty { initialUrl })
+                        // Cargar la URL de este sitio si la WebView está vacía (primera
+                        // visita, o al cambiar de fuente con una WebView nueva).
+                        if (wv.url.isNullOrEmpty()) {
+                            wv.loadUrl(currentUrl.ifEmpty { initialUrl })
                         }
                     }
 
                     // Al re-adjuntar tras volver de otra pestaña, forzar redibujado
                     // para que la superficie nativa se restaure (evita pantalla en blanco).
-                    try {
-                        webView.onResume()
-                    } catch (e: Exception) {}
-                    webView.invalidate()
-
-                    webViewRef = webView
-                    webView
-                },
-                update = { wv ->
                     webViewRef = wv
                     try {
                         wv.onResume()

@@ -2,6 +2,7 @@ package com.packforge.app.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -103,7 +104,22 @@ fun buildAddonDisplayItems(addons: List<Addon>): List<AddonDisplayItem> {
 // ── COLORES DE LA "CARPETA MORADA" ──────────────────────────────
 private val PurpleFolder = Color(0xFF7B1FA2)
 private val PurpleFolderDark = Color(0xFF4A148C)
-private val PurpleContainer = Color(0xFFF3E5F5)
+private val PurpleContainerLight = Color(0xFFF3E5F5)
+private val PurpleContainerDark = Color(0xFF3A2A52)
+private val PurpleTextDark = Color(0xFFE1BEE7)
+private val PurpleLabelDark = Color(0xFFCE93D8)
+
+@Composable
+private fun folderContainerColor(): Color =
+    if (isSystemInDarkTheme()) PurpleContainerDark else PurpleContainerLight
+
+@Composable
+private fun folderTitleColor(): Color =
+    if (isSystemInDarkTheme()) PurpleTextDark else PurpleFolderDark
+
+@Composable
+private fun folderLabelColor(): Color =
+    if (isSystemInDarkTheme()) PurpleLabelDark else PurpleFolder
 
 /** Tarjeta "carpeta" morada que representa la pareja BP+RP en la lista. */
 @Composable
@@ -113,6 +129,9 @@ fun AddonPairCard(
     modifier: Modifier = Modifier
 ) {
     val bothEnabled = pair.bp.enabled && pair.rp.enabled
+    val container = folderContainerColor()
+    val titleColor = folderTitleColor()
+    val labelColor = folderLabelColor()
 
     ElevatedCard(
         modifier = modifier
@@ -121,7 +140,7 @@ fun AddonPairCard(
         shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp),
         colors = CardDefaults.elevatedCardColors(
-            containerColor = if (bothEnabled) PurpleContainer else PurpleContainer.copy(alpha = 0.5f)
+            containerColor = if (bothEnabled) container else container.copy(alpha = 0.5f)
         )
     ) {
         Row(
@@ -184,7 +203,7 @@ fun AddonPairCard(
                     text = pair.rp.name,
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = PurpleFolderDark,
+                    color = titleColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -192,7 +211,7 @@ fun AddonPairCard(
                     text = "RP + BP · Completo",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
-                    color = PurpleFolder
+                    color = labelColor
                 )
                 Text(
                     text = "${pair.bp.name} · ${pair.rp.name}",
@@ -217,6 +236,8 @@ fun AddonPairDialog(
     onToggleAddon: (String) -> Unit,
     onRemoveAddon: (String) -> Unit
 ) {
+    val labelColor = folderLabelColor()
+
     // Fondo oscurecido que resalta la miniinterfaz (el blur sobre el fondo
     // real se aplica en el contenedor de la pantalla).
     Box(
@@ -248,7 +269,7 @@ fun AddonPairDialog(
                             text = "RP + BP · Completo",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = PurpleFolder
+                            color = labelColor
                         )
                         Text(
                             text = "${pair.bp.name} + ${pair.rp.name}",
@@ -308,6 +329,8 @@ private fun AddonPairRow(
     onToggle: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val labelColor = folderLabelColor()
+
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
@@ -358,7 +381,7 @@ private fun AddonPairRow(
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,
-                    color = PurpleFolder
+                    color = labelColor
                 )
             }
             Switch(checked = checked, onCheckedChange = { onToggle() })

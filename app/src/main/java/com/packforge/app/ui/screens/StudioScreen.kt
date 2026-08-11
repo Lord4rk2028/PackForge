@@ -35,6 +35,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.packforge.app.ui.components.CachedAsyncImage
 import com.packforge.app.ui.components.AddonSite
 import com.packforge.app.ui.components.MorphingFab
@@ -299,6 +303,7 @@ fun MyModpacksScreen(
     onOpenSources: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val shareScope = rememberCoroutineScope()
     var modpackToDelete by remember { mutableStateOf<SavedModpack?>(null) }
 
     Scaffold(
@@ -335,7 +340,7 @@ fun MyModpacksScreen(
                 items(modpacks, key = { it.id }, contentType = { "modpack" }) { modpack ->
                     val onLoadThis = remember(modpack.id) { { onLoad(modpack); onBack() } }
                     val onDeleteThis = remember(modpack.id) { { modpackToDelete = modpack } }
-                    val onShareThis = remember(modpack.id) { { shareModpack(context, modpack) } }
+                    val onShareThis = remember(modpack.id) { { shareModpack(context, modpack, shareScope) } }
                     ModpackLibraryCard(
                         modpack = modpack,
                         onLoad = onLoadThis,
@@ -356,7 +361,7 @@ fun MyModpacksScreen(
             items = listOf(
                 MorphingFabItem("Explorar fuentes", Icons.Default.Search, onClick = onOpenSources),
                 MorphingFabItem("Compartir uno", Icons.Default.Share) {
-                    modpacks.firstOrNull()?.let { shareModpack(context, it) }
+                    modpacks.firstOrNull()?.let { shareModpack(context, it, shareScope) }
                 }
             ),
             modifier = Modifier
@@ -374,7 +379,7 @@ fun MyModpacksScreen(
     }
 }
 
-fun shareModpack(context: android.content.Context, modpack: SavedModpack) {
+fun shareModpack(context: android.content.Context, modpack: SavedModpack, scope: CoroutineScope) {
     // Intentar múltiples rutas posibles. PRIORIDAD: la copia permanente en el
     // almacenamiento interno de la app (filesDir/exports) creada al exportar,
     // que garantiza que "Compartir" funcione siempre aunque el fichero de
@@ -392,29 +397,65 @@ fun shareModpack(context: android.content.Context, modpack: SavedModpack) {
     val file = possiblePaths.firstOrNull { it.exists() && it.length() > 0 }
 
     if (file != null) {
-        try {
-            // Verificar que el archivo tenga contenido
-            if (file.length() == 0L) {
-                android.widget.Toast.makeText(context, "El archivo está vacío (0 bytes)", android.widget.Toast.LENGTH_SHORT).show()
-                return
-            }
+        launchShareIntent(context, modpack, file)
+        return
+    }
 
-            val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/zip" // Usar MIME type correcto para .mcpack
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                putExtra(Intent.EXTRA_SUBJECT, "Modpack: ${modpack.name}")
-                putExtra(Intent.EXTRA_TEXT, "Modpack creado con PackForge - ${modpack.name} v${modpack.version}")
+    // Fallback: si el historial guarda una content:// URI (exportación vía
+    // "Elegir ubicación" SAF), copiarla a cache EN SEGUNDO PLANO y compartir.
+    // La copia de un archivo grande no debe bloquear el hilo de UI (jank/ANR).
+    if (modpack.filePath.startsWith("content://")) {
+        scope.launch {
+            val copied = withContext(Dispatchers.IO) {
+                try {
+                    // Limpiar temporales de comparticiones anteriores para no acumular basura.
+                    context.cacheDir.listFiles()
+                        ?.filter { it.name.startsWith("share_") }
+                        ?.forEach { it.delete() }
+                    val cacheCopy = File(context.cacheDir, "share_${System.currentTimeMillis()}_${modpack.fileName}")
+                    context.contentResolver.openInputStream(Uri.parse(modpack.filePath))?.use { input ->
+                        cacheCopy.outputStream().use { out -> input.copyTo(out) }
+                    }
+                    if (cacheCopy.exists() && cacheCopy.length() > 0) cacheCopy else null
+                } catch (e: Exception) {
+                    PackForgeLog.e("StudioScreen", "No se pudo copiar content:// para compartir: ${e.message}")
+                    null
+                }
             }
-            context.startActivity(Intent.createChooser(intent, "Compartir Modpack: ${modpack.name}"))
-        } catch (e: Exception) {
-            PackForgeLog.e("StudioScreen", "Error al compartir: ${e.message}", e)
-            android.widget.Toast.makeText(context, "Error al compartir: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+            if (copied != null) {
+                launchShareIntent(context, modpack, copied)
+            } else {
+                android.widget.Toast.makeText(context, "El archivo ya no existe en el almacenamiento", android.widget.Toast.LENGTH_SHORT).show()
+            }
         }
-    } else {
-        PackForgeLog.e("StudioScreen", "Archivo no encontrado en ninguna ruta. Rutas intentadas: ${possiblePaths.map { it.absolutePath }}")
-        android.widget.Toast.makeText(context, "El archivo ya no existe en el almacenamiento", android.widget.Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    PackForgeLog.e("StudioScreen", "Archivo no encontrado en ninguna ruta. Rutas intentadas: ${possiblePaths.map { it.absolutePath }}")
+    android.widget.Toast.makeText(context, "El archivo ya no existe en el almacenamiento", android.widget.Toast.LENGTH_SHORT).show()
+}
+
+/** Lanza el Intent de compartir de un archivo ya resuelto (debe llamarse en hilo principal). */
+private fun launchShareIntent(context: android.content.Context, modpack: SavedModpack, file: File) {
+    try {
+        // Verificar que el archivo tenga contenido
+        if (file.length() == 0L) {
+            android.widget.Toast.makeText(context, "El archivo está vacío (0 bytes)", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/zip" // Usar MIME type correcto para .mcpack
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            putExtra(Intent.EXTRA_SUBJECT, "Modpack: ${modpack.name}")
+            putExtra(Intent.EXTRA_TEXT, "Modpack creado con PackForge - ${modpack.name} v${modpack.version}")
+        }
+        context.startActivity(Intent.createChooser(intent, "Compartir Modpack: ${modpack.name}"))
+    } catch (e: Exception) {
+        PackForgeLog.e("StudioScreen", "Error al compartir: ${e.message}", e)
+        android.widget.Toast.makeText(context, "Error al compartir: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -429,7 +470,14 @@ fun ModpackLibraryCard(
     onShare: () -> Unit
 ) {
     val coverPath = modpack.coverUriString
-    val hasValidCover = !coverPath.isNullOrBlank() && (!coverPath.startsWith("/") || File(coverPath).exists())
+    // Coil necesita un File (no un String de ruta absoluta) para cargar la
+    // portada persistida en almacenamiento interno; un content:// se pasa tal cual.
+    val coverModel: Any? = when {
+        coverPath == null -> null
+        coverPath.startsWith("/") -> File(coverPath)
+        coverPath.startsWith("file://") -> try { File(java.net.URI(coverPath)) } catch (e: Exception) { coverPath }
+        else -> coverPath
+    }
 
     ElevatedCard(
         modifier = Modifier
@@ -449,9 +497,9 @@ fun ModpackLibraryCard(
                 contentAlignment = Alignment.Center
             ) {
                 when {
-                    coverPath != null && hasValidCover -> {
+                    coverModel != null -> {
                         CachedAsyncImage(
-                            model = coverPath,
+                            model = coverModel,
                             contentDescription = "Portada de ${modpack.name}",
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop

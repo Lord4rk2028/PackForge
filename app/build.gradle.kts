@@ -37,6 +37,9 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Nota: en máquinas cuyo PATH incluye rutas con espacios (p.ej. "Microsoft VS Code"),
+        // el runner de tests JVM puede fallar ("main class VS"). Se resuelve lanzando Gradle
+        // con un PATH sin rutas con espacios, no hardcodeando rutas del sistema aquí.
     }
 }
 

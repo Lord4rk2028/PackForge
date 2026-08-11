@@ -62,7 +62,7 @@ fun CraftingTableLayout(
                 .background(MaterialTheme.colorScheme.surfaceContainerLow)
                 .border(
                     1.dp,
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
                     RoundedCornerShape(16.dp)
                 )
                 .padding(10.dp)
@@ -109,7 +109,7 @@ fun AddonSlot(addon: Addon) {
             .aspectRatio(1f)
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.primaryContainer)
-            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp)),
+            .border(1.5.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp)),
         contentAlignment = Alignment.Center
     ) {
         if (addon.iconPath != null) {
@@ -174,7 +174,12 @@ fun EmptySlot() {
             .fillMaxWidth()
             .aspectRatio(1f)
             .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.4f))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
+                RoundedCornerShape(8.dp)
+            )
     )
 }
 
