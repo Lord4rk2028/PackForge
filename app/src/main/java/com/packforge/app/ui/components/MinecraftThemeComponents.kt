@@ -366,7 +366,9 @@ fun MorphingFab(
             modifier = Modifier.align(Alignment.BottomEnd)
         ) {
             Column(
-                modifier = Modifier.padding(end = 12.dp, bottom = 16.dp),
+                // Bottom alto: el menú se despliega POR ENCIMA del FAB sin
+                // solaparse con el botón "+".
+                modifier = Modifier.padding(end = 12.dp, bottom = 88.dp),
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {

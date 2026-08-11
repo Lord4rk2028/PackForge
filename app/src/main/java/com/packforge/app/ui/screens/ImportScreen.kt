@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -64,6 +65,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -72,6 +74,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -83,6 +86,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.packforge.app.ui.components.CachedAsyncImage
 import com.packforge.app.ui.components.CraftingTableLayout
+import com.packforge.app.ui.components.AddonDisplayItem
+import com.packforge.app.ui.components.AddonPairCard
+import com.packforge.app.ui.components.AddonPairDialog
+import com.packforge.app.ui.components.buildAddonDisplayItems
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.AddonType
 import com.packforge.app.domain.model.Conflict
@@ -124,12 +131,27 @@ fun ImportScreen(
         }
     }
 
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
-    ) {
+    // ─── Agrupación visual BP+RP en "minicarpeta morada" (solo UI) ───
+    val displayItems = remember(addons) { buildAddonDisplayItems(addons) }
+    var openPairKey by remember { mutableStateOf<String?>(null) }
+    val openPair = displayItems
+        .filterIsInstance<AddonDisplayItem.Pair>()
+        .firstOrNull { it.pairKey == openPairKey }
+    // Si la pareja desapareció (p.ej. se borró un addon dentro de la carpeta),
+    // la miniinterfaz se cierra y limpiamos la clave para no reabrirla sola.
+    LaunchedEffect(openPair) {
+        if (openPair == null) openPairKey = null
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (openPair != null) Modifier.blur(14.dp) else Modifier),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
+        ) {
 
         // ─── ZONA DE IMPORTAR ────────────────────────────────
         item {
@@ -183,30 +205,51 @@ fun ImportScreen(
             }
         }
 
-        itemsIndexed(
-            items = addons,
-            key = { _, addon -> addon.id },
-            contentType = { _, addon -> addon.type }
-        ) { index, addon ->
-            val addonConflicts = conflictsByAddonId[addon.id].orEmpty()
-            val onToggle = remember(addon.id) { { onToggleAddon(addon.id) } }
-            val onMoveUp = remember(addon.id) { { onMoveAddon(addon.id, -1) } }
-            val onMoveDown = remember(addon.id) { { onMoveAddon(addon.id, 1) } }
-            val onRemove = remember(addon.id) { { onRemoveAddon(addon.id) } }
+        items(
+            items = displayItems,
+            key = { item ->
+                when (item) {
+                    is AddonDisplayItem.Single -> item.addon.id
+                    is AddonDisplayItem.Pair -> "pair_${item.pairKey}"
+                }
+            },
+            contentType = { item ->
+                when (item) {
+                    is AddonDisplayItem.Single -> item.addon.type
+                    is AddonDisplayItem.Pair -> "pair"
+                }
+            }
+        ) { item ->
+            when (item) {
+                is AddonDisplayItem.Single -> {
+                    val addon = item.addon
+                    val addonConflicts = conflictsByAddonId[addon.id].orEmpty()
+                    val onToggle = remember(addon.id) { { onToggleAddon(addon.id) } }
+                    val onMoveUp = remember(addon.id) { { onMoveAddon(addon.id, -1) } }
+                    val onMoveDown = remember(addon.id) { { onMoveAddon(addon.id, 1) } }
+                    val onRemove = remember(addon.id) { { onRemoveAddon(addon.id) } }
 
-            AddonCard(
-                addon = addon,
-                index = index,
-                total = addons.size,
-                conflictCount = addonConflicts.size,
-                hasCritical = addonConflicts.any {
-                    it.severity == ConflictSeverity.CRITICAL
-                },
-                onToggle = onToggle,
-                onMoveUp = onMoveUp,
-                onMoveDown = onMoveDown,
-                onRemove = onRemove
-            )
+                    AddonCard(
+                        addon = addon,
+                        index = addon.priority,
+                        total = addons.size,
+                        conflictCount = addonConflicts.size,
+                        hasCritical = addonConflicts.any {
+                            it.severity == ConflictSeverity.CRITICAL
+                        },
+                        onToggle = onToggle,
+                        onMoveUp = onMoveUp,
+                        onMoveDown = onMoveDown,
+                        onRemove = onRemove
+                    )
+                }
+                is AddonDisplayItem.Pair -> {
+                    AddonPairCard(
+                        pair = item,
+                        onOpen = { openPairKey = item.pairKey }
+                    )
+                }
+            }
         }
 
         // ─── ESTADO VACÍO ───────────────────────────────────
@@ -217,6 +260,17 @@ fun ImportScreen(
         }
 
         item { Spacer(modifier = Modifier.height(80.dp)) }
+        }
+
+        // ─── Miniinterfaz flotante de la carpeta RP+BP ──────────
+        openPair?.let { pair ->
+            AddonPairDialog(
+                pair = pair,
+                onClose = { openPairKey = null },
+                onToggleAddon = onToggleAddon,
+                onRemoveAddon = onRemoveAddon
+            )
+        }
     }
 }
 

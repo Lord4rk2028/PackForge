@@ -510,12 +510,25 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                     }
                     
+                    // ─── COPIA PERMANENTE EN ALMACENAMIENTO INTERNO ──
+                    // Garantiza que "Compartir Modpack" funcione SIEMPRE, aunque el
+                    // fichero de Downloads/SAF desaparezca o cambie de ubicación.
+                    val internalExportPath = try {
+                        val exportsDir = File(context.filesDir, "exports").apply { mkdirs() }
+                        val dest = File(exportsDir, "$customName.mcaddon")
+                        outputFile.copyTo(dest, overwrite = true)
+                        dest.absolutePath
+                    } catch (e: Exception) {
+                        PackForgeLog.e("PackForge", "No se pudo copiar a almacenamiento interno: ${e.message}")
+                        null
+                    }
+
                     _exportState.value = ExportState.Success(
                         fileName = "$customName.mcaddon",
                         filePath = finalPath,
                         importedToMinecraft = false
                     )
-                    saveModpackToHistory(context, "$customName.mcaddon", finalPath)
+                    saveModpackToHistory(context, "$customName.mcaddon", internalExportPath ?: finalPath)
                     _events.emit(PackForgeEvent.ShowSnackbar("¡Modpack fusionado con éxito!"))
                 } else {
                     _exportState.value = ExportState.Error(result.errorMessage ?: "Fallo en la fusión")
@@ -553,8 +566,9 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             // CRÍTICO: copiar SIEMPRE a almacenamiento interno. Los content:// URIs pierden el
             // permiso de lectura cuando la app se reinicia, así que guardamos una copia local
             // en filesDir/modpack_icons/{id}_cover.png y referenciamos esa ruta.
-            var persistentCoverPath = persistCoverToInternal(context, _metadata.value.coverUriString, modpackId)
-                ?: _metadata.value.coverUriString
+            // Solo se guarda el path interno; si no se pudo persistir, se guarda sin portada
+            // (evita guardar un content:// roto que después se muestra en morado).
+            val persistentCoverPath = persistCoverToInternal(context, _metadata.value.coverUriString, modpackId)
             if (persistentCoverPath != null) {
                 PackForgeLog.d("PackForge", "Icono de portada persistido: $persistentCoverPath")
             }
@@ -657,7 +671,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 val context = getApplication<Application>()
                 val persistentCover = withContext(Dispatchers.IO) {
                     persistCoverToInternal(context, m.coverUriString, m.id)
-                } ?: m.coverUriString
+                }
                 if (persistentCover != null) {
                     PackForgeLog.d("PackForge", "Portada cargada desde Studio: $persistentCover")
                 }

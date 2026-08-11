@@ -375,11 +375,16 @@ fun MyModpacksScreen(
 }
 
 fun shareModpack(context: android.content.Context, modpack: SavedModpack) {
-    // Intentar múltiples rutas posibles para el archivo
-    val possiblePaths = listOf(
+    // Intentar múltiples rutas posibles. PRIORIDAD: la copia permanente en el
+    // almacenamiento interno de la app (filesDir/exports) creada al exportar,
+    // que garantiza que "Compartir" funcione siempre aunque el fichero de
+    // Downloads/SAF haya desaparecido.
+    val exportsDir = File(context.filesDir, "exports")
+    val possiblePaths = listOfNotNull(
+        File(exportsDir, modpack.fileName).takeIf { it.exists() && it.length() > 0 },
         File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), modpack.fileName),
         File(context.cacheDir, modpack.fileName),
-        File(context.filesDir, modpack.fileName),
+        File(context.filesDir, modpack.fileName).takeIf { it.exists() && it.length() > 0 },
         File(modpack.filePath) // Ruta guardada en el historial
     )
 

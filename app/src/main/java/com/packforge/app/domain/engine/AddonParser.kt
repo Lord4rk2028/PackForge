@@ -61,6 +61,8 @@ object AddonParser {
             var manifestUuid = UUID.randomUUID().toString()
             var minEngineVersion = listOf(1, 20, 0)
             var rawManifest = ""
+            /** Tipos de módulo de TODOS los manifests del paquete (para distinguir BOTH). */
+            val allModuleTypes = mutableSetOf<String>()
             var realName: String? = null
             var iconPath: String? = null
 
@@ -97,6 +99,14 @@ object AddonParser {
                                     val json = JSONObject(jsonText)
                                     if (lower.endsWith("manifest.json")) {
                                         rawManifest = jsonText
+                                        // Acumular tipos de módulo de CADA manifest: un .mcaddon
+                                        // con BP+RP tiene tantos manifests como packs.
+                                        json.optJSONArray("modules")?.let { modules ->
+                                            for (i in 0 until modules.length()) {
+                                                val t = modules.optJSONObject(i)?.optString("type")
+                                                if (!t.isNullOrEmpty()) allModuleTypes.add(t)
+                                            }
+                                        }
                                         json.optJSONObject("header")?.let { h ->
                                             manifestUuid = h.optString("uuid", manifestUuid)
                                             realName = if (h.has("name")) h.getString("name") else null
@@ -115,55 +125,23 @@ object AddonParser {
                 }
             }
 
-            // Determinar tipo basado en manifest.json si está disponible
-            val addonType = if (rawManifest.isNotBlank()) {
-                try {
-                    val manifest = JSONObject(rawManifest)
-                    val modules = manifest.optJSONArray("modules")
-                    val moduleTypes = mutableListOf<String>()
-                    
-                    if (modules != null) {
-                        for (i in 0 until modules.length()) {
-                            val module = modules.optJSONObject(i)
-                            if (module != null) {
-                                val type = module.optString("type")
-                                if (type.isNotEmpty()) {
-                                    moduleTypes.add(type)
-                                }
-                            }
-                        }
-                    }
-                    
-                    when {
-                        moduleTypes.contains("data") && (moduleTypes.contains("resources") || moduleTypes.contains("resource")) -> AddonType.BEHAVIOR_AND_RESOURCE
-                        moduleTypes.contains("data") -> AddonType.BEHAVIOR_ONLY
-                        moduleTypes.contains("resources") || moduleTypes.contains("resource") -> AddonType.RESOURCE_ONLY
-                        else -> {
-                            // Fallback a detección por archivos
-                            when {
-                                behaviorFiles.isNotEmpty() && resourceFiles.isNotEmpty() -> AddonType.BEHAVIOR_AND_RESOURCE
-                                behaviorFiles.isNotEmpty() -> AddonType.BEHAVIOR_ONLY
-                                resourceFiles.isNotEmpty() -> AddonType.RESOURCE_ONLY
-                                else -> AddonType.UNKNOWN
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    // Fallback a detección por archivos si hay error al leer manifest
+            // Determinar tipo a partir de TODOS los manifests del paquete.
+            // Un addon con BP y RP (2 manifests) ahora se clasifica como BOTH.
+            val hasData = allModuleTypes.contains("data")
+            val hasResources = allModuleTypes.contains("resources") ||
+                allModuleTypes.contains("resource")
+            val addonType = when {
+                hasData && hasResources -> AddonType.BEHAVIOR_AND_RESOURCE
+                hasData -> AddonType.BEHAVIOR_ONLY
+                hasResources -> AddonType.RESOURCE_ONLY
+                else -> {
+                    // Fallback a detección por archivos
                     when {
                         behaviorFiles.isNotEmpty() && resourceFiles.isNotEmpty() -> AddonType.BEHAVIOR_AND_RESOURCE
                         behaviorFiles.isNotEmpty() -> AddonType.BEHAVIOR_ONLY
                         resourceFiles.isNotEmpty() -> AddonType.RESOURCE_ONLY
                         else -> AddonType.UNKNOWN
                     }
-                }
-            } else {
-                // Sin manifest.json, usar detección por archivos
-                when {
-                    behaviorFiles.isNotEmpty() && resourceFiles.isNotEmpty() -> AddonType.BEHAVIOR_AND_RESOURCE
-                    behaviorFiles.isNotEmpty() -> AddonType.BEHAVIOR_ONLY
-                    resourceFiles.isNotEmpty() -> AddonType.RESOURCE_ONLY
-                    else -> AddonType.UNKNOWN
                 }
             }
 
