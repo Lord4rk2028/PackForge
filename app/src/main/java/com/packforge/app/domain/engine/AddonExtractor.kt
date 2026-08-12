@@ -5,11 +5,20 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
 object AddonExtractor {
     private const val TAG = "PackForge_Extractor"
+
+    // ── LÍMITES DE SEGURIDAD AL DESCOMPRIMIR ─────────────────────────
+    /** Máximo de entradas (archivos/carpetas) permitidas en un ZIP. */
+    private const val MAX_ZIP_ENTRIES = 10_000
+    /** Tamaño máximo por archivo extraído (50 MB). */
+    private const val MAX_ENTRY_SIZE = 50L * 1024 * 1024
+    /** Tamaño total máximo acumulado de la extracción (200 MB). */
+    private const val MAX_TOTAL_SIZE = 200L * 1024 * 1024
 
     /**
      * Resultado del análisis de un addon extraído
@@ -73,37 +82,101 @@ object AddonExtractor {
                 destDir.mkdirs()
             }
 
-            val fis = FileInputStream(sourceFile)
-            val zis = ZipInputStream(fis.buffered())
-            
-            var entry: ZipEntry? = zis.nextEntry
-            while (entry != null) {
-                if (!entry.isDirectory) {
-                    val newFile = File(destDir, entry.name)
-                    
-                    // Crear directorios padre si no existen
-                    newFile.parentFile?.mkdirs()
-                    
-                    // Extraer archivo
-                    val fos = FileOutputStream(newFile)
-                    zis.copyTo(fos)
-                    fos.close()
-                    
-                    PackForgeLog.d(TAG, "Extraído: ${entry.name}")
+            // Determinación segura de la "zona" de extracción (una sola vez).
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var entryCount = 0
+            var totalWritten = 0L
+
+            FileInputStream(sourceFile).use { fis ->
+                ZipInputStream(fis.buffered()).use { zis ->
+                    var entry: ZipEntry? = zis.nextEntry
+                    while (entry != null) {
+                        // 1) Límite de nº de entradas: evita "zip bombs" con millones de entradas.
+                        entryCount++
+                        if (entryCount > MAX_ZIP_ENTRIES) {
+                            throw IllegalStateException("ZIP con demasiadas entradas (> $MAX_ZIP_ENTRIES)")
+                        }
+
+                        // 2) VALIDACIÓN ZIP SLIP en TODAS las entradas (archivos y carpetas).
+                        if (!isSecurePath(destDir, entry.name)) {
+                            throw SecurityException("Zip Slip detected: ${entry.name}")
+                        }
+
+                        if (!entry.isDirectory) {
+                            // 3) Límite por archivo según el tamaño declarado en la cabecera ZIP.
+                            if (entry.size > MAX_ENTRY_SIZE) {
+                                throw IllegalStateException("Archivo demasiado grande en ZIP: ${entry.name} (${entry.size} bytes)")
+                            }
+
+                            val newFile = File(destDir, entry.name)
+                            newFile.parentFile?.mkdirs()
+
+                            // Descompresión normal (con byte-accounting para los límites).
+                            var fileWritten = 0L
+                            FileOutputStream(newFile).use { fos ->
+                                var read = zis.read(buffer)
+                                while (read != -1) {
+                                    fos.write(buffer, 0, read)
+                                    fileWritten += read
+                                    totalWritten += read
+
+                                    // 4) Límite real por archivo (cubre entradas con size = -1).
+                                    if (fileWritten > MAX_ENTRY_SIZE) {
+                                        throw IllegalStateException("Archivo demasiado grande al descomprimir: ${entry.name}")
+                                    }
+                                    // 5) Límite total acumulado (200 MB).
+                                    if (totalWritten > MAX_TOTAL_SIZE) {
+                                        throw IllegalStateException("Tamaño total de extracción supera el límite (200 MB)")
+                                    }
+                                    read = zis.read(buffer)
+                                }
+                            }
+                            PackForgeLog.d(TAG, "Extraído: ${entry.name} ($fileWritten bytes)")
+                        } else {
+                            // Entrada de directorio: también debe estar dentro de la zona segura.
+                            File(destDir, entry.name).mkdirs()
+                            PackForgeLog.d(TAG, "Directorio: ${entry.name}")
+                        }
+                        entry = zis.nextEntry
+                    }
                 }
-                entry = zis.nextEntry
             }
-            
-            zis.closeEntry()
-            zis.close()
-            fis.close()
-            
+
             PackForgeLog.d(TAG, "Extracción completada en: $destinationPath")
             return destinationPath
-            
+
+        } catch (e: SecurityException) {
+            // Zip Slip detectado: se limpia lo parcialmente extraído y se NOTIFICA.
+            cleanupExtractedFolder(destinationPath)
+            PackForgeLog.e(TAG, "❌ ${e.message}", e)
+            throw e
+        } catch (e: IllegalStateException) {
+            // Límite de seguridad excedido (entradas / tamaño): limpiar y notificar.
+            cleanupExtractedFolder(destinationPath)
+            PackForgeLog.e(TAG, "❌ Límite de seguridad excedido: ${e.message}", e)
+            throw e
         } catch (e: Exception) {
+            // Otro fallo (I/O, ZIP corrupto): limpiar parciales y fallar suave.
+            cleanupExtractedFolder(destinationPath)
             PackForgeLog.e(TAG, "Error al extraer addon: ${e.message}", e)
             return null
+        }
+    }
+
+    /**
+     * Valida que una entrada del ZIP no escape del directorio de destino
+     * (vulnerabilidad "Zip Slip"). Compara rutas CANONICALES para neutralizar
+     * "../", rutas absolutas y separadores alternativos ("..\\evil").
+     *
+     * @return true si la entrada desemboca ESTRICTAMENTE dentro de destDir.
+     */
+    private fun isSecurePath(destDir: File, entryName: String): Boolean {
+        return try {
+            val destCanonical = destDir.canonicalPath
+            val targetCanonical = File(destDir, entryName).canonicalPath
+            targetCanonical.startsWith(destCanonical + File.separator)
+        } catch (e: IOException) {
+            false
         }
     }
 
