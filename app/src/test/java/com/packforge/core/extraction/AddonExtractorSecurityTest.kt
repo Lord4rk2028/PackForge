@@ -1,4 +1,4 @@
-package com.packforge.app.domain.engine
+package com.packforge.core.extraction
 
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -84,9 +84,6 @@ class AddonExtractorSecurityTest {
             AddonExtractor.extractAddon(zip.absolutePath, dest.absolutePath)
         }.exceptionOrNull()
 
-        // En Linux/macOS "/tmp/..." es absoluta y lanza SecurityException.
-        // En Windows se absorbe DENTRO del destino (no es absoluta sin letra de
-        // unidad): out/tmp/pf_evil_marker.txt. EN NINGÚN caso puede escribir fuera.
         val absorbedInside = File(dest, "tmp/pf_evil_marker.txt").exists()
         assertTrue(
             "Debe rechazar la ruta absoluta o dejarla dentro del destino (nunca fuera)",
@@ -105,8 +102,6 @@ class AddonExtractorSecurityTest {
             AddonExtractor.extractAddon(zip.absolutePath, dest.absolutePath)
         }.exceptionOrNull()
 
-        // En Windows "..\\.." es un separador real → escapa → SecurityException.
-        // En Linux es un caracter literal de nombre → queda DENTRO del destino.
         val absorbedInside = File(root, "out").walkTopDown().any { it.name == "evil.bat" }
         assertTrue(
             "Los separadores \\ no deben escribir fuera del destino",

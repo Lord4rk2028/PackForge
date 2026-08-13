@@ -13,3 +13,23 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# AI Tools & History
+.aider/
+.aider-desk/
+.aider.input.history
+.artifacts/
+
+# IDE Specifics (si no están ya)
+.idea/
+.vscode/
+*.iml
+
+# Kotlin/Gradle caches adicionales
+.kotlin/
+.gradle/
+build/
+local.properties
+
+# Logs
+*.log
