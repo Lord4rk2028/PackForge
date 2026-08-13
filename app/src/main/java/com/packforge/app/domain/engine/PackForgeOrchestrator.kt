@@ -762,10 +762,14 @@ object PackForgeOrchestrator {
             ?: java.util.UUID.randomUUID().toString()
 
         // ══ GENERAR BP MANIFEST (función exacta) ══
+        val hasScripts = mergedBpDir.exists() && mergedBpDir.walkTopDown().any {
+            it.isFile && it.name.endsWith(".js", ignoreCase = true)
+        }
         val bpManifestObj = ManifestGenerator.generateBpManifest(
             packName = customName,
             rpHeaderUuid = newRpHeaderUuid,
-            originalManifests = originalBpManifests
+            originalManifests = originalBpManifests,
+            hasScripts = hasScripts
         )
 
         val newBpHeaderUuid = bpManifestObj.optJSONObject("header")?.optString("uuid")

@@ -295,13 +295,17 @@ object ManifestGenerator {
      * GENERADOR EXACTO DEL MANIFEST DEL BP
      * ═══════════════════════════════════════════
      * min_engine_version OBLIGATORIO (default alto [1,21,0], nunca [1,0,0]),
-     * módulo data + módulo script (entry scripts/main.js),
-     * dependencies RP + @minecraft/server + @minecraft/server-ui.
+     * módulo data + módulo script SOLO si hasScripts (entry scripts/main.js),
+     * dependencies RP + @minecraft/server + @minecraft/server-ui
+     * (solo si hasScripts).
+     *
+     * @param hasScripts true si el BP fusionado contiene archivos .js
      */
     fun generateBpManifest(
         packName: String,
         rpHeaderUuid: String,
-        originalManifests: List<File> = emptyList()
+        originalManifests: List<File> = emptyList(),
+        hasScripts: Boolean = false
     ): JSONObject {
         val bpHeaderUuid = UUID.randomUUID().toString()
         val bpModuleUuid = UUID.randomUUID().toString()
@@ -324,7 +328,7 @@ object ManifestGenerator {
             } catch (e: Exception) {}
         }
 
-        // ⭐ CRÍTICO: Agregar módulo SCRIPT si existe carpeta scripts/
+        // ⭐ CRÍTICO: Agregar módulo SCRIPT solo si hay scripts
         val modules = JSONArray()
         modules.put(JSONObject().apply {
             put("type", "data")
@@ -332,14 +336,16 @@ object ManifestGenerator {
             put("version", JSONArray(listOf(1, 0, 0)))
         })
 
-        // ⭐ AGREGAR MÓDULO SCRIPT
-        modules.put(JSONObject().apply {
-            put("type", "script")
-            put("language", "javascript")
-            put("uuid", UUID.randomUUID().toString())
-            put("version", JSONArray(listOf(1, 0, 0)))
-            put("entry", "scripts/main.js")  // Entry point estándar
-        })
+        // ⭐ AGREGAR MÓDULO SCRIPT SOLO SI HAY SCRIPTS
+        if (hasScripts) {
+            modules.put(JSONObject().apply {
+                put("type", "script")
+                put("language", "javascript")
+                put("uuid", UUID.randomUUID().toString())
+                put("version", JSONArray(listOf(1, 0, 0)))
+                put("entry", "scripts/main.js")  // Entry point estándar
+            })
+        }
 
         // Dependencies: RP + @minecraft/server-ui + @minecraft/server
         val dependencies = JSONArray()
@@ -347,14 +353,16 @@ object ManifestGenerator {
             put("uuid", rpHeaderUuid)
             put("version", JSONArray(listOf(1, 0, 0)))
         })
-        dependencies.put(JSONObject().apply {
-            put("module_name", "@minecraft/server-ui")
-            put("version", "2.0.0")
-        })
-        dependencies.put(JSONObject().apply {
-            put("module_name", "@minecraft/server")
-            put("version", "2.7.0")
-        })
+        if (hasScripts) {
+            dependencies.put(JSONObject().apply {
+                put("module_name", "@minecraft/server-ui")
+                put("version", "2.0.0")
+            })
+            dependencies.put(JSONObject().apply {
+                put("module_name", "@minecraft/server")
+                put("version", "2.7.0")
+            })
+        }
 
         return JSONObject().apply {
             put("format_version", 2)
