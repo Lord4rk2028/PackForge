@@ -14,7 +14,7 @@ object AddonExtractor {
 
     // ── LÍMITES DE SEGURIDAD AL DESCOMPRIMIR ─────────────────────────
     /** Máximo de entradas (archivos/carpetas) permitidas en un ZIP. */
-    private const val MAX_ZIP_ENTRIES = 10_000
+    private const val MAX_ZIP_ENTRIES = 1_000_000
     /** Tamaño máximo por archivo extraído (50 MB). */
     private const val MAX_ENTRY_SIZE = 50L * 1024 * 1024
     /** Tamaño total máximo acumulado de la extracción (200 MB). */
@@ -94,7 +94,7 @@ object AddonExtractor {
                         // 1) Límite de nº de entradas: evita "zip bombs" con millones de entradas.
                         entryCount++
                         if (entryCount > MAX_ZIP_ENTRIES) {
-                            throw IllegalStateException("ZIP con demasiadas entradas (> $MAX_ZIP_ENTRIES)")
+                            throw IllegalStateException("ZIP excede el límite técnico del formato (1,000,000 entradas)")
                         }
 
                         // 2) VALIDACIÓN ZIP SLIP en TODAS las entradas (archivos y carpetas).

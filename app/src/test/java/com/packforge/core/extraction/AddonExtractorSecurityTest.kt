@@ -115,7 +115,7 @@ class AddonExtractorSecurityTest {
     fun tooManyEntries_isRejected() {
         val root = tempDir("entries")
         val zip = File(root, "big.zip")
-        val entries = (0 until 10_001).map { ZipEntrySpec("f$it.txt", ByteArray(0)) }
+        val entries = (0 until 1_000_001).map { ZipEntrySpec("f$it.txt", ByteArray(0)) }
         createZip(zip, entries)
         val dest = File(root, "out")
 

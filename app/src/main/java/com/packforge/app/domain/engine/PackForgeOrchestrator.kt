@@ -1037,19 +1037,26 @@ object PackForgeOrchestrator {
      * CRÍTICO: NO usar behavior_packs/ o resource_packs/
      */
     private fun createMcAddon(mergedBpDir: File?, mergedRpDir: File?, outputFile: File) {
+        var entryCount = 0
         ZipOutputStream(BufferedOutputStream(FileOutputStream(outputFile))).use { zos ->
             
             if (mergedBpDir != null && mergedBpDir.exists()) {
-                addFolderToZip(zos, mergedBpDir, "BP_PackForge")
+                entryCount += addFolderToZip(zos, mergedBpDir, "BP_PackForge")
                 PackForgeLog.d("PackForge_ZIP", "✅ BP agregado como BP_PackForge/")
             }
             
             if (mergedRpDir != null && mergedRpDir.exists()) {
-                addFolderToZip(zos, mergedRpDir, "RP_PackForge")
+                entryCount += addFolderToZip(zos, mergedRpDir, "RP_PackForge")
                 PackForgeLog.d("PackForge_ZIP", "✅ RP agregado como RP_PackForge/")
             }
             
             zos.finish()
+        }
+
+        android.util.Log.d("PackForge_ZIP", "📦 Entradas totales en ZIP: $entryCount")
+        // Se mantiene log informativo para monitoreo de rendimiento, el límite técnico es 65,535 entradas ZIP estándar.
+        if (entryCount > 50000) {
+            android.util.Log.w("PackForge_ZIP", "⚠️ ZIP muy grande ($entryCount entradas) - verificando compatibilidad")
         }
         
         PackForgeLog.d("PackForge_ZIP", "📦 Archivo final: ${outputFile.name}")
@@ -1057,7 +1064,8 @@ object PackForgeOrchestrator {
         PackForgeLog.d("PackForge_ZIP", "   Tamaño: ${outputFile.length() / 1024} KB")
     }
     
-    private fun addFolderToZip(zos: ZipOutputStream, sourceFolder: File, zipFolderPath: String) {
+    private fun addFolderToZip(zos: ZipOutputStream, sourceFolder: File, zipFolderPath: String): Int {
+        var count = 0
         sourceFolder.walkTopDown().forEach { file ->
             val relativePath = file.relativeTo(sourceFolder).path
             
@@ -1073,6 +1081,7 @@ object PackForgeOrchestrator {
                 val dirEntry = ZipEntry("$zipFolderPath/$relativePath/")
                 zos.putNextEntry(dirEntry)
                 zos.closeEntry()
+                count++
             } else {
                 val zipEntryName = if (relativePath.isEmpty()) 
                     "$zipFolderPath/${file.name}" 
@@ -1082,8 +1091,10 @@ object PackForgeOrchestrator {
                 zos.putNextEntry(ZipEntry(zipEntryName))
                 FileInputStream(file).use { it.copyTo(zos) }
                 zos.closeEntry()
+                count++
             }
         }
+        return count
     }
     
     /**
