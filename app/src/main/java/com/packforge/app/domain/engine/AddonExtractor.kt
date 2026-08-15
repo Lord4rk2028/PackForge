@@ -322,7 +322,7 @@ object AddonExtractor {
                 packDir.mkdirs()
                 val extracted = extractAddon(zip.absolutePath, packDir.absolutePath)
                 if (extracted != null) {
-                    zip.delete()
+                    // zip.delete() // ⚠️ ¡NO ELIMINAR EL ZIP! Necesitamos mantenerlo para Nivel 3.
                     packs.add(packDir)
                     PackForgeLog.d("PackForge_Classify", "  ✅ Extraído: ${zip.name}")
                 }
@@ -440,13 +440,21 @@ object AddonExtractor {
      */
     fun readManifestFromZip(zipFile: File): JSONObject? {
         return try {
+            PackForgeLog.d("PackForge_Info", "Intentando leer manifest de ZIP: ${zipFile.absolutePath}")
             ZipFile(zipFile).use { zip ->
                 // Priorizar manifest.json en la raíz
                 val entry = zip.getEntry("manifest.json")
                     ?: zip.entries().asSequence().firstOrNull {
-                        !it.isDirectory && it.name.replace("\\", "/")
+                        val isManifest = !it.isDirectory && it.name.replace("\\", "/")
                             .endsWith("manifest.json", ignoreCase = true)
+                        if (isManifest) PackForgeLog.d("PackForge_Info", "  Manifest encontrado: ${it.name}")
+                        isManifest
                     }
+                
+                if (entry == null) {
+                    PackForgeLog.w("PackForge_Info", "  No se encontró manifest.json en ${zipFile.name}")
+                }
+                
                 entry?.let { e ->
                     zip.getInputStream(e).bufferedReader(Charsets.UTF_8).use { reader ->
                         JSONObject(reader.readText())
