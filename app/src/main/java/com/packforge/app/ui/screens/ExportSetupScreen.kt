@@ -1065,7 +1065,7 @@ fun ExportSetupScreen(
                                     Text(
                                         text = if (uuidsMatch) "✅ UUIDs coinciden" else "❌ UUIDs NO coinciden",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = if (uuidsMatch) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error,
+                                        color = if (uuidsMatch) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                                         fontWeight = FontWeight.Bold
                                     )
                                 }
@@ -1110,7 +1110,7 @@ fun ExportSetupScreen(
                             Text(
                                 text = "BP primer byte: $firstByte ${if (hasBom) "(❌ TIENE BOM)" else "(✅ Sin BOM)"}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (hasBom) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
+                                color = if (hasBom) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                             )
                         }
                         
@@ -1123,7 +1123,7 @@ fun ExportSetupScreen(
                             Text(
                                 text = "RP primer byte: $firstByte ${if (hasBom) "(❌ TIENE BOM)" else "(✅ Sin BOM)"}",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (hasBom) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
+                                color = if (hasBom) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                             )
                         }
                         
@@ -1491,14 +1491,14 @@ fun ExportSuccessScreen(
         verticalArrangement = Arrangement.Center
     ) {
         Box(
-            modifier = Modifier.size(120.dp).clip(CircleShape).background(Color(0xFF4CAF50).copy(alpha = 0.15f)),
+            modifier = Modifier.size(120.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
             contentAlignment = Alignment.Center
         ) {
-            Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF4CAF50), modifier = Modifier.size(60.dp))
+            Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(60.dp))
         }
         
         Spacer(modifier = Modifier.height(24.dp))
-        Text(text = "¡Modpack Fusionado!", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = Color(0xFF4CAF50))
+        Text(text = "¡Modpack Fusionado!", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         
         if (conflicts.isNotEmpty()) {
             Spacer(modifier = Modifier.height(16.dp))
@@ -1640,7 +1640,7 @@ fun ExportSuccessScreen(
                     Text(
                         if (dependencyMatch) "✅ BP depende del RP (UUID coincide)" else "❌ BP NO depende del RP o UUID no coincide",
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (dependencyMatch) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+                        color = if (dependencyMatch) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                     )
                     
                     HorizontalDivider()
@@ -1759,7 +1759,7 @@ private fun IconDebugDialog(
                     Text(
                         text = "✅ La portada está configurada correctamente",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF4CAF50)
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }

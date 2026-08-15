@@ -64,9 +64,6 @@ dependencies {
     implementation("androidx.compose.material3:material3:1.4.0")
     implementation("androidx.compose.material3:material3-window-size-class:1.4.0")
     
-    // Material Color Utilities
-    implementation("com.google.material-color:material-color-utilities:0.3.0")
-    
     // Coil para imágenes (logos y portadas)
     implementation("io.coil-kt:coil-compose:2.6.0")
     

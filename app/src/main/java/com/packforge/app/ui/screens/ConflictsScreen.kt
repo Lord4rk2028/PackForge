@@ -414,7 +414,7 @@ fun ConflictBattleCard(
     }
 
     Card(
-        border = BorderStroke(2.dp, if (isResolved) Color(0xFF4CAF50).copy(alpha = 0.4f) else borderColor),
+        border = BorderStroke(2.dp, if (isResolved) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else borderColor),
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -424,7 +424,7 @@ fun ConflictBattleCard(
                 Icon(
                     imageVector = if (isResolved) Icons.Default.CheckCircle else Icons.Default.Warning,
                     contentDescription = null,
-                    tint = if (isResolved) Color(0xFF4CAF50) else borderColor,
+                    tint = if (isResolved) MaterialTheme.colorScheme.primary else borderColor,
                     modifier = Modifier.size(20.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
@@ -446,7 +446,7 @@ fun ConflictBattleCard(
                     Text(
                         text = if (isResolved) "RESUELTO" else conflict.severity.name,
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (isResolved) Color(0xFF4CAF50) else borderColor,
+                        color = if (isResolved) MaterialTheme.colorScheme.primary else borderColor,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )

@@ -339,9 +339,8 @@ private fun WebImportProgressBar(loading: OperationProgress.Loading?) {
  */
 @Composable
 private fun WebImportSuccessChip() {
-    val successGreen = Color(0xFF4CAF50)
     Surface(
-        color = successGreen.copy(alpha = 0.12f),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
         shape = RoundedCornerShape(10.dp),
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
@@ -354,7 +353,7 @@ private fun WebImportSuccessChip() {
             Box(
                 modifier = Modifier
                     .size(26.dp)
-                    .background(successGreen, CircleShape),
+                    .background(MaterialTheme.colorScheme.primary, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -368,7 +367,7 @@ private fun WebImportSuccessChip() {
                 text = "Addon importado",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
-                color = successGreen
+                color = MaterialTheme.colorScheme.primary
             )
         }
     }
