@@ -49,7 +49,28 @@ object AddonParser {
                 }
             }
 
-            // 3. Analizar el archivo ya guardado internamente
+            // 3. Analizar el archivo ya guardado internamente mediante extracción temporal robusta
+            val parseTempDir = File(context.cacheDir, "parse_temp_${addonId}")
+            parseTempDir.mkdirs()
+            
+            val extractedPath = AddonExtractor.extractAddon(internalFile.absolutePath, parseTempDir.absolutePath)
+            if (extractedPath == null) {
+                parseTempDir.deleteRecursively()
+                return null
+            }
+
+            val info = AddonExtractor.resolveAddonInfo(parseTempDir, internalFile)
+            val displayName = info.displayName
+            val addonClassification = info.classification
+
+            val addonType = when (addonClassification) {
+                is AddonExtractor.AddonClassification.BEHAVIOR_PACK -> AddonType.BEHAVIOR_ONLY
+                is AddonExtractor.AddonClassification.RESOURCE_PACK -> AddonType.RESOURCE_ONLY
+                is AddonExtractor.AddonClassification.BOTH,
+                is AddonExtractor.AddonClassification.MULTI -> AddonType.BEHAVIOR_AND_RESOURCE
+                else -> AddonType.UNKNOWN
+            }
+
             val allFiles = mutableListOf<String>()
             val behaviorFiles = mutableListOf<String>()
             val resourceFiles = mutableListOf<String>()
@@ -61,93 +82,64 @@ object AddonParser {
             var manifestUuid = UUID.randomUUID().toString()
             var minEngineVersion = listOf(1, 20, 0)
             var rawManifest = ""
-            /** Tipos de módulo de TODOS los manifests del paquete (para distinguir BOTH). */
-            val allModuleTypes = mutableSetOf<String>()
-            var realName: String? = null
             var iconPath: String? = null
 
-            internalFile.inputStream().use { fileInput ->
-                ZipInputStream(BufferedInputStream(fileInput)).use { zip ->
-                    var entry = zip.nextEntry
-                    while (entry != null) {
-                        if (!entry.isDirectory) {
-                            val entryName = entry.name.replace("\\", "/")
-                            allFiles.add(entryName)
+            parseTempDir.walkTopDown().forEach { file ->
+                if (file.isFile) {
+                    val entryName = file.relativeTo(parseTempDir).path.replace("\\", "/")
+                    allFiles.add(entryName)
 
-                            // Extraer icono
-                            if (entryName.lowercase().endsWith("pack_icon.png")) {
-                                try {
-                                    val iconFile = File(context.cacheDir, "icon_${addonId}.png")
-                                    iconFile.outputStream().use { zip.copyTo(it) }
-                                    iconPath = iconFile.absolutePath
-                                } catch (e: Exception) {}
-                            }
-
-                            // Clasificación rápida para el modelo visual
-                            val lower = entryName.lowercase()
-                            when {
-                                lower.contains("behavior") || lower.startsWith("entities/") || lower.startsWith("items/") -> behaviorFiles.add(entryName)
-                                lower.contains("resource") || lower.startsWith("textures/") || lower.startsWith("models/") -> resourceFiles.add(entryName)
-                            }
-
-                            if (lower.endsWith(".js") && lower.startsWith("scripts/")) hasScripts = true
-
-                            // Leer manifest y identifiers
-                            if (lower.endsWith("manifest.json") || (lower.endsWith(".json") && (lower.contains("entities/") || lower.contains("items/") || lower.contains("recipes/")))) {
-                                val jsonText = String(zip.readBytes())
-                                try {
-                                    val json = JSONObject(jsonText)
-                                    if (lower.endsWith("manifest.json")) {
-                                        rawManifest = jsonText
-                                        // Acumular tipos de módulo de CADA manifest: un .mcaddon
-                                        // con BP+RP tiene tantos manifests como packs.
-                                        json.optJSONArray("modules")?.let { modules ->
-                                            for (i in 0 until modules.length()) {
-                                                val t = modules.optJSONObject(i)?.optString("type")
-                                                if (!t.isNullOrEmpty()) allModuleTypes.add(t)
-                                            }
-                                        }
-                                        json.optJSONObject("header")?.let { h ->
-                                            manifestUuid = h.optString("uuid", manifestUuid)
-                                            realName = if (h.has("name")) h.getString("name") else null
-                                            h.optJSONArray("version")?.let { v -> version = "${v.optInt(0)}.${v.optInt(1)}.${v.optInt(2)}" }
-                                            h.optJSONArray("min_engine_version")?.let { v -> minEngineVersion = listOf(v.optInt(0, 1), v.optInt(1, 20), v.optInt(2, 0)) }
-                                        }
-                                    }
-                                    if (lower.contains("entities/")) extractEntityIdentifier(json)?.let { entityIdentifiers.add(it) }
-                                    if (lower.contains("items/")) extractItemIdentifier(json)?.let { itemIdentifiers.add(it) }
-                                    if (lower.contains("recipes/")) extractRecipeIdentifier(json)?.let { recipeIdentifiers.add(it) }
-                                } catch (e: Exception) {}
-                            }
-                        }
-                        entry = zip.nextEntry
+                    // Extraer icono
+                    if (entryName.lowercase().endsWith("pack_icon.png") && iconPath == null) {
+                        try {
+                            val iconFile = File(context.cacheDir, "icon_${addonId}.png")
+                            file.copyTo(iconFile, overwrite = true)
+                            iconPath = iconFile.absolutePath
+                        } catch (e: Exception) {}
                     }
-                }
-            }
 
-            // Determinar tipo a partir de TODOS los manifests del paquete.
-            // Un addon con BP y RP (2 manifests) ahora se clasifica como BOTH.
-            val hasData = allModuleTypes.contains("data")
-            val hasResources = allModuleTypes.contains("resources") ||
-                allModuleTypes.contains("resource")
-            val addonType = when {
-                hasData && hasResources -> AddonType.BEHAVIOR_AND_RESOURCE
-                hasData -> AddonType.BEHAVIOR_ONLY
-                hasResources -> AddonType.RESOURCE_ONLY
-                else -> {
-                    // Fallback a detección por archivos
+                    // Clasificación para el modelo visual
+                    val lower = entryName.lowercase()
                     when {
-                        behaviorFiles.isNotEmpty() && resourceFiles.isNotEmpty() -> AddonType.BEHAVIOR_AND_RESOURCE
-                        behaviorFiles.isNotEmpty() -> AddonType.BEHAVIOR_ONLY
-                        resourceFiles.isNotEmpty() -> AddonType.RESOURCE_ONLY
-                        else -> AddonType.UNKNOWN
+                        lower.contains("behavior") || lower.contains("bp/") || lower.startsWith("entities/") || lower.startsWith("items/") -> behaviorFiles.add(entryName)
+                        lower.contains("resource") || lower.contains("rp/") || lower.startsWith("textures/") || lower.startsWith("models/") -> resourceFiles.add(entryName)
+                    }
+
+                    if (lower.endsWith(".js") && (lower.startsWith("scripts/") || lower.contains("/scripts/"))) {
+                        hasScripts = true
+                    }
+
+                    // Leer manifest y identifiers
+                    if (lower.endsWith("manifest.json")) {
+                        try {
+                            val jsonText = file.readText(Charsets.UTF_8)
+                            val json = JSONObject(jsonText)
+                            rawManifest = jsonText
+                            json.optJSONObject("header")?.let { h ->
+                                manifestUuid = h.optString("uuid", manifestUuid)
+                                h.optJSONArray("version")?.let { v -> version = "${v.optInt(0)}.${v.optInt(1)}.${v.optInt(2)}" }
+                                h.optJSONArray("min_engine_version")?.let { v -> minEngineVersion = listOf(v.optInt(0, 1), v.optInt(1, 20), v.optInt(2, 0)) }
+                            }
+                        } catch (e: Exception) {}
+                    }
+
+                    if (lower.endsWith(".json")) {
+                        try {
+                            val json = JSONObject(file.readText(Charsets.UTF_8))
+                            if (lower.contains("entities/")) extractEntityIdentifier(json)?.let { entityIdentifiers.add(it) }
+                            if (lower.contains("items/")) extractItemIdentifier(json)?.let { itemIdentifiers.add(it) }
+                            if (lower.contains("recipes/")) extractRecipeIdentifier(json)?.let { recipeIdentifiers.add(it) }
+                        } catch (e: Exception) {}
                     }
                 }
             }
+
+            // Limpiar carpeta temporal de análisis
+            parseTempDir.deleteRecursively()
 
             Addon(
                 id = addonId,
-                name = realName ?: fileName.substringBeforeLast("."),
+                name = displayName,
                 fileName = fileName,
                 type = addonType,
                 version = version,

@@ -2,11 +2,13 @@ package com.packforge.app.domain.engine
 
 import com.packforge.app.util.PackForgeLog
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 
 object AddonExtractor {
@@ -417,5 +419,144 @@ object AddonExtractor {
             PackForgeLog.e(TAG, "Error al limpiar carpeta: ${e.message}", e)
             false
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // RESOLUCIÓN UNIVERSAL DE NOMBRE + TIPO (3 NIVELES)
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Resultado de resolución de un addon: nombre visible + clasificación.
+     */
+    data class AddonInfo(
+        val displayName: String,
+        val classification: AddonClassification
+    )
+
+    /**
+     * ⭐ Lee manifest.json desde un ZIP usando ZipFile (acceso aleatorio, rápido) ⭐
+     * Busca "manifest.json" en la raíz o en cualquier subcarpeta del ZIP.
+     * NO extrae nada al disco.
+     */
+    fun readManifestFromZip(zipFile: File): JSONObject? {
+        return try {
+            ZipFile(zipFile).use { zip ->
+                // Priorizar manifest.json en la raíz
+                val entry = zip.getEntry("manifest.json")
+                    ?: zip.entries().asSequence().firstOrNull {
+                        !it.isDirectory && it.name.replace("\\", "/")
+                            .endsWith("manifest.json", ignoreCase = true)
+                    }
+                entry?.let { e ->
+                    zip.getInputStream(e).bufferedReader(Charsets.UTF_8).use { reader ->
+                        JSONObject(reader.readText())
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            PackForgeLog.w("PackForge_Info", "No se pudo leer manifest de ${zipFile.name}: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * ⭐ Lee manifest.json desde bytes de un ZIP en memoria (streaming) ⭐
+     * Para usar cuando ya tenemos los bytes en memoria (ej: al leer un .mcpack
+     * desde un ZipInputStream dentro de un .mcaddon).
+     */
+    fun readManifestFromZipBytes(zipBytes: ByteArray): JSONObject? {
+        return try {
+            ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory &&
+                        entry.name.replace("\\", "/")
+                            .endsWith("manifest.json", ignoreCase = true)
+                    ) {
+                        return JSONObject(String(zis.readBytes(), Charsets.UTF_8))
+                    }
+                    entry = zis.nextEntry
+                }
+            }
+            null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * ⭐ RESOLUCIÓN UNIVERSAL de nombre + tipo buscando en 3 niveles ⭐
+     *
+     * NIVEL 1: manifest.json en la raíz
+     * NIVEL 2: manifest.json en subcarpetas (BP_xxx/, RP_xxx/)
+     * NIVEL 3: manifest.json DENTRO de .mcpack/.zip anidados (leer SIN extraer)
+     *
+     * FALLBACK del nombre: NUNCA "desconocido" → usa el nombre del archivo original.
+     */
+    fun resolveAddonInfo(extractedDir: File, originalFile: File): AddonInfo {
+        var name: String? = null
+
+        // ── NIVEL 1: manifest.json en la raíz ──
+        val rootManifest = File(extractedDir, "manifest.json")
+        if (rootManifest.exists()) {
+            try {
+                val json = JSONObject(rootManifest.readText(Charsets.UTF_8))
+                name = json.optJSONObject("header")?.optString("name")
+                    ?.takeIf { it.isNotBlank() }
+                PackForgeLog.d("PackForge_Info", "  Nivel 1 (raíz): name=$name")
+            } catch (e: Exception) {
+                PackForgeLog.w("PackForge_Info", "  Nivel 1: manifest inválido: ${e.message}")
+            }
+        }
+
+        // ── NIVEL 2: manifest.json en subcarpetas (BP_xxx, RP_xxx) ──
+        if (name.isNullOrBlank()) {
+            extractedDir.listFiles()?.filter { it.isDirectory }?.forEach { sub ->
+                if (name.isNullOrBlank()) {
+                    val m = File(sub, "manifest.json")
+                    if (m.exists()) {
+                        try {
+                            val json = JSONObject(m.readText(Charsets.UTF_8))
+                            name = json.optJSONObject("header")?.optString("name")
+                                ?.takeIf { it.isNotBlank() }
+                            PackForgeLog.d("PackForge_Info", "  Nivel 2 (sub ${sub.name}): name=$name")
+                        } catch (e: Exception) {
+                            PackForgeLog.w("PackForge_Info", "  Nivel 2: manifest inválido en ${sub.name}: ${e.message}")
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── NIVEL 3: manifest.json DENTRO de .mcpack/.zip anidados ──
+        if (name.isNullOrBlank()) {
+            extractedDir.walkTopDown()
+                .filter {
+                    it.isFile && (
+                        it.extension.equals("mcpack", true) ||
+                        it.extension.equals("zip", true)
+                    )
+                }
+                .forEach { nested ->
+                    if (name.isNullOrBlank()) {
+                        val manifest = readManifestFromZip(nested)
+                        name = manifest?.optJSONObject("header")?.optString("name")
+                            ?.takeIf { it.isNotBlank() }
+                        PackForgeLog.d("PackForge_Info", "  Nivel 3 (ZIP ${nested.name}): name=$name")
+                    }
+                }
+        }
+
+        // ── FALLBACK: NUNCA "desconocido" ──
+        val finalName = if (name.isNullOrBlank()) {
+            PackForgeLog.d("PackForge_Info", "  Fallback: usando nombre del archivo: ${originalFile.nameWithoutExtension}")
+            originalFile.nameWithoutExtension
+        } else {
+            name!!
+        }
+
+        PackForgeLog.d("PackForge_Info", "📛 Addon: ${originalFile.name} → nombre resuelto: $finalName")
+
+        return AddonInfo(finalName, classify(extractedDir))
     }
 }
