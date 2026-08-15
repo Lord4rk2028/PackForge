@@ -88,12 +88,7 @@ fun WebBrowserScreen(
             PackForgeTopBar(
                 title = title,
                 onBackClick = {
-                    val wv = webViewRef
-                    if (wv != null && wv.canGoBack()) {
-                        wv.goBack()
-                    } else {
-                        onBack()
-                    }
+                    onBack()
                 },
                 actions = {
                     IconButton(onClick = {

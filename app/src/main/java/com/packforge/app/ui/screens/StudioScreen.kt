@@ -512,13 +512,13 @@ fun ModpackLibraryCard(
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = 4.dp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // ── Portada 16:9 ─────────────────────────────────
+                    // ── Portada 16:9 ─────────────────────────────────
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
                     .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
+                    .background(MaterialTheme.colorScheme.surfaceVariant), // Cambiado de primaryContainer a surfaceVariant
                 contentAlignment = Alignment.Center
             ) {
                 when {
@@ -535,13 +535,13 @@ fun ModpackLibraryCard(
                             Icon(
                                 Icons.Default.Extension,
                                 null,
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                                 modifier = Modifier.size(28.dp)
                             )
                             Text(
                                 text = modpack.name.take(12),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )

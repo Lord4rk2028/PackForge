@@ -59,7 +59,7 @@ enum class AddonSite(
     ),
     MODBAY(
         sourceKey = "ModBay",
-        displayName = "Modbay",
+        displayName = "ModBay",
         url = "https://modbay.org",
         logoUrl = "https://www.google.com/s2/favicons?domain=modbay.org&sz=64",
         fallbackColor = Color(0xFF2196F3)

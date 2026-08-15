@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.PackForge" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.PackForge" parent="android:Theme.Material.NoActionBar">
         <item name="android:colorPrimary">@color/md_theme_primary</item>
-        <item name="android:colorPrimaryDark">@color/purple_900</item>
+        <item name="android:colorPrimaryDark">@color/black</item>
         <item name="android:colorAccent">@color/md_theme_primary</item>
-        <item name="android:colorBackground">@color/md_theme_background</item>
-        <item name="android:colorForeground">@color/md_theme_onBackground</item>
+        <item name="android:colorBackground">@color/black</item>
+        <item name="android:colorForeground">@color/white</item>
         <item name="android:windowAnimationStyle">@style/WindowAnimation</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/black</item>
+        <item name="android:navigationBarLightIconColors">false</item>
+        <item name="android:windowBackground">@color/black</item>
+        <item name="android:windowBackgroundFallback">@color/black</item>
     </style>
 
     <style name="WindowAnimation" parent="android:Animation.Activity">
