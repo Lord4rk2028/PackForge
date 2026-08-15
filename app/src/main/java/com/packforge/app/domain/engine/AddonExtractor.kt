@@ -552,7 +552,7 @@ object AddonExtractor {
             PackForgeLog.d("PackForge_Info", "  Fallback: usando nombre del archivo: ${originalFile.nameWithoutExtension}")
             originalFile.nameWithoutExtension
         } else {
-            name!!
+            name
         }
 
         PackForgeLog.d("PackForge_Info", "📛 Addon: ${originalFile.name} → nombre resuelto: $finalName")
