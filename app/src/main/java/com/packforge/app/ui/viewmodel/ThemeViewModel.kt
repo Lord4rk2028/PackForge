@@ -3,14 +3,10 @@ package com.packforge.app.ui.viewmodel
 import android.app.Application
 import android.content.Context
 import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.packforge.app.data.AccentColor
 import com.packforge.app.data.ThemePreferences
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -21,21 +17,22 @@ import kotlinx.coroutines.launch
 private val Context.themeDataStore: DataStore<Preferences> by preferencesDataStore(name = "theme_preferences")
 
 private val DARK_MODE_KEY = booleanPreferencesKey("dark_mode")
-private val ACCENT_COLOR_KEY = stringPreferencesKey("accent_color")
+private val AMOLED_MODE_KEY = booleanPreferencesKey("amoled_mode")
+private val ACCENT_HEX_KEY = stringPreferencesKey("accent_hex")
+private val VIVID_COLORS_KEY = booleanPreferencesKey("vivid_colors")
 private val EXPRESSIVE_MOTION_KEY = booleanPreferencesKey("expressive_motion")
 
 class ThemeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val dataStore = application.themeDataStore
 
-    // Estado reactivo de las preferencias de tema (leído de DataStore)
     val preferences: StateFlow<ThemePreferences> = dataStore.data
         .map { prefs ->
             ThemePreferences(
                 darkMode = prefs[DARK_MODE_KEY] ?: true,
-                accentColor = prefs[ACCENT_COLOR_KEY]?.let { name ->
-                    runCatching { AccentColor.valueOf(name) }.getOrNull()
-                } ?: AccentColor.EMERALD,
+                amoledMode = prefs[AMOLED_MODE_KEY] ?: false,
+                accentHex = prefs[ACCENT_HEX_KEY] ?: "#2ECC71",
+                vividColors = prefs[VIVID_COLORS_KEY] ?: true,
                 expressiveMotion = prefs[EXPRESSIVE_MOTION_KEY] ?: true
             )
         }
@@ -46,20 +43,22 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
         )
 
     fun setDarkMode(enabled: Boolean) {
-        viewModelScope.launch {
-            dataStore.edit { it[DARK_MODE_KEY] = enabled }
-        }
+        viewModelScope.launch { dataStore.edit { it[DARK_MODE_KEY] = enabled } }
     }
 
-    fun setAccentColor(color: AccentColor) {
-        viewModelScope.launch {
-            dataStore.edit { it[ACCENT_COLOR_KEY] = color.name }
-        }
+    fun setAmoledMode(enabled: Boolean) {
+        viewModelScope.launch { dataStore.edit { it[AMOLED_MODE_KEY] = enabled } }
+    }
+
+    fun setAccentHex(hex: String) {
+        viewModelScope.launch { dataStore.edit { it[ACCENT_HEX_KEY] = hex } }
+    }
+
+    fun setVividColors(enabled: Boolean) {
+        viewModelScope.launch { dataStore.edit { it[VIVID_COLORS_KEY] = enabled } }
     }
 
     fun setExpressiveMotion(enabled: Boolean) {
-        viewModelScope.launch {
-            dataStore.edit { it[EXPRESSIVE_MOTION_KEY] = enabled }
-        }
+        viewModelScope.launch { dataStore.edit { it[EXPRESSIVE_MOTION_KEY] = enabled } }
     }
 }

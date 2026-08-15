@@ -194,11 +194,11 @@ fun ConflictSummaryCard(total: Int, resolved: Int, conflicts: List<Conflict>) {
             // ─── Resumen por severidad (TODAS visibles) ─────
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(
-                    ConflictSeverity.CRITICAL to Color(0xFFF44336),
-                    ConflictSeverity.HIGH to Color(0xFFFF9800),
-                    ConflictSeverity.MEDIUM to Color(0xFFFFC107),
-                    ConflictSeverity.LOW to Color(0xFF4CAF50),
-                    ConflictSeverity.WARNING to Color(0xFFB0BEC5)
+                    ConflictSeverity.CRITICAL to MaterialTheme.colorScheme.error,
+                    ConflictSeverity.HIGH to MaterialTheme.colorScheme.tertiary,
+                    ConflictSeverity.MEDIUM to MaterialTheme.colorScheme.tertiary.copy(alpha = 0.8f),
+                    ConflictSeverity.LOW to MaterialTheme.colorScheme.primary,
+                    ConflictSeverity.WARNING to MaterialTheme.colorScheme.outline
                 ).forEach { (severity, color) ->
                     val count = conflicts.count { it.severity == severity }
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -224,7 +224,7 @@ fun ConflictSummaryCard(total: Int, resolved: Int, conflicts: List<Conflict>) {
             if (criticalUnresolved > 0) {
                 Text("⚠️ $criticalUnresolved conflictos críticos pendientes", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             } else {
-                Text("✅ Listo para exportar", color = Color(0xFF4CAF50), style = MaterialTheme.typography.bodySmall)
+                Text("✅ Listo para exportar", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -234,10 +234,10 @@ fun ConflictSummaryCard(total: Int, resolved: Int, conflicts: List<Conflict>) {
 fun SeverityHeader(severity: ConflictSeverity) {
     val color = when(severity) {
         ConflictSeverity.CRITICAL -> MaterialTheme.colorScheme.error          // Rojo
-        ConflictSeverity.HIGH -> Color(0xFFF57C00)                            // Naranja
-        ConflictSeverity.MEDIUM -> Color(0xFFFFB300)                          // Ámbar
-        ConflictSeverity.LOW -> Color(0xFF4CAF50)                             // Verde
-        ConflictSeverity.WARNING -> Color(0xFFFFB300)                         // Ámbar suave
+        ConflictSeverity.HIGH -> MaterialTheme.colorScheme.tertiary
+        ConflictSeverity.MEDIUM -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.8f)
+        ConflictSeverity.LOW -> MaterialTheme.colorScheme.primary
+        ConflictSeverity.WARNING -> MaterialTheme.colorScheme.outline
     }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.size(8.dp).clip(CircleShape).background(color))
@@ -251,16 +251,16 @@ fun ConflictCard(conflict: Conflict, addons: List<Addon>, resolution: String?, o
     val isResolved = resolution != null
 
     ElevatedCard(
-        modifier = Modifier.fillMaxWidth().border(1.dp, if (isResolved) Color(0xFF4CAF50).copy(0.4f) else Color.Transparent, RoundedCornerShape(16.dp)),
+        modifier = Modifier.fillMaxWidth().border(1.dp, if (isResolved) MaterialTheme.colorScheme.primary.copy(0.4f) else Color.Transparent, RoundedCornerShape(16.dp)),
         shape = RoundedCornerShape(16.dp)
     ) {
         Column {
             Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(if (isResolved) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (isResolved) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error)
+                Icon(if (isResolved) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (isResolved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(conflict.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-                    Text(if (isResolved) "Resuelto" else conflict.severity.label, style = MaterialTheme.typography.labelSmall, color = if (isResolved) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (isResolved) "Resuelto" else conflict.severity.label, style = MaterialTheme.typography.labelSmall, color = if (isResolved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
             }
@@ -326,8 +326,8 @@ fun borderStroke(selected: Boolean, color: Color = MaterialTheme.colorScheme.pri
 fun NoConflictsState() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.Shield, null, Modifier.size(64.dp), tint = Color(0xFF4CAF50))
-            Text("¡Sin conflictos!", style = MaterialTheme.typography.titleLarge, color = Color(0xFF4CAF50))
+            Icon(Icons.Default.Shield, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+            Text("¡Sin conflictos!", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
             Text("Todo funcionará perfecto", modifier = Modifier.alpha(0.6f))
         }
     }
@@ -395,11 +395,11 @@ fun ConflictBattleCard(
     onResolve: (String) -> Unit
 ) {
     val borderColor = when (conflict.severity) {
-        ConflictSeverity.LOW -> Color(0xFF4CAF50)
-        ConflictSeverity.MEDIUM -> Color(0xFFFFC107)
-        ConflictSeverity.HIGH -> Color(0xFFFF9800)
-        ConflictSeverity.CRITICAL -> Color(0xFFF44336)
-        ConflictSeverity.WARNING -> Color(0xFFB0BEC5)
+        ConflictSeverity.LOW -> MaterialTheme.colorScheme.primary
+        ConflictSeverity.MEDIUM -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.8f)
+        ConflictSeverity.HIGH -> MaterialTheme.colorScheme.tertiary
+        ConflictSeverity.CRITICAL -> MaterialTheme.colorScheme.error
+        ConflictSeverity.WARNING -> MaterialTheme.colorScheme.outline
     }
 
     val conflictTypeLabel = when (conflict.conflictType) {

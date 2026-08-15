@@ -391,13 +391,14 @@ fun CompatibilityScoreCard(
 ) {
     val scoreColor by animateColorAsState(
         targetValue = when {
-            score >= 80 -> Color(0xFF4CAF50)
-            score >= 50 -> Color(0xFFFFC107)
-            else -> Color(0xFFF44336)
+            score >= 80 -> MaterialTheme.colorScheme.primary
+            score >= 50 -> MaterialTheme.colorScheme.tertiary
+            else -> MaterialTheme.colorScheme.error
         },
         animationSpec = tween(500, easing = FastOutSlowInEasing),
         label = "scoreColor"
     )
+
 
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -484,12 +485,12 @@ fun CompatibilityScoreCard(
                         imageVector = Icons.Default.CheckCircle,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = Color(0xFF4CAF50)
+                        tint = MaterialTheme.colorScheme.primary
                     )
                     Text(
                         text = "Todos los addons son compatibles",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF4CAF50)
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }
@@ -808,9 +809,9 @@ private fun RowScope.AddonCardInfo(
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
             color = when (addon.type) {
-                AddonType.BEHAVIOR_ONLY -> Color(0xFF2196F3)
-                AddonType.RESOURCE_ONLY -> Color(0xFF4CAF50)
-                AddonType.BEHAVIOR_AND_RESOURCE -> Color(0xFF9C27B0)
+                AddonType.BEHAVIOR_ONLY -> MaterialTheme.colorScheme.secondary
+                AddonType.RESOURCE_ONLY -> MaterialTheme.colorScheme.primary
+                AddonType.BEHAVIOR_AND_RESOURCE -> MaterialTheme.colorScheme.tertiary
                 AddonType.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
             }
         )

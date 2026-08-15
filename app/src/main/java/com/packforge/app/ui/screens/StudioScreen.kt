@@ -158,7 +158,7 @@ fun StudioScreen(
                     title = "My Modpacks",
                     description = "Edita, comparte o borra tus modpacks guardados",
                     badge = if(savedModpacks.isNotEmpty()) savedModpacks.size.toString() else null,
-                    accent = Color(0xFF2ECC71)
+                    accent = MaterialTheme.colorScheme.primary
                 ) {
                     viewModel.setShowMyModpacks(true)
                 }

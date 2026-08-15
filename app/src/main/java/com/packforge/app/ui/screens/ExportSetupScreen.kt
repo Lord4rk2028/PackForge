@@ -541,7 +541,7 @@ fun ExportSetupScreen(
                                 .clip(RoundedCornerShape(12.dp))
                                 .border(
                                     1.dp, 
-                                    if (minecraftUri != null) Color(0xFF4CAF50).copy(alpha = 0.5f)
+                                    if (minecraftUri != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
                                     else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
                                     RoundedCornerShape(12.dp)
                                 )
@@ -553,7 +553,7 @@ fun ExportSetupScreen(
                                     }
                                 }
                                 .padding(16.dp),
-                            color = if (minecraftUri != null) Color(0xFF4CAF50).copy(alpha = 0.05f) 
+                            color = if (minecraftUri != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.05f) 
                                     else Color.Transparent
                         ) {
                             Row(
@@ -564,7 +564,7 @@ fun ExportSetupScreen(
                                     imageVector = if (minecraftUri != null) Icons.Default.CheckCircle 
                                                  else Icons.Outlined.SportsEsports,
                                     contentDescription = null,
-                                    tint = if (minecraftUri != null) Color(0xFF4CAF50) 
+                                    tint = if (minecraftUri != null) MaterialTheme.colorScheme.primary 
                                            else MaterialTheme.colorScheme.primary
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
@@ -611,7 +611,7 @@ fun ExportSetupScreen(
                                 .size(48.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(
-                                    if (isMinecraftInstalled) Color(0xFF4CAF50).copy(alpha = 0.2f)
+                                    if (isMinecraftInstalled) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
                                     else MaterialTheme.colorScheme.errorContainer
                                 ),
                             contentAlignment = Alignment.Center
@@ -620,10 +620,11 @@ fun ExportSetupScreen(
                                 imageVector = if (isMinecraftInstalled) Icons.Outlined.SportsEsports 
                                              else Icons.Default.Warning,
                                 contentDescription = null,
-                                tint = if (isMinecraftInstalled) Color(0xFF4CAF50) 
+                                tint = if (isMinecraftInstalled) MaterialTheme.colorScheme.primary 
                                        else MaterialTheme.colorScheme.error,
                                 modifier = Modifier.size(28.dp)
                             )
+
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
@@ -706,8 +707,8 @@ fun ExportSetupScreen(
                             unresolvedCritical > 0 ->
                                 MaterialTheme.colorScheme.error
                             unresolvedTotal > 0 ->
-                                Color(0xFFF57C00)
-                            else -> Color(0xFF4CAF50)
+                                MaterialTheme.colorScheme.tertiary
+                            else -> MaterialTheme.colorScheme.primary
                         }
                     )
                 }
