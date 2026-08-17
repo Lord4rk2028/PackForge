@@ -79,7 +79,7 @@ fun ConflictsScreen(
     conflictStrategy: ConflictStrategy = ConflictStrategy.KEEP_FIRST,
     onConflictStrategyChange: (ConflictStrategy) -> Unit = {},
     mergeConflicts: List<MergeConflict> = emptyList(),
-    onResolveMergeConflict: (index: Int, resolution: String) -> Unit = { _, _ -> }
+    onResolveMergeConflict: (id: String, resolution: String) -> Unit = { _, _ -> }
 ) {
     if (conflicts.isEmpty() && mergeConflicts.isEmpty()) {
         NoConflictsState()
@@ -344,7 +344,7 @@ fun NoConflictsState() {
 @Composable
 fun MergeConflictsSection(
     mergeConflicts: List<MergeConflict>,
-    onResolveMergeConflict: (index: Int, resolution: String) -> Unit
+    onResolveMergeConflict: (id: String, resolution: String) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(
@@ -372,12 +372,11 @@ fun MergeConflictsSection(
             }
         }
 
-        mergeConflicts.forEachIndexed { index, conflict ->
+        mergeConflicts.forEach { conflict ->
             ConflictBattleCard(
                 conflict = conflict,
-                isResolved = conflict.resolution != "UNRESOLVED",
                 onResolve = { resolution ->
-                    onResolveMergeConflict(index, resolution)
+                    onResolveMergeConflict(conflict.id, resolution)
                 }
             )
         }
@@ -391,7 +390,6 @@ fun MergeConflictsSection(
 @Composable
 fun ConflictBattleCard(
     conflict: MergeConflict,
-    isResolved: Boolean = false,
     onResolve: (String) -> Unit
 ) {
     val borderColor = when (conflict.severity) {
@@ -413,10 +411,22 @@ fun ConflictBattleCard(
         else -> "Valor primitivo sobrescrito"
     }
 
+    val isResolved = conflict.resolved
+    val resolvedResolution = conflict.resolution
+
     Card(
-        border = BorderStroke(2.dp, if (isResolved) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else borderColor),
+        border = BorderStroke(
+            2.dp,
+            if (isResolved) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else borderColor
+        ),
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isResolved) 
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            else 
+                MaterialTheme.colorScheme.surface
+        )
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             // ── Encabezado con severidad ─────────────────────
@@ -442,7 +452,7 @@ fun ConflictBattleCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Surface(shape = RoundedCornerShape(8.dp), color = borderColor.copy(alpha = 0.15f)) {
+                Surface(shape = RoundedCornerShape(8.dp), color = if (isResolved) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else borderColor.copy(alpha = 0.15f)) {
                     Text(
                         text = if (isResolved) "RESUELTO" else conflict.severity.name,
                         style = MaterialTheme.typography.labelSmall,
@@ -461,20 +471,22 @@ fun ConflictBattleCard(
             ) {
                 BattleSide(
                     name = conflict.sourceAddon,
-                    selected = conflict.resolution == MergeConflict.RESOLUTION_KEEP_SOURCE,
+                    selected = resolvedResolution == MergeConflict.RESOLUTION_KEEP_SOURCE,
                     color = borderColor,
                     modifier = Modifier.weight(1f),
-                    onClick = { onResolve(MergeConflict.RESOLUTION_KEEP_SOURCE) }
+                    onClick = { if (!isResolved) onResolve(MergeConflict.RESOLUTION_KEEP_SOURCE) },
+                    enabled = !isResolved
                 )
 
                 Text("⚔️", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 4.dp))
 
                 BattleSide(
                     name = conflict.targetAddon,
-                    selected = conflict.resolution == MergeConflict.RESOLUTION_KEEP_TARGET,
+                    selected = resolvedResolution == MergeConflict.RESOLUTION_KEEP_TARGET,
                     color = borderColor,
                     modifier = Modifier.weight(1f),
-                    onClick = { onResolve(MergeConflict.RESOLUTION_KEEP_TARGET) }
+                    onClick = { if (!isResolved) onResolve(MergeConflict.RESOLUTION_KEEP_TARGET) },
+                    enabled = !isResolved
                 )
             }
 
@@ -488,10 +500,11 @@ fun ConflictBattleCard(
             }
 
             // ── Fusionar ambos ───────────────────────────────
-            val isMerge = conflict.resolution == MergeConflict.RESOLUTION_MERGE
+            val isMerge = resolvedResolution == MergeConflict.RESOLUTION_MERGE
             TextButton(
-                onClick = { onResolve(MergeConflict.RESOLUTION_MERGE) },
+                onClick = { if (!isResolved) onResolve(MergeConflict.RESOLUTION_MERGE) },
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !isResolved,
                 colors = ButtonDefaults.textButtonColors(
                     containerColor = if (isMerge)
                         MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f)
@@ -500,7 +513,25 @@ fun ConflictBattleCard(
             ) {
                 Icon(Icons.AutoMirrored.Filled.MergeType, null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(if (isMerge) "✓ Fusionados" else "Fusionar ambos", fontWeight = FontWeight.Bold)
+                Text(if (isResolved && isMerge) "✓ Fusionados" else if (isResolved) "Resuelto: ${resolvedResolution ?: "KEEP_SOURCE"}" else "Fusionar ambos", fontWeight = FontWeight.Bold)
+            }
+            
+            // ── Indicador de resuelto ─────────────────────────
+            if (isResolved) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Resuelto: ${resolvedResolution ?: "KEEP_SOURCE"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
         }
     }
@@ -515,12 +546,13 @@ fun BattleSide(
     selected: Boolean,
     color: Color,
     modifier: Modifier = Modifier,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    enabled: Boolean = true
 ) {
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .clickable { onClick() },
+            .clickable(enabled = enabled) { onClick() },
         shape = RoundedCornerShape(12.dp),
         color = if (selected) color.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface,
         border = BorderStroke(

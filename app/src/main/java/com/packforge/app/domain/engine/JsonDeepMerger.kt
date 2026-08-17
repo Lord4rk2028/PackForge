@@ -87,13 +87,15 @@ object JsonDeepMerger {
                         }
 
                         val conflict = MergeConflict(
+                            id = java.util.UUID.randomUUID().toString(),
                             filePath = currentFilePath,
                             conflictType = conflictType,
                             sourceAddon = currentSourceAddon,
                             targetAddon = currentTargetAddon,
-                            resolution = MergeConflict.RESOLUTION_KEEP_SOURCE,
                             severity = severity,
-                            description = "Colisión de clave '$cleanKey': el valor se sobrescribe."
+                            description = "Colisión de clave '$cleanKey': el valor se sobrescribe.",
+                            resolved = false,
+                            resolution = null
                         )
                         mergeConflicts.add(conflict)
                         // Registrar TODO en el registro central (aunque la clave ya exista)

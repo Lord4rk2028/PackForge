@@ -90,38 +90,39 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
     private val _conflictStrategy = MutableStateFlow(ConflictStrategy.KEEP_FIRST)
     val conflictStrategy = _conflictStrategy.asStateFlow()
 
-    // Merge conflicts from JsonDeepMerger
-    private val _mergeConflicts = MutableStateFlow<List<com.packforge.app.domain.model.MergeConflict>>(emptyList())
-    val mergeConflicts = _mergeConflicts.asStateFlow()
+    // Merge conflicts from JsonDeepMerger and ConflictRegistry
+    // ConflictRegistry is the single source of truth - we just expose its StateFlow
+    val mergeConflicts: StateFlow<List<com.packforge.app.domain.model.MergeConflict>> = 
+        com.packforge.app.domain.engine.ConflictRegistry.conflicts
 
     fun setConflictStrategy(strategy: ConflictStrategy) {
         _conflictStrategy.value = strategy
     }
 
+    /** 
+     * Updates merge conflicts by combining from DeepMerger and ConflictRegistry.
+     * ConflictRegistry is the single source of truth - this method adds new conflicts
+     * from the DeepMerger to the registry.
+     */
     fun updateMergeConflicts() {
-        // Combinar conflictos del DeepMerger y del Registro central (que captura TODOS:
-        // colisiones primitivas, texturas/modelos no-JSON, manifest/UUIDs, estructuras raras)
+        // Combinar conflictos del DeepMerger y del Registro central
         val fromMerger = com.packforge.app.domain.engine.JsonDeepMerger.mergeConflicts
-        val fromRegistry = com.packforge.app.domain.engine.ConflictRegistry.conflicts.value
-
-        // Deduplicar por (conflictType + filePath + sourceAddon + targetAddon) sin perder severidad
-        val merged = LinkedHashMap<String, com.packforge.app.domain.model.MergeConflict>()
-        (fromMerger + fromRegistry).forEach { c ->
-            val key = "${c.conflictType}|${c.filePath}|${c.sourceAddon}|${c.targetAddon}"
-            val existing = merged[key]
-            if (existing == null || c.severity.ordinal >= existing.severity.ordinal) {
-                merged[key] = c
+        fromMerger.forEach { mergerConflict ->
+            // Si el conflicto del merger no está en el registro, añadirlo
+            val exists = com.packforge.app.domain.engine.ConflictRegistry.conflicts.value.any { existing ->
+                existing.conflictType == mergerConflict.conflictType &&
+                existing.filePath == mergerConflict.filePath &&
+                existing.sourceAddon == mergerConflict.sourceAddon &&
+                existing.targetAddon == mergerConflict.targetAddon
+            }
+            if (!exists) {
+                com.packforge.app.domain.engine.ConflictRegistry.addConflict(mergerConflict)
             }
         }
-        _mergeConflicts.value = merged.values.toList()
     }
 
-    fun resolveMergeConflict(index: Int, resolution: String) {
-        val current = _mergeConflicts.value.toMutableList()
-        if (index in current.indices) {
-            current[index] = current[index].copy(resolution = resolution)
-            _mergeConflicts.value = current
-        }
+    fun resolveMergeConflict(id: String, resolution: String) {
+        com.packforge.app.domain.engine.ConflictRegistry.resolveConflict(id, resolution)
     }
 
     // Guardar la última URL visitada de cada fuente para persistencia
@@ -131,6 +132,12 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         "ModBay" to "https://modbay.org/mods/"
     ))
     val lastWebUrls = _lastWebUrls.asStateFlow()
+
+    fun updateWebUrl(source: String, url: String) {
+        val current = _lastWebUrls.value.toMutableMap()
+        current[source] = url
+        _lastWebUrls.value = current
+    }
 
     private val _activeWebSource = MutableStateFlow<String?>(null)
     val activeWebSource = _activeWebSource.asStateFlow()
@@ -213,34 +220,9 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         } ?: false
     }
 
-    fun updateWebUrl(source: String, url: String) {
-        val current = _lastWebUrls.value.toMutableMap()
-        current[source] = url
-        _lastWebUrls.value = current
-    }
+    // Se elimina la sobrecarga duplicada si existía en otra parte (ya revisamos, parece estar solo aquí)
+    // Dejamos esta implementación única
 
-    init {
-        // Inicialización única de la base de datos y observación continua
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                _isMinecraftInstalled.value = ModpackExporter.isMinecraftInstalled(application)
-                _minecraftVersion.value = ModpackExporter.getMinecraftVersion(application)
-
-                val prefs = application.getSharedPreferences("packforge_prefs", Context.MODE_PRIVATE)
-                _minecraftUri.value = prefs.getString("mc_folder_uri", null)
-
-                val db = PackForgeDatabase.getInstance(application)
-                database = db
-                
-                // Observar cambios en la DB para actualizar la lista de My Modpacks
-                db.savedModpackDao().getAll().distinctUntilChanged().collect { list ->
-                    _savedModpacks.value = list
-                }
-            } catch (e: Exception) {
-                _events.emit(PackForgeEvent.ShowSnackbar("Error al conectar con la base de datos", true))
-            }
-        }
-    }
 
     fun clearWebError() { _webImportError.value = null }
 

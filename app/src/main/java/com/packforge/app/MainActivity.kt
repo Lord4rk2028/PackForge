@@ -224,7 +224,7 @@ fun PackForgeApp(
                         conflictStrategy = conflictStrategy,
                         onConflictStrategyChange = { viewModel.setConflictStrategy(it) },
                         mergeConflicts = mergeConflicts,
-                        onResolveMergeConflict = { index, resolution -> viewModel.resolveMergeConflict(index, resolution) }
+                        onResolveMergeConflict = { id, resolution -> viewModel.resolveMergeConflict(id, resolution) }
                     )
                 }
                 composable(Screen.Export.route) {

@@ -90,11 +90,8 @@ fun StudioScreen(
             importProgress = importProgress,
             webImportSuccess = webImportSuccess,
             onBack = {
-                // NAVEGACIÓN INTELIGENTE: si el WebView tiene historial hacia atrás,
-                // primero retrocede; solo se cierra el navegador en la raíz.
-                if (!viewModel.onStudioWebBackPressed()) {
-                    viewModel.setActiveWebSource(null)
-                }
+                // ULTIMÁTUM: Una sola pulsación vuelve directo a Studio, ignorando el historial web.
+                viewModel.setActiveWebSource(null)
             },
             onSiteSelect = { newSite ->
                 // Cambiar de sitio: se reconfigura el WebView persistente del nuevo.
