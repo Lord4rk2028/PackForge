@@ -8,11 +8,14 @@ import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.packforge.app.data.ThemePreferences
-import kotlinx.coroutines.flow.SharingStarted
+import com.packforge.app.util.PackForgeConfig
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 
 private val Context.themeDataStore: DataStore<Preferences> by preferencesDataStore(name = "theme_preferences")
 
@@ -27,25 +30,37 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val dataStore = application.themeDataStore
 
-    val preferences: StateFlow<ThemePreferences> = dataStore.data
-        .map { prefs ->
-            val verbose = prefs[VERBOSE_FILE_LOGS_KEY] ?: false
-            // Sincronizar el valor con el objeto de configuración global de manera inmediata
-            com.packforge.app.util.PackForgeConfig.verboseFileLogs = verbose
-            ThemePreferences(
-                darkMode = prefs[DARK_MODE_KEY] ?: true,
-                amoledMode = prefs[AMOLED_MODE_KEY] ?: false,
-                accentHex = prefs[ACCENT_HEX_KEY] ?: "#2ECC71",
-                vividColors = prefs[VIVID_COLORS_KEY] ?: true,
-                expressiveMotion = prefs[EXPRESSIVE_MOTION_KEY] ?: true,
-                verboseFileLogs = verbose
-            )
-        }
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.Eagerly,
-            initialValue = ThemePreferences()
+    private fun Preferences.toThemePreferences(): ThemePreferences {
+        val verbose = this[VERBOSE_FILE_LOGS_KEY] ?: false
+        PackForgeConfig.verboseFileLogs = verbose
+        return ThemePreferences(
+            darkMode = this[DARK_MODE_KEY] ?: true,
+            amoledMode = this[AMOLED_MODE_KEY] ?: false,
+            accentHex = this[ACCENT_HEX_KEY] ?: "#2ECC71",
+            vividColors = this[VIVID_COLORS_KEY] ?: true,
+            expressiveMotion = this[EXPRESSIVE_MOTION_KEY] ?: true,
+            verboseFileLogs = verbose
         )
+    }
+
+    private val _preferences = MutableStateFlow(
+        runBlocking {
+            try {
+                withTimeout(50) { dataStore.data.first().toThemePreferences() }
+            } catch (e: Exception) {
+                ThemePreferences()
+            }
+        }
+    )
+    val preferences: StateFlow<ThemePreferences> = _preferences.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            dataStore.data.collect { prefs ->
+                _preferences.value = prefs.toThemePreferences()
+            }
+        }
+    }
 
     fun setDarkMode(enabled: Boolean) {
         viewModelScope.launch { dataStore.edit { it[DARK_MODE_KEY] = enabled } }

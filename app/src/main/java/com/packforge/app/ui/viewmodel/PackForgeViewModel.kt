@@ -229,6 +229,10 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
     fun importFromWebUrl(context: Context, downloadUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             _webImportError.value = null
+            // ⭐ Marcar importación activa YA: así la barra de progreso de la
+            // WebView aparece al tocar el enlace del addon (durante la descarga),
+            // no solo en la fase de análisis.
+            _isImporting.value = true
             _importProgress.value = OperationProgress.Loading("Iniciando descarga...")
             
             val fileName = downloadUrl.substringBefore('?').substringAfterLast('/')
@@ -241,6 +245,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             }.onFailure {
                 _webImportError.value = "Error al descargar: ${it.message}"
                 _importProgress.value = OperationProgress.Idle
+                _isImporting.value = false
             }
         }
     }
@@ -278,12 +283,16 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch(Dispatchers.Default) {
             val active = _addons.value.filter { it.enabled }
             PackForgeLog.d("PackForge", "Recalculando conflictos para ${active.size} addons activos")
-            val newConflicts = ConflictEngine.analyze(active)
+            // CRÍTICO: pasar las resoluciones para que ConflictEngine regenere los
+            // conflictos (con ids ESTABLES) ya marcados como resueltos. Sin esto,
+            // el recálculo devolvía conflictos nuevos y la resolución "parpadeaba"
+            // y desaparecía de la UI.
+            val newConflicts = ConflictEngine.analyze(active, _resolutions.value)
             PackForgeLog.d("PackForge", "Conflictos detectados: ${newConflicts.size}")
             _conflicts.value = newConflicts
             _compatibilityScore.value = ConflictEngine.getCompatibilityScore(active)
             _criticalConflictsCount.value = newConflicts.count { 
-                it.severity == ConflictSeverity.CRITICAL && !_resolutions.value.containsKey(it.id)
+                it.severity == ConflictSeverity.CRITICAL && it.resolution == ConflictResolution.UNRESOLVED
             }
         }
     }
@@ -703,6 +712,20 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             db.savedModpackDao().deleteById(id)
             if (editingModpackId == id) {
                 withContext(Dispatchers.Main) { clearAll() }
+            }
+        }
+    }
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val db = PackForgeDatabase.getInstance(application)
+                database = db
+                db.savedModpackDao().getAll().distinctUntilChanged().collect { list ->
+                    _savedModpacks.value = list
+                }
+            } catch (e: Exception) {
+                _events.emit(PackForgeEvent.ShowSnackbar("Error al conectar con la base de datos", true))
             }
         }
     }

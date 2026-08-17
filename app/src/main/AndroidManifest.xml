@@ -23,9 +23,9 @@
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:icon="@mipmap/ic_packforge_iconv2"
+        android:icon="@mipmap/ic_packforge_iconv3"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_packforge_iconv2_round"
+        android:roundIcon="@mipmap/ic_packforge_iconv3_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.PackForge">
         

@@ -9,7 +9,7 @@ import java.util.UUID
 
 object ConflictEngine {
 
-    fun analyze(addons: List<Addon>): List<Conflict> {
+    fun analyze(addons: List<Addon>, resolutions: Map<String, String> = emptyMap()): List<Conflict> {
         val active = addons.filter { it.enabled }
         if (active.size < 2) return emptyList()
 
@@ -24,11 +24,37 @@ object ConflictEngine {
         conflicts += detectManifestUuidConflicts(active)
 
         // Eliminar duplicados por combinación de addons y archivo
-        return conflicts.distinctBy { c ->
-            c.type.name + "_" + c.affectedFile + "_" +
-            c.affectedAddonIds.sorted().joinToString(",")
+        val deduped = conflicts.distinctBy { c -> stableKey(c) }
+
+        // ⭐ IDs ESTABLES: el id se deriva de tipo + archivo + addons afectados.
+        // Antes se usaban UUIDs aleatorios, y cada recálculo regeneraba ids nuevos,
+        // dejando huérfano el mapa de resoluciones (la UI parpadeaba "resuelto"
+        // y luego el conflicto reaparecía sin resolver).
+        return deduped.map { c ->
+            val stable = c.copy(id = stableKey(c))
+            val res = resolutions[stable.id]
+            when {
+                res == null -> stable
+                res == "dismiss" -> stable.copy(
+                    resolution = ConflictResolution.DISMISSED,
+                    isDismissed = true
+                )
+                res == "merge" -> stable.copy(
+                    resolution = ConflictResolution.MERGE,
+                    winnerAddonId = null
+                )
+                else -> stable.copy(
+                    resolution = ConflictResolution.FIRST_WINS,
+                    winnerAddonId = res
+                )
+            }
         }
     }
+
+    /** Clave estable y única por conflicto (sobrevive a recalculos). */
+    private fun stableKey(c: Conflict): String =
+        c.type.name + "_" + c.affectedFile + "_" +
+        c.affectedAddonIds.sorted().joinToString(",")
 
     // ─── 1. CONFLICTOS DE SCRIPTS ────────────────────────────
     private fun detectScriptConflicts(active: List<Addon>): List<Conflict> {
@@ -179,9 +205,11 @@ object ConflictEngine {
 
                 // PackForge REGENERA estos archivos al exportar (manifiestos
                 // fusionados por ManifestGenerator y pack_icon.png desde la
-                // portada personalizada), así que no son conflictos reales
-                // entre addons y no deben mostrarse como advertencias.
-                if (fileName == "manifest.json" || fileName == "pack_icon.png") {
+                // portada personalizada), así que no son conflictos reales.
+                // También ignoramos languages.json y archivos .lang ya que
+                // BedrockCriticalFilesMerger los fusiona automáticamente.
+                if (fileName == "manifest.json" || fileName == "pack_icon.png" ||
+                    fileName == "languages.json" || file.endsWith(".lang")) {
                     return@forEach
                 }
 

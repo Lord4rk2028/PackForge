@@ -1,4 +1,4 @@
-package com.packforge.app.ui.screens
+﻿package com.packforge.app.ui.screens
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import com.packforge.app.domain.model.OperationProgress
+
 import java.net.URLEncoder
 
 private const val MCPEDL_HOME = "https://mcpedl.com/category/mods-addons/"
@@ -107,7 +108,7 @@ fun McpedlSearchScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Atrás"
+                            contentDescription = "AtrÃ¡s"
                         )
                     }
                 },
@@ -146,7 +147,7 @@ fun McpedlSearchScreen(
         ) {
             Text(
                 text = "Addons oficiales para Minecraft Bedrock. Busca, abre un " +
-                    "proyecto y pulsa Descargar; PackForge lo importará automáticamente.",
+                    "proyecto y pulsa Descargar; PackForge lo importarÃ¡ automÃ¡ticamente.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -156,7 +157,7 @@ fun McpedlSearchScreen(
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isImporting,
-                placeholder = { Text("Ej.: furniture, shader, lucky block…") },
+                placeholder = { Text("Ej.: furniture, shader, lucky blockâ€¦") },
                 leadingIcon = {
                     Icon(Icons.Default.Search, contentDescription = null)
                 },
@@ -314,14 +315,6 @@ fun McpedlSearchScreen(
     }
 }
 
-private fun isAddonDownloadUrl(url: String): Boolean {
-    val lower = url.lowercase()
-    return lower.endsWith(".mcaddon") ||
-        lower.endsWith(".mcpack") ||
-        lower.contains(".mcaddon?") ||
-        lower.contains(".mcpack?")
-}
-
 private fun isAddonMimeType(mimetype: String?): Boolean {
     if (mimetype == null) return false
     val lower = mimetype.lowercase()
@@ -329,3 +322,4 @@ private fun isAddonMimeType(mimetype: String?): Boolean {
         lower.contains("octet-stream") ||
         lower.contains("application/x-zip")
 }
+

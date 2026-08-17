@@ -1,4 +1,4 @@
-package com.packforge.app
+﻿package com.packforge.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -33,12 +33,20 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+
+
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import androidx.navigation.NavOptions
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import com.packforge.app.domain.model.OperationProgress
 import com.packforge.app.ui.components.PackForgeTopBar
 import com.packforge.app.ui.navigation.Screen
 import com.packforge.app.ui.navigation.getScreenFromRoute
@@ -69,43 +77,38 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PackForgeApp(
-    viewModel: PackForgeViewModel = viewModel(),
+    packForgeViewModel: PackForgeViewModel = viewModel(),
     themeViewModel: ThemeViewModel = viewModel()
 ) {
-    val context = LocalContext.current
+    val appContext = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val navController = rememberNavController()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Estados
-    val addons by viewModel.addons.collectAsStateWithLifecycle()
-    val conflicts by viewModel.conflicts.collectAsStateWithLifecycle()
-    val resolutions by viewModel.resolutions.collectAsStateWithLifecycle()
-    val metadata by viewModel.metadata.collectAsStateWithLifecycle()
-    val isImporting by viewModel.isImporting.collectAsStateWithLifecycle()
-    val exportState by viewModel.exportState.collectAsStateWithLifecycle()
-    val isMinecraftInstalled by viewModel.isMinecraftInstalled.collectAsStateWithLifecycle()
-    val minecraftVersion by viewModel.minecraftVersion.collectAsStateWithLifecycle()
-    val compatibilityScore by viewModel.compatibilityScore.collectAsStateWithLifecycle()
-    val criticalCount by viewModel.criticalConflictsCount.collectAsStateWithLifecycle()
-    val importProgress by viewModel.importProgress.collectAsStateWithLifecycle()
-    val webImportError by viewModel.webImportError.collectAsStateWithLifecycle()
-    val minecraftUri by viewModel.minecraftUri.collectAsStateWithLifecycle()
-    val conflictStrategy by viewModel.conflictStrategy.collectAsStateWithLifecycle()
-    val mergeConflicts by viewModel.mergeConflicts.collectAsStateWithLifecycle()
-    val activeWebSource by viewModel.activeWebSource.collectAsStateWithLifecycle()
-    val showMyModpacks by viewModel.showMyModpacks.collectAsStateWithLifecycle()
-    val showThemeSettings by viewModel.showThemeSettings.collectAsStateWithLifecycle()
+    val addons by packForgeViewModel.addons.collectAsStateWithLifecycle()
+    val conflicts by packForgeViewModel.conflicts.collectAsStateWithLifecycle()
+    val resolutions by packForgeViewModel.resolutions.collectAsStateWithLifecycle()
+    val metadata by packForgeViewModel.metadata.collectAsStateWithLifecycle()
+    val isImporting by packForgeViewModel.isImporting.collectAsStateWithLifecycle()
+    val exportState by packForgeViewModel.exportState.collectAsStateWithLifecycle()
+    val isMinecraftInstalled by packForgeViewModel.isMinecraftInstalled.collectAsStateWithLifecycle()
+    val minecraftVersion by packForgeViewModel.minecraftVersion.collectAsStateWithLifecycle()
+    val compatibilityScore by packForgeViewModel.compatibilityScore.collectAsStateWithLifecycle()
+    val criticalCount by packForgeViewModel.criticalConflictsCount.collectAsStateWithLifecycle()
+    val importProgress by packForgeViewModel.importProgress.collectAsStateWithLifecycle()
+    val webImportError by packForgeViewModel.webImportError.collectAsStateWithLifecycle()
+    val minecraftUri by packForgeViewModel.minecraftUri.collectAsStateWithLifecycle()
+    val conflictStrategy by packForgeViewModel.conflictStrategy.collectAsStateWithLifecycle()
+    val mergeConflicts by packForgeViewModel.mergeConflicts.collectAsStateWithLifecycle()
+    val activeWebSource by packForgeViewModel.activeWebSource.collectAsStateWithLifecycle()
+    val showMyModpacks by packForgeViewModel.showMyModpacks.collectAsStateWithLifecycle()
+    val showThemeSettings by packForgeViewModel.showThemeSettings.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) {
-        viewModel.events.collectLatest { event ->
+        packForgeViewModel.events.collectLatest { event ->
             when (event) {
-                is PackForgeEvent.ShowSnackbar -> {
-                    snackbarHostState.showSnackbar(event.message)
-                }
-                PackForgeEvent.Vibration -> {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                }
+                is PackForgeEvent.ShowSnackbar -> snackbarHostState.showSnackbar(event.message)
+                PackForgeEvent.Vibration -> haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             }
         }
     }
@@ -113,29 +116,21 @@ fun PackForgeApp(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val currentScreen = getScreenFromRoute(currentRoute)
+    
 
     Scaffold(
+        modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars),
         topBar = {
-            // Cuando el navegador interno de Studio, la sub-pantalla "My Modpacks"
-            // o los "Ajustes de Tema" están abiertos, ocultamos la barra global
-            // para evitar la doble barra fea y alta (esas pantallas ya tienen su
-            // propia barra).
             if (activeWebSource == null && !showMyModpacks && !showThemeSettings) {
                 PackForgeTopBar(
                     title = currentScreen.title,
                     actions = {
                         if (currentScreen == Screen.Import && addons.isNotEmpty()) {
-                            IconButton(
-                                onClick = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    viewModel.clearAll()
-                                }
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Delete,
-                                    contentDescription = "Limpiar todo",
-                                    tint = MaterialTheme.colorScheme.error
-                                )
+                            IconButton(onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                packForgeViewModel.clearAll()
+                            }) {
+                                Icon(Icons.Default.Delete, "Limpiar todo", tint = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
@@ -144,61 +139,44 @@ fun PackForgeApp(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            Surface(
-                tonalElevation = 3.dp,
-                shadowElevation = 8.dp,
-                color = MaterialTheme.colorScheme.surfaceContainer
-            ) {
-                NavigationBar(
-                    containerColor = Color.Transparent,
-                    tonalElevation = 0.dp
-                ) {
-                    val screens = listOf(Screen.Import, Screen.Conflicts, Screen.Export, Screen.Studio)
-                    screens.forEach { screen ->
-                        val selected = currentRoute == screen.route
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = {
-                                if (currentRoute != screen.route) {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    navController.navigate(screen.route) {
-                                        popUpTo(navController.graph.startDestinationId) { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                }
-                            },
-                            icon = {
-                                if (screen == Screen.Conflicts) {
-                                    BadgedBox(badge = {
-                                        if (criticalCount > 0) {
-                                            Badge(
-                                                containerColor = MaterialTheme.colorScheme.error,
-                                                contentColor = MaterialTheme.colorScheme.onError
-                                            ) {
-                                                Text(text = if (criticalCount > 9) "9+" else criticalCount.toString())
-                                            }
+            if (activeWebSource == null) {
+                Surface(tonalElevation = 3.dp, shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surfaceContainer) {
+                    NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp) {
+                        val screens = listOf(Screen.Import, Screen.Conflicts, Screen.Export, Screen.Studio)
+                        screens.forEach { screen ->
+                            val selected = currentRoute == screen.route
+                            NavigationBarItem(
+                                selected = selected,
+                                onClick = {
+                                    if (currentRoute != screen.route) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        navController.navigate(screen.route) {
+                                            popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                            launchSingleTop = true
+                                            restoreState = true
                                         }
-                                    }) {
-                                        Icon(
-                                            imageVector = if (selected) screen.iconFilled else screen.iconOutlined,
-                                            contentDescription = screen.title
-                                        )
                                     }
-                                } else {
-                                    Icon(
-                                        imageVector = if (selected) screen.iconFilled else screen.iconOutlined,
-                                        contentDescription = screen.title
-                                    )
+                                },
+                                icon = {
+                                    if (screen == Screen.Conflicts) {
+                                        BadgedBox(badge = {
+                                            if (criticalCount > 0) {
+                                                Badge(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError) {
+                                                    Text(text = if (criticalCount > 9) "9+" else criticalCount.toString())
+                                                }
+                                            }
+                                        }) {
+                                            Icon(if (selected) screen.iconFilled else screen.iconOutlined, screen.title)
+                                        }
+                                    } else {
+                                        Icon(if (selected) screen.iconFilled else screen.iconOutlined, screen.title)
+                                    }
+                                },
+                                label = {
+                                    Text(text = screen.title, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
                                 }
-                            },
-                            label = {
-                                Text(
-                                    text = screen.title,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                                )
-                            }
-                        )
+                            )
+                        }
                     }
                 }
             }
@@ -210,56 +188,57 @@ fun PackForgeApp(
                     ImportScreen(
                         addons = addons, conflicts = conflicts, isImporting = isImporting,
                         importProgress = importProgress, compatibilityScore = compatibilityScore,
-                        onImportUris = { viewModel.importAddons(context, it) },
-                        onRemoveAddon = { viewModel.removeAddon(it) },
-                        onToggleAddon = { viewModel.toggleAddon(it) },
-                        onMoveAddon = { id, dir -> viewModel.moveAddon(id, dir) }
+                        onImportUris = { packForgeViewModel.importAddons(appContext, it) },
+                        onRemoveAddon = { packForgeViewModel.removeAddon(it) },
+                        onToggleAddon = { packForgeViewModel.toggleAddon(it) },
+                        onMoveAddon = { id, dir -> packForgeViewModel.moveAddon(id, dir) }
                     )
                 }
                 composable(Screen.Conflicts.route) {
                     ConflictsScreen(
                         conflicts = conflicts, addons = addons, resolutions = resolutions,
-                        onResolve = { cId, wId -> viewModel.resolveConflict(cId, wId) },
-                        onDismiss = { viewModel.dismissConflict(it) },
+                        onResolve = { cId, wId -> packForgeViewModel.resolveConflict(cId, wId) },
+                        onDismiss = { packForgeViewModel.dismissConflict(it) },
                         conflictStrategy = conflictStrategy,
-                        onConflictStrategyChange = { viewModel.setConflictStrategy(it) },
+                        onConflictStrategyChange = { packForgeViewModel.setConflictStrategy(it) },
                         mergeConflicts = mergeConflicts,
-                        onResolveMergeConflict = { id, resolution -> viewModel.resolveMergeConflict(id, resolution) }
+                        onResolveMergeConflict = { id, resolution -> packForgeViewModel.resolveMergeConflict(id, resolution) }
                     )
                 }
                 composable(Screen.Export.route) {
                     ExportSetupScreen(
-                        viewModel = viewModel,
+                        viewModel = packForgeViewModel,
                         metadata = metadata, addons = addons, conflicts = conflicts,
                         resolutions = resolutions, exportState = exportState,
                         isMinecraftInstalled = isMinecraftInstalled, minecraftVersion = minecraftVersion,
                         minecraftUri = minecraftUri,
-                        onMetadataChange = { viewModel.updateMetadata(it) },
-                        onExport = { uri, toMc -> viewModel.exportModpack(context, uri, toMc) },
-                        onResetExport = { viewModel.resetExportState() },
-                        onConnectMinecraft = { viewModel.saveMinecraftFolderUri(it) },
-                        onDisconnectMinecraft = { viewModel.disconnectMinecraft() }
+                        onMetadataChange = { packForgeViewModel.updateMetadata(it) },
+                        onExport = { uri, toMc -> packForgeViewModel.exportModpack(appContext, uri, toMc) },
+                        onResetExport = { packForgeViewModel.resetExportState() },
+                        onConnectMinecraft = { packForgeViewModel.saveMinecraftFolderUri(it) },
+                        onDisconnectMinecraft = { packForgeViewModel.disconnectMinecraft() }
                     )
                 }
                 composable(Screen.Studio.route) {
-                    val savedModpacks by viewModel.savedModpacks.collectAsStateWithLifecycle()
+                    val savedModpacks by packForgeViewModel.savedModpacks.collectAsStateWithLifecycle()
                     StudioScreen(
-                        viewModel = viewModel,
+                        viewModel = packForgeViewModel,
                         themeViewModel = themeViewModel,
                         savedModpacks = savedModpacks,
                         isImporting = isImporting,
                         importProgress = importProgress,
                         webImportError = webImportError,
-                        onDeleteModpack = { viewModel.deleteFromHistory(context, it) },
+                        onDeleteModpack = { packForgeViewModel.deleteFromHistory(appContext, it) },
                         onLoadModpack = {
-                            viewModel.loadModpack(it)
-                            navController.navigate(Screen.Import.route) { popUpTo(Screen.Studio.route) { inclusive = false } }
+                            packForgeViewModel.loadModpack(it)
+                            navController.navigate(Screen.Import.route) { popUpTo(Screen.Studio.route) }
                         },
-                        onImportFromUrl = { viewModel.importFromWebUrl(context, it) },
-                        onClearError = { viewModel.clearWebError() }
+                        onImportFromUrl = { packForgeViewModel.importFromWebUrl(appContext, it) },
+                        onClearError = { packForgeViewModel.clearWebError() }
                     )
                 }
             }
         }
     }
 }
+
