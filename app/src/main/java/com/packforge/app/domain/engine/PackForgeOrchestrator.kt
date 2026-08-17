@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.packforge.app.util.PackForgeConfig
 import com.packforge.app.util.PackForgeLog
+import com.packforge.app.util.FileUtils
+import com.packforge.app.util.logFile
 import org.json.JSONObject
 import java.io.BufferedOutputStream
 import java.io.BufferedInputStream
@@ -12,6 +14,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
+import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -78,9 +81,7 @@ object PackForgeOrchestrator {
                 val addonFile = File(addonPath)
                 if (!addonFile.exists()) continue
                 
-                if (PackForgeConfig.VERBOSE_FILE_LOGS) {
-                    PackForgeLog.d("PackForge_Debug", "Procesando addon $index: $addonPath")
-                }
+                logFile { "Procesando addon $index: $addonPath" }
                 
                 val extractDir = File(tempDir, "extracted_${System.currentTimeMillis()}_${addonFile.nameWithoutExtension}")
                 val extractedPath = AddonExtractor.extractAddon(addonPath, extractDir.absolutePath)
@@ -108,27 +109,20 @@ object PackForgeOrchestrator {
             
             for (extractedDir in extractedDirs) {
                 val analysis = AddonExtractor.analyzeExtractedAddon(extractedDir)
-                PackForgeLog.d("PackForge_Debug", "Addon $extractedDir clasificado como: ${analysis.addonType}")
-                PackForgeLog.d("PackForge_Debug", "  - Total JSONs: ${analysis.totalJsonFiles}")
-                PackForgeLog.d("PackForge_Debug", "  - Manifest files: ${analysis.manifestFiles}")
-                PackForgeLog.d("PackForge_Debug", "  - Item files: ${analysis.itemFiles.size}")
-                PackForgeLog.d("PackForge_Debug", "  - Entity files: ${analysis.entityFiles.size}")
-                PackForgeLog.d("PackForge_Debug", "  - Texture files: ${analysis.otherJsonFiles.size}")
+                logFile { "Addon $extractedDir clasificado como: ${analysis.addonType} | JSONs=${analysis.totalJsonFiles} manifests=${analysis.manifestFiles} items=${analysis.itemFiles.size} entities=${analysis.entityFiles.size}" }
                 
                 when (analysis.addonClassification) {
                     is AddonExtractor.AddonClassification.BEHAVIOR_PACK -> {
                         bpDirs.add(extractedDir)
-                        PackForgeLog.d("PackForge_Debug", "  -> Agregado a lista de BPs")
+                        logFile { "  -> Agregado a lista de BPs" }
                     }
                     is AddonExtractor.AddonClassification.RESOURCE_PACK -> {
                         rpDirs.add(extractedDir)
-                        PackForgeLog.d("PackForge_Debug", "  -> Agregado a lista de RPs")
+                        logFile { "  -> Agregado a lista de RPs" }
                     }
                     is AddonExtractor.AddonClassification.BOTH -> {
                         // ⭐ AMBAS CARPETAS DEBEN PROCESARSE ⭐
-                        PackForgeLog.d("PackForge_Process", "🔀 Procesando BOTH: ${File(extractedDir).name}")
-                        PackForgeLog.d("PackForge_Process", "   BP folder: ${analysis.addonClassification.bpSubfolder.name}")
-                        PackForgeLog.d("PackForge_Process", "   RP folder: ${analysis.addonClassification.rpSubfolder.name}")
+                        logFile { "🔀 Procesando BOTH: ${File(extractedDir).name} (BP=${analysis.addonClassification.bpSubfolder.name}, RP=${analysis.addonClassification.rpSubfolder.name})" }
                         
                         // Usar directamente las rutas del clasificador
                         val (bpPath, rpPath) = separateBothAddonDirect(
@@ -231,6 +225,9 @@ object PackForgeOrchestrator {
             
             val totalJsonsMerged = bpJsonCount + rpJsonCount
             PackForgeLog.d("PackForge_Debug", "Total JSONs fusionados: $totalJsonsMerged")
+
+            val tFusionFin = System.currentTimeMillis()
+            PackForgeLog.d("PackForge_Perf", "⏱️ Fusión: ${(tFusionFin - tExtraccion) / 1000.0}s")
             
             // Verificar archivos en directorios fusionados
             val bpFileCount = mergedBpDir.walkTopDown().count { it.isFile }
@@ -331,6 +328,9 @@ object PackForgeOrchestrator {
             applyCustomIcon(mergedBpDir, mergedRpDir, customIconPath)
             PackForgeLog.d("PackForge_Export", "🔧 PASO 6 completado")
 
+            val tCriticosValidacionIconoFin = System.currentTimeMillis()
+            PackForgeLog.d("PackForge_Perf", "⏱️ Críticos+Validador+Icono: ${(tCriticosValidacionIconoFin - tFusionFin) / 1000.0}s")
+
 // VERIFICACIÓN: listar archivos en mergedBpDir y mergedRpDir
              mergedBpDir.listFiles()?.forEach { file ->
                  PackForgeLog.d("PackForge_Export", "   BP file: ${file.name} (${file.length()} bytes)")
@@ -361,7 +361,11 @@ object PackForgeOrchestrator {
                 if (rpDirs.isNotEmpty()) mergedRpDir else null,
                 outputFile
             )
-            
+
+            val tZip = System.currentTimeMillis()
+            PackForgeLog.d("PackForge_Perf", "⏱️ ZIP: ${(tZip - tCriticosValidacionIconoFin) / 1000.0}s")
+            PackForgeLog.d("PackForge_Perf", "⏱️ TOTAL: ${(tZip - tInicio) / 1000.0}s")
+
             // LOG OBLIGATORIO: Al final del ZIP
             PackForgeLog.d("PackForge_Export", "✅ ARCHIVO CREADO:")
             PackForgeLog.d("PackForge_Export", "  Ruta: ${outputFile.absolutePath}")
@@ -413,11 +417,11 @@ object PackForgeOrchestrator {
                     val relativePath = file.relativeTo(bpSubfolder).path
                     val targetFile = File(bpDir, relativePath)
                     targetFile.parentFile?.mkdirs()
-                    file.copyTo(targetFile)
+                    FileUtils.fastCopy(file, targetFile)
                     bpFileCount++
-                    
+
                     if (file.name == "manifest.json") {
-                        PackForgeLog.d("PackForge_Debug", "  ✅ manifest.json copiado a: ${targetFile.relativeTo(bpDir).path}")
+                        logFile { "  ✅ manifest.json copiado a: ${targetFile.relativeTo(bpDir).path}" }
                     }
                 }
             }
@@ -439,17 +443,15 @@ object PackForgeOrchestrator {
             rpDir.mkdirs()
             
             var rpFileCount = 0
-            rpSubfolder.walkTopDown().forEach { file ->
-                if (file.isFile) {
-                    val relativePath = file.relativeTo(rpSubfolder).path
-                    val targetFile = File(rpDir, relativePath)
-                    targetFile.parentFile?.mkdirs()
-                    file.copyTo(targetFile)
-                    rpFileCount++
-                    
-                    if (file.name == "manifest.json") {
-                        PackForgeLog.d("PackForge_Debug", "  ✅ manifest.json copiado a: ${targetFile.relativeTo(rpDir).path}")
-                    }
+            rpSubfolder.walkTopDown().filter { it.isFile }.toList().forEach { file ->
+                val relativePath = file.relativeTo(rpSubfolder).path
+                val targetFile = File(rpDir, relativePath)
+                targetFile.parentFile?.mkdirs()
+                FileUtils.fastCopy(file, targetFile)
+                rpFileCount++
+
+                if (file.name == "manifest.json") {
+                    logFile { "  ✅ manifest.json copiado a: ${targetFile.relativeTo(rpDir).path}" }
                 }
             }
             
@@ -503,18 +505,16 @@ object PackForgeOrchestrator {
             // Copiar todo el contenido de BP_* al directorio separado
             // CRÍTICO: Usar ruta relativa para NO incluir la carpeta BP_* en el destino
             var bpFileCount = 0
-            bpSubfolder.walkTopDown().forEach { file ->
-                if (file.isFile) {
-                    val relativePath = file.relativeTo(bpSubfolder).path
-                    val targetFile = File(bpDir, relativePath)
-                    targetFile.parentFile?.mkdirs()
-                    file.copyTo(targetFile)
-                    bpFileCount++
-                    
-                    // Log especial para manifest.json
-                    if (file.name == "manifest.json") {
-                        PackForgeLog.d("PackForge_Debug", "  ✅ manifest.json copiado a: ${targetFile.relativeTo(bpDir).path}")
-                    }
+            bpSubfolder.walkTopDown().filter { it.isFile }.toList().forEach { file ->
+                val relativePath = file.relativeTo(bpSubfolder).path
+                val targetFile = File(bpDir, relativePath)
+                targetFile.parentFile?.mkdirs()
+                FileUtils.fastCopy(file, targetFile)
+                bpFileCount++
+
+                // Log especial para manifest.json
+                if (file.name == "manifest.json") {
+                    logFile { "  ✅ manifest.json copiado a: ${targetFile.relativeTo(bpDir).path}" }
                 }
             }
             
@@ -541,18 +541,16 @@ object PackForgeOrchestrator {
             // Copiar todo el contenido de RP_* al directorio separado
             // CRÍTICO: Usar ruta relativa para NO incluir la carpeta RP_* en el destino
             var rpFileCount = 0
-            rpSubfolder.walkTopDown().forEach { file ->
-                if (file.isFile) {
-                    val relativePath = file.relativeTo(rpSubfolder).path
-                    val targetFile = File(rpDir, relativePath)
-                    targetFile.parentFile?.mkdirs()
-                    file.copyTo(targetFile)
-                    rpFileCount++
-                    
-                    // Log especial para manifest.json
-                    if (file.name == "manifest.json") {
-                        PackForgeLog.d("PackForge_Debug", "  ✅ manifest.json copiado a: ${targetFile.relativeTo(rpDir).path}")
-                    }
+            rpSubfolder.walkTopDown().filter { it.isFile }.toList().forEach { file ->
+                val relativePath = file.relativeTo(rpSubfolder).path
+                val targetFile = File(rpDir, relativePath)
+                targetFile.parentFile?.mkdirs()
+                FileUtils.fastCopy(file, targetFile)
+                rpFileCount++
+
+                // Log especial para manifest.json
+                if (file.name == "manifest.json") {
+                    logFile { "  ✅ manifest.json copiado a: ${targetFile.relativeTo(rpDir).path}" }
                 }
             }
             
@@ -583,114 +581,105 @@ object PackForgeOrchestrator {
     private fun mergePackType(sourceDirs: List<String>, targetDir: File, manifestName: String): Int {
         var jsonCount = 0
         var nonJsonCount = 0
-        
+
         if (!targetDir.exists()) {
             targetDir.mkdirs()
         }
-        
-        PackForgeLog.d("PackForge_Debug", "Iniciando mergePackType con ${sourceDirs.size} directorios fuente")
-        PackForgeLog.d("PackForge_Debug", "Directorio destino: ${targetDir.absolutePath}")
-        
+
+        logFile { "Iniciando mergePackType con ${sourceDirs.size} directorios fuente" }
+        logFile { "Directorio destino: ${targetDir.absolutePath}" }
+
         for ((sourceIndex, sourceDir) in sourceDirs.withIndex()) {
             val sourceFile = File(sourceDir)
             val sourceAddonName = sourceFile.name
-            
-            PackForgeLog.d("PackForge_Debug", "Procesando sourceDir $sourceIndex: $sourceDir")
-            PackForgeLog.d("PackForge_Debug", "  Nombre del addon: $sourceAddonName")
-            
-            // Recorrer todos los archivos del source
-            sourceFile.walk().forEach { file ->
-                if (file.isFile) {
-                    val relativePath = file.relativeTo(sourceFile).path
-                    val targetFile = File(targetDir, relativePath)
-                    targetFile.parentFile?.mkdirs()
-                    
-                    // Skip manifest.json (se generará nuevo al final)
-                    if (file.name == manifestName) {
-                        PackForgeLog.d("PackForge_Debug", "  ⏭️  Saltando manifest.json: $relativePath")
-                        return@forEach
-                    }
-                    
-                    if (file.name.endsWith(".json", ignoreCase = true)) {
-                        // Archivo JSON
-                        if (targetFile.exists()) {
-                            // Fusionar con DeepMerge
-                            if (PackForgeConfig.VERBOSE_FILE_LOGS) {
-                                PackForgeLog.d("PackForge_Debug", "  🔀 Fusionando (JSON): $relativePath")
-                            }
-                            
-                            try {
-                                val existingContent = targetFile.readText()
-                                val newContent = file.readText()
-                                
-                                JsonDeepMerger.setMergeContext(
-                                    sourceAddon = sourceAddonName,
-                                    targetAddon = targetDir.name,
-                                    filePath = relativePath
-                                )
-                                
-                                val merged = JsonDeepMerger.deepMergeStrings(existingContent, newContent)
-                                targetFile.writeText(merged)
-                                
-                                jsonCount++
-                            } catch (e: Exception) {
-                                PackForgeLog.e("PackForge_Debug", "    ❌ Error al fusionar $relativePath: ${e.message}")
-                                try {
-                                    val cleanJson = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText()))
-                                    targetFile.writeText(cleanJson.toString()) // ⚡ JSON COMPACTO
-                                } catch (e2: Exception) {
-                                    file.copyTo(targetFile, overwrite = true)
-                                }
-                                jsonCount++
-                            }
-                        } else {
-                            if (PackForgeConfig.VERBOSE_FILE_LOGS) {
-                                PackForgeLog.d("PackForge_Debug", "  ✅ Copiando (JSON nuevo): $relativePath")
-                            }
+
+            logFile { "Procesando sourceDir $sourceIndex: $sourceDir" }
+            logFile { "  Nombre del addon: $sourceAddonName" }
+
+            // CAMBIO 4: UNA sola pasada. Lista en memoria de archivos (nada de walk repetido)
+            val allFiles = sourceFile.walkTopDown().filter { it.isFile }.toList()
+            var count = 0
+
+            allFiles.forEach { file ->
+                // Reporte cada 2000 archivos (sin spam)
+                if (++count % 2000 == 0) {
+                    PackForgeLog.d("PackForge_Perf", "   ...$count/${allFiles.size} archivos procesados")
+                }
+
+                val relativePath = file.relativeTo(sourceFile).path
+                val targetFile = File(targetDir, relativePath)
+                targetFile.parentFile?.mkdirs()
+
+                // Skip manifest.json (se generará nuevo al final)
+                if (file.name == manifestName) {
+                    logFile { "  ⏭️  Saltando manifest.json: $relativePath" }
+                    return@forEach
+                }
+
+                if (file.name.endsWith(".json", ignoreCase = true)) {
+                    // Archivo JSON
+                    if (targetFile.exists()) {
+                        // Fusionar con DeepMerge
+                        logFile { "  🔀 Fusionando (JSON): $relativePath" }
+
+                        try {
+                            val existingContent = targetFile.readText()
+                            val newContent = file.readText()
+
+                            JsonDeepMerger.setMergeContext(
+                                sourceAddon = sourceAddonName,
+                                targetAddon = targetDir.name,
+                                filePath = relativePath
+                            )
+
+                            val merged = JsonDeepMerger.deepMergeStrings(existingContent, newContent)
+                            targetFile.writeText(merged)
+
+                            jsonCount++
+                        } catch (e: Exception) {
+                            PackForgeLog.e("PackForge_Debug", "    ❌ Error al fusionar $relativePath: ${e.message}")
                             try {
                                 val cleanJson = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText()))
                                 targetFile.writeText(cleanJson.toString()) // ⚡ JSON COMPACTO
                             } catch (e2: Exception) {
-// Copiar directamente (con limpieza de espacios en claves/valores)
-                    if (PackForgeConfig.VERBOSE_FILE_LOGS) {
-                        PackForgeLog.d("PackForge_Debug", "    ✅ Copiando (no-JSON nuevo): $relativePath")
-                    }
-                    FileInputStream(file).buffered(65536).use { input ->
-                        FileOutputStream(targetFile).buffered(65536).use { output ->
-                            input.copyTo(output, bufferSize = 65536)
-                        }
-                    }
+                                FileUtils.fastCopy(file, targetFile)
                             }
                             jsonCount++
                         }
                     } else {
-                        // Archivo no-JSON (texturas, sonidos, modelos, etc.)
-                        if (PackForgeConfig.VERBOSE_FILE_LOGS) {
-                            PackForgeLog.d("PackForge_Debug", "  📄 Procesando (no-JSON): $relativePath")
+                        logFile { "  ✅ Copiando (JSON nuevo): $relativePath" }
+                        try {
+                            val cleanJson = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText()))
+                            targetFile.writeText(cleanJson.toString()) // ⚡ JSON COMPACTO
+                        } catch (e2: Exception) {
+                            logFile { "    ✅ Copiando (no-JSON nuevo): $relativePath" }
+                            FileUtils.fastCopy(file, targetFile)
                         }
-                        
-                        if (targetFile.exists()) {
-                            PackForgeLog.w("PackForge_Debug", "    ⚠️  Colisión (no-JSON): $relativePath")
-                            // ... (registro de conflictos) ...
-                            file.copyTo(targetFile, overwrite = true)
-                        } else {
-                            file.copyTo(targetFile)
-                        }
-                        nonJsonCount++
+                        jsonCount++
                     }
+                } else {
+                    // Archivo no-JSON (texturas, sonidos, modelos, etc.) → fastCopy FileChannel
+                    logFile { "  📄 Procesando (no-JSON): $relativePath" }
+
+                    if (targetFile.exists()) {
+                        PackForgeLog.w("PackForge_Debug", "    ⚠️  Colisión (no-JSON): $relativePath")
+                        FileUtils.fastCopy(file, targetFile)
+                    } else {
+                        FileUtils.fastCopy(file, targetFile)
+                    }
+                    nonJsonCount++
                 }
             }
-            
-            PackForgeLog.d("PackForge_Debug", "  Finalizado procesamiento de $sourceAddonName")
-            PackForgeLog.d("PackForge_Debug", "    - JSONs procesados en este addon: ${sourceFile.walk().count { it.isFile && it.name.endsWith(".json", ignoreCase = true) }}")
-            PackForgeLog.d("PackForge_Debug", "    - No-JSONs procesados en este addon: ${sourceFile.walk().count { it.isFile && !it.name.endsWith(".json", ignoreCase = true) }}")
+
+            logFile { "  Finalizado procesamiento de $sourceAddonName" }
+            logFile { "    - Archivos procesados en este addon: ${allFiles.size}" }
         }
-        
+
         PackForgeLog.d("PackForge_Debug", "=== Resumen mergePackType ===")
         PackForgeLog.d("PackForge_Debug", "Total JSONs fusionados: $jsonCount")
         PackForgeLog.d("PackForge_Debug", "Total no-JSONs copiados: $nonJsonCount")
         PackForgeLog.d("PackForge_Debug", "Total archivos en destino: ${targetDir.walkTopDown().count { it.isFile }}")
-        
+
         return jsonCount
     }
     
@@ -877,7 +866,7 @@ object PackForgeOrchestrator {
                 } else {
                     // Fallback: copiar tal cual si no se pudo procesar
                     PackForgeLog.w("PackForge_Icon", "⚠️ No se pudo procesar la portada, copiando original")
-                    iconFile.copyTo(targetIcon, overwrite = true)
+                    FileUtils.fastCopy(iconFile, targetIcon)
                 }
                 
                 // VERIFICAR que el archivo se creó
@@ -1010,18 +999,21 @@ object PackForgeOrchestrator {
      */
     private fun createMcAddon(mergedBpDir: File?, mergedRpDir: File?, outputFile: File) {
         var entryCount = 0
-        ZipOutputStream(BufferedOutputStream(FileOutputStream(outputFile))).use { zos ->
-            
+        ZipOutputStream(
+            BufferedOutputStream(FileOutputStream(outputFile), 262144) // ⭐ 256KB buffer
+        ).use { zos ->
+            zos.setLevel(Deflater.BEST_SPEED) // ⭐ Nivel 1: ~5x más rápido, tamaño casi igual
+
             if (mergedBpDir != null && mergedBpDir.exists()) {
                 entryCount += addFolderToZip(zos, mergedBpDir, "BP_PackForge")
                 PackForgeLog.d("PackForge_ZIP", "✅ BP agregado como BP_PackForge/")
             }
-            
+
             if (mergedRpDir != null && mergedRpDir.exists()) {
                 entryCount += addFolderToZip(zos, mergedRpDir, "RP_PackForge")
                 PackForgeLog.d("PackForge_ZIP", "✅ RP agregado como RP_PackForge/")
             }
-            
+
             zos.finish()
         }
 
@@ -1043,9 +1035,7 @@ object PackForgeOrchestrator {
             
             // LOG ESPECIAL para pack_icon.png
             if (file.name == "pack_icon.png") {
-                PackForgeLog.d("PackForge_ZIP", "🎨 Agregando pack_icon.png al ZIP desde: ${file.absolutePath}")
-                PackForgeLog.d("PackForge_ZIP", "   Tamaño: ${file.length()} bytes")
-                PackForgeLog.d("PackForge_ZIP", "   Ruta en ZIP: $zipFolderPath/$relativePath")
+                logFile { "🎨 Agregando pack_icon.png al ZIP desde: ${file.absolutePath} (${file.length()} bytes) en $zipFolderPath/$relativePath" }
             }
             
             if (file.isDirectory) {
@@ -1061,7 +1051,7 @@ object PackForgeOrchestrator {
                     "$zipFolderPath/$relativePath"
                 
                 zos.putNextEntry(ZipEntry(zipEntryName))
-                FileInputStream(file).use { it.copyTo(zos) }
+                FileInputStream(file).use { it.copyTo(zos, 65536) }
                 zos.closeEntry()
                 count++
             }

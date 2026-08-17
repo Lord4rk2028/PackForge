@@ -79,6 +79,7 @@ fun ThemeSettingsScreen(
             ThemeSwitch("Negro AMOLED", prefs.amoledMode, enabled = prefs.darkMode) { viewModel.setAmoledMode(it) }
             ThemeSwitch("Colores vivos", prefs.vividColors) { viewModel.setVividColors(it) }
             ThemeSwitch("Animaciones expresivas", prefs.expressiveMotion) { viewModel.setExpressiveMotion(it) }
+            ThemeSwitch("Registro detallado de archivos (debug)", prefs.verboseFileLogs) { viewModel.setVerboseFileLogs(it) }
         }
     }
 }

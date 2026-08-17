@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.AddonType
+import com.packforge.app.util.FileUtils
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -93,7 +94,7 @@ object AddonParser {
                     if (entryName.lowercase().endsWith("pack_icon.png") && iconPath == null) {
                         try {
                             val iconFile = File(context.cacheDir, "icon_${addonId}.png")
-                            file.copyTo(iconFile, overwrite = true)
+                            FileUtils.fastCopy(file, iconFile)
                             iconPath = iconFile.absolutePath
                         } catch (e: Exception) {}
                     }
@@ -175,5 +176,37 @@ object AddonParser {
             if (id != null) return id
         }
         return null
+    }
+
+    /**
+     * Recupera el icono (pack_icon.png) de un addon ya guardado en almacenamiento
+     * interno a partir de su archivo fuente. Se usa al cargar un modpack desde
+     * "My Modpacks": el icono cacheado puede haber desaparecido, pero el archivo
+     * fuente persiste, así que lo extraemos de nuevo para que la portada/original
+     * siempre se muestre (sin recurrir a un color sólido de respaldo).
+     *
+     * @return ruta absoluta del icono extraído, o null si no se pudo recuperar.
+     */
+    fun recoverIconFromSource(sourceFilePath: String, addonId: String, context: Context): String? {
+        val src = File(sourceFilePath)
+        if (!src.exists()) return null
+        val tempDir = File(context.cacheDir, "icon_recover_$addonId")
+        tempDir.mkdirs()
+        val extracted = AddonExtractor.extractAddon(src.absolutePath, tempDir.absolutePath) ?: run {
+            tempDir.deleteRecursively()
+            return null
+        }
+        var iconPath: String? = null
+        File(extracted).walkTopDown().forEach { f ->
+            if (f.isFile && f.name.equals("pack_icon.png", ignoreCase = true) && iconPath == null) {
+                val dest = File(context.cacheDir, "icon_$addonId.png")
+                try {
+                    FileUtils.fastCopy(f, dest)
+                    iconPath = dest.absolutePath
+                } catch (_: Exception) { /* ignorar */ }
+            }
+        }
+        tempDir.deleteRecursively()
+        return iconPath
     }
 }

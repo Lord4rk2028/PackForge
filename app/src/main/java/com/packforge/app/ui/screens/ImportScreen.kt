@@ -733,14 +733,20 @@ private fun AddonCardIcon(
     iconBgColor: Color,
     iconColor: Color
 ) {
+    // Si el archivo de icono no existe (cache limpiada, etc.), NO pintamos el
+    // fondo de color sólido personalizado: mostramos el glifo placeholder sobre
+    // un fondo neutro. Así la "portada" nunca queda como un bloque de color.
+    val hasValidIcon = iconPath != null &&
+        runCatching { java.io.File(iconPath).exists() }.getOrDefault(false)
+
     Box(
         modifier = Modifier
             .size(48.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(iconBgColor),
+            .background(if (hasValidIcon) Color.Transparent else iconBgColor),
         contentAlignment = Alignment.Center
     ) {
-        if (iconPath != null) {
+        if (hasValidIcon) {
             CachedAsyncImage(
                 model = iconPath,
                 contentDescription = "Icono de $addonName",

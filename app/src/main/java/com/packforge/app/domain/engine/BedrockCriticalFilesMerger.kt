@@ -1,6 +1,7 @@
 package com.packforge.app.domain.engine
 
 import com.packforge.app.util.PackForgeLog
+import com.packforge.app.util.logFile
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -74,7 +75,7 @@ object BedrockCriticalFilesMerger {
         val destFile = File(destDir, "textures/terrain_texture.json")
         destFile.parentFile?.mkdirs()
         OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-            it.write(merged.toString(2))
+            it.write(merged.toString())
         }
         // VALIDACIÓN: no deben quedar espacios al final en claves
         validateNoTrailingSpaces(destFile, "terrain_texture.json")
@@ -117,7 +118,7 @@ object BedrockCriticalFilesMerger {
         val destFile = File(destDir, "textures/item_texture.json")
         destFile.parentFile?.mkdirs()
         OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-            it.write(merged.toString(2))
+            it.write(merged.toString())
         }
         // VALIDACIÓN: no deben quedar espacios al final en claves
         validateNoTrailingSpaces(destFile, "item_texture.json")
@@ -151,7 +152,7 @@ object BedrockCriticalFilesMerger {
 
         val destFile = File(destDir, "blocks.json")
         OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-            it.write(merged.toString(2))
+            it.write(merged.toString())
         }
         // VALIDACIÓN: no deben quedar espacios al final en claves
         validateNoTrailingSpaces(destFile, "blocks.json")
@@ -176,7 +177,7 @@ object BedrockCriticalFilesMerger {
                         try {
                             val clean = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
                             OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-                                it.write(clean.toString(2))
+                                it.write(clean.toString())
                             }
                         } catch (e: Exception) {
                             file.copyTo(destFile)
@@ -197,7 +198,7 @@ object BedrockCriticalFilesMerger {
                             }
 
                             OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-                                it.write(base.toString(2))
+                                it.write(base.toString())
                             }
                             PackForgeLog.d("PackForge_Entity", "🔀 Fusionado: entity/${file.name}")
                         } catch (e: Exception) {
@@ -227,7 +228,7 @@ object BedrockCriticalFilesMerger {
                         try {
                             val clean = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
                             OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-                                it.write(clean.toString(2))
+                                it.write(clean.toString())
                             }
                         } catch (e: Exception) {
                             file.copyTo(destFile)
@@ -248,7 +249,7 @@ object BedrockCriticalFilesMerger {
                             }
 
                             OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-                                it.write(base.toString(2))
+                                it.write(base.toString())
                             }
                         } catch (e: Exception) {
                             PackForgeLog.e("PackForge_RC", "Error: ${e.message}")
@@ -281,7 +282,7 @@ object BedrockCriticalFilesMerger {
                             try {
                                 val clean = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
                                 OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-                                    it.write(clean.toString(2))
+                                    it.write(clean.toString())
                                 }
                             } catch (e: Exception) {
                                 file.copyTo(destFile)
@@ -306,7 +307,7 @@ object BedrockCriticalFilesMerger {
                                 }
 
                                 OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-                                    it.write(base.toString(2))
+                                    it.write(base.toString())
                                 }
                             } catch (e: Exception) {
                                 PackForgeLog.e("PackForge_Anim", "Error ${file.name}: ${e.message}")
@@ -363,7 +364,7 @@ object BedrockCriticalFilesMerger {
         }
         val langJsonFile = File(destTextsDir, "languages.json")
         OutputStreamWriter(FileOutputStream(langJsonFile), StandardCharsets.UTF_8).use {
-            it.write(languagesJson.toString(2))
+            it.write(languagesJson.toString())
         }
         PackForgeLog.d("PackForge_Lang", "✅ languages.json creado")
     }
@@ -419,7 +420,7 @@ object BedrockCriticalFilesMerger {
 
         val destFile = File(destDir, "sounds.json")
         OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-            it.write(merged.toString(2))
+            it.write(merged.toString())
         }
         PackForgeLog.d("PackForge_Sounds", "✅ sounds.json fusionado")
     }
@@ -446,7 +447,7 @@ object BedrockCriticalFilesMerger {
 
                         if (existing == null) {
                             geoFiles[relativePath] = json
-                            PackForgeLog.d("PackForge_Geometry", "Agregada geometria: $relativePath")
+                            logFile { "Agregada geometria: $relativePath" }
                         } else {
                             // Fusionar deduplicando por identifier dentro de minecraft:geometry
                             mergeGeoJson(existing, json, relativePath)
@@ -463,9 +464,9 @@ object BedrockCriticalFilesMerger {
             val destFile = File(destDir, relativePath)
             destFile.parentFile?.mkdirs()
             OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-                it.write(geoJson.toString(2))
+                it.write(geoJson.toString())
             }
-            PackForgeLog.d("PackForge_Geometry", "geometria guardada: $relativePath")
+            logFile { "geometria guardada: $relativePath" }
         }
 
         PackForgeLog.d("PackForge_Geometry", "Geometrias fusionadas: ${geoFiles.size} archivos .geo.json")
@@ -494,7 +495,7 @@ object BedrockCriticalFilesMerger {
             if (!existingIdentifiers.contains(id)) {
                 baseArr.put(geo)
                 existingIdentifiers.add(id)
-                PackForgeLog.d("PackForge_Geometry", "  + Geometria $id agregada en $path")
+                logFile { "  + Geometria $id agregada en $path" }
             } else {
                 PackForgeLog.w("PackForge_Geometry", "  Geometria duplicada $id en $path (manteniendo primera)")
             }
@@ -544,7 +545,7 @@ object BedrockCriticalFilesMerger {
             val destFile = File(destDir, "textures/flipbook_textures.json")
             destFile.parentFile?.mkdirs()
             OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-                it.write(merged.toString(2))
+                it.write(merged.toString())
             }
         }
         PackForgeLog.d("PackForge_Flipbook", "flipbook_textures.json fusionado desde $processedCount RPs con ${mergedArray.length()} animaciones")
@@ -660,7 +661,7 @@ object BedrockCriticalFilesMerger {
                     put("padding", 8)
                     put("num_mip_levels", 4)
                     put("texture_data", terrainData)
-                }.toString(2))
+                }.toString())
             }
             // VALIDACIÓN tras el paso de material instances
             validateNoTrailingSpaces(terrainFile, "terrain_texture.json (tras material_instances)")

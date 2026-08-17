@@ -1,6 +1,7 @@
 package com.packforge.app.domain.engine
 
 import com.packforge.app.util.PackForgeLog
+import com.packforge.app.util.logFile
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -85,7 +86,7 @@ object AddonExtractor {
             }
 
             // Determinación segura de la "zona" de extracción (una sola vez).
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            val buffer = ByteArray(65536)
             var entryCount = 0
             var totalWritten = 0L
 
@@ -133,11 +134,11 @@ object AddonExtractor {
                                     read = zis.read(buffer)
                                 }
                             }
-                            PackForgeLog.d(TAG, "Extraído: ${entry.name} ($fileWritten bytes)")
+                            logFile { "Extraído: ${entry.name} ($fileWritten bytes)" }
                         } else {
                             // Entrada de directorio: también debe estar dentro de la zona segura.
                             File(destDir, entry.name).mkdirs()
-                            PackForgeLog.d(TAG, "Directorio: ${entry.name}")
+                            logFile { "Directorio: ${entry.name}" }
                         }
                         entry = zis.nextEntry
                     }

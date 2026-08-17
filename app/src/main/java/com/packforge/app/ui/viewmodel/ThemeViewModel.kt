@@ -21,6 +21,7 @@ private val AMOLED_MODE_KEY = booleanPreferencesKey("amoled_mode")
 private val ACCENT_HEX_KEY = stringPreferencesKey("accent_hex")
 private val VIVID_COLORS_KEY = booleanPreferencesKey("vivid_colors")
 private val EXPRESSIVE_MOTION_KEY = booleanPreferencesKey("expressive_motion")
+private val VERBOSE_FILE_LOGS_KEY = booleanPreferencesKey("verbose_file_logs")
 
 class ThemeViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -28,12 +29,16 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
 
     val preferences: StateFlow<ThemePreferences> = dataStore.data
         .map { prefs ->
+            val verbose = prefs[VERBOSE_FILE_LOGS_KEY] ?: false
+            // Sincronizar el valor con el objeto de configuración global de manera inmediata
+            com.packforge.app.util.PackForgeConfig.verboseFileLogs = verbose
             ThemePreferences(
                 darkMode = prefs[DARK_MODE_KEY] ?: true,
                 amoledMode = prefs[AMOLED_MODE_KEY] ?: false,
                 accentHex = prefs[ACCENT_HEX_KEY] ?: "#2ECC71",
                 vividColors = prefs[VIVID_COLORS_KEY] ?: true,
-                expressiveMotion = prefs[EXPRESSIVE_MOTION_KEY] ?: true
+                expressiveMotion = prefs[EXPRESSIVE_MOTION_KEY] ?: true,
+                verboseFileLogs = verbose
             )
         }
         .stateIn(
@@ -60,5 +65,9 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setExpressiveMotion(enabled: Boolean) {
         viewModelScope.launch { dataStore.edit { it[EXPRESSIVE_MOTION_KEY] = enabled } }
+    }
+
+    fun setVerboseFileLogs(enabled: Boolean) {
+        viewModelScope.launch { dataStore.edit { it[VERBOSE_FILE_LOGS_KEY] = enabled } }
     }
 }

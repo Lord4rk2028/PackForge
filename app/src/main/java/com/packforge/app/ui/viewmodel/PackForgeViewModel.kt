@@ -656,10 +656,29 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             try {
                 val type = object : com.google.gson.reflect.TypeToken<List<Addon>>() {}.type
-                val restored: List<Addon> = Gson().fromJson(m.addonsJson, type)
-                
-                // Verificar que los archivos existen, si no, avisar al usuario
-                val missingFiles = restored.any { !java.io.File(it.sourceFilePath).exists() }
+                val restoredRaw: List<Addon> = Gson().fromJson(m.addonsJson, type)
+
+                // Recuperar iconos + verificar archivos en el hilo de IO (nunca Main):
+                // el archivo cacheado del icono puede haber desaparecido, pero el addon
+                // fuente (en almacenamiento interno) persiste. Re-extraemos el pack_icon.png
+                // para que la portada original siempre se muestre y no quede un color sólido.
+                val (restored, missingFiles) = withContext(Dispatchers.IO) {
+                    val recovered = restoredRaw.map { addon ->
+                        val iconStillExists = addon.iconPath != null &&
+                            runCatching { java.io.File(addon.iconPath).exists() }.getOrDefault(false)
+                        if (iconStillExists || addon.sourceFilePath.isBlank()) {
+                            addon
+                        } else {
+                            val rec = AddonParser.recoverIconFromSource(
+                                addon.sourceFilePath, addon.id, getApplication()
+                            )
+                            if (rec != null) addon.copy(iconPath = rec) else addon
+                        }
+                    }
+                    val missing = recovered.any { !java.io.File(it.sourceFilePath).exists() }
+                    recovered to missing
+                }
+
                 if (missingFiles) {
                     _events.emit(PackForgeEvent.ShowSnackbar("Algunos archivos del modpack original se perdieron.", true))
                 }
