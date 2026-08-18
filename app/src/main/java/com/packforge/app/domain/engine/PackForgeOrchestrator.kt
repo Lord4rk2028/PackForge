@@ -6,7 +6,9 @@ import com.packforge.app.util.PackForgeConfig
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.util.FileUtils
 import com.packforge.app.util.logFile
+import org.json.JSONArray
 import org.json.JSONObject
+import java.util.UUID
 import java.io.BufferedOutputStream
 import java.io.BufferedInputStream
 import java.io.File
@@ -617,6 +619,12 @@ object PackForgeOrchestrator {
                     return@forEach
                 }
 
+                // ⭐ PASO 1: Excluir "scripts/" de la copia genérica ⭐
+                if (relativePath.startsWith("scripts/")) {
+                    logFile { "  ⏭️  Saltando scripts/: $relativePath" }
+                    return@forEach
+                }
+
                 if (file.name.endsWith(".json", ignoreCase = true)) {
                     // Archivo JSON
                     if (targetFile.exists()) {
@@ -706,7 +714,7 @@ object PackForgeOrchestrator {
         customDescription: String = ""
     ): Pair<String?, String?> {
         // Recolectar manifests originales de BP y RP
-        val originalBpManifests = bpDirs.mapNotNull { dir ->
+        val originalBpManifestFiles = bpDirs.mapNotNull { dir ->
             val f = File(dir, "manifest.json")
             if (f.exists()) f else null
         }
@@ -715,28 +723,118 @@ object PackForgeOrchestrator {
             if (f.exists()) f else null
         }
 
-        PackForgeLog.d(TAG, "Manifests BP originales: ${originalBpManifests.size}")
+        // Leer los manifiestos BP como JSON para mergeScripts
+        val bpManifests = mutableMapOf<String, JSONObject>()
+        val bpSources = mutableListOf<Pair<String, File>>()
+        bpDirs.forEach { dir ->
+            val f = File(dir, "manifest.json")
+            if (f.exists()) {
+                try {
+                    val json = JSONObject(f.readText())
+                    val name = json.optJSONObject("header")?.optString("name") ?: File(dir).name
+                    bpManifests[name] = json
+                    bpSources.add(Pair(name, File(dir)))
+                } catch (e: Exception) {
+                    PackForgeLog.w(TAG, "Error leyendo manifest de $dir: ${e.message}")
+                }
+            }
+        }
+
+        PackForgeLog.d(TAG, "Manifests BP originales: ${originalBpManifestFiles.size}")
         PackForgeLog.d(TAG, "Manifests RP originales: ${originalRpManifests.size}")
+
+        // ══ PASO 2: FUSIONAR SCRIPTS ══
+        val scriptResult = mergeScripts(bpSources, bpManifests, mergedBpDir)
 
         // ══ GENERAR RP MANIFEST (función exacta) ══
         val rpManifestObj = ManifestGenerator.generateRpManifest(customName)
         val newRpHeaderUuid = rpManifestObj.optJSONObject("header")?.optString("uuid")
             ?: java.util.UUID.randomUUID().toString()
 
-        // ══ GENERAR BP MANIFEST (función exacta) ══
-        val hasScripts = mergedBpDir.exists() && mergedBpDir.walkTopDown().any { directory ->
-            directory.isDirectory &&
-            directory.name.equals("scripts", ignoreCase = true) &&
-            directory.listFiles()?.any { file ->
-                file.isFile && file.name.endsWith(".js", ignoreCase = true)
-            } == true
-        }
-        val bpManifestObj = ManifestGenerator.generateBpManifest(
+        // ══ GENERAR BP MANIFEST usando buildMergedBpManifest (más completo) ══
+        val originalRpHeaderUuids = originalRpManifests.mapNotNull { f ->
+            try {
+                val json = JSONObject(f.readText(Charsets.UTF_8))
+                json.optJSONObject("header")?.optString("uuid")
+            } catch (e: Exception) { null }
+        }.toSet()
+
+        val bpManifestObj = ManifestGenerator.buildMergedBpManifest(
+            originalBpManifests = originalBpManifestFiles,
+            originalRpHeaderUuids = originalRpHeaderUuids,
+            newRpHeaderUuid = newRpHeaderUuid,
             packName = customName,
-            rpHeaderUuid = newRpHeaderUuid,
-            originalManifests = originalBpManifests,
-            hasScripts = hasScripts
+            hasScriptsFolder = scriptResult.addonCount > 0,
+            packAuthor = customAuthor,
+            packVersion = customVersion,
+            packDescription = customDescription
         )
+
+        // Añadir dependencias de librerías detectadas por mergeScripts
+        if (scriptResult.addonCount > 0) {
+            val dependencies = bpManifestObj.optJSONArray("dependencies") ?: JSONArray().also { bpManifestObj.put("dependencies", it) }
+            scriptResult.libraryDeps.forEach { (name, ver) ->
+                // Solo añadir si no existe ya
+                var exists = false
+                for (i in 0 until dependencies.length()) {
+                    val dep = dependencies.optJSONObject(i)
+                    if (dep != null && dep.optString("module_name", "") == name) {
+                        exists = true
+                        // Actualizar a versión mayor si procede
+                        val existingVer = dep.optString("version", "1.0.0")
+                        if (compareSemver(ver, existingVer) > 0) {
+                            dep.put("version", ver)
+                        }
+                        break
+                    }
+                }
+                if (!exists) {
+                    dependencies.put(JSONObject().apply {
+                        put("module_name", name)
+                        put("version", ver)
+                    })
+                }
+            }
+            // Fallback si no hay @minecraft/server
+            if (!scriptResult.libraryDeps.containsKey("@minecraft/server")) {
+                var hasServer = false
+                for (i in 0 until dependencies.length()) {
+                    if (dependencies.optJSONObject(i)?.optString("module_name", "") == "@minecraft/server") {
+                        hasServer = true
+                        break
+                    }
+                }
+                if (!hasServer) {
+                    dependencies.put(JSONObject().apply {
+                        put("module_name", "@minecraft/server")
+                        put("version", "1.16.0")
+                    })
+                }
+            }
+        }
+
+        // ⭐ PASO 3: Añadir módulo de script combinado ⭐
+        // Eliminamos cualquier módulo script existente para evitar conflictos
+        val modulesArray = bpManifestObj.optJSONArray("modules") ?: JSONArray().also { bpManifestObj.put("modules", it) }
+        val newModules = JSONArray()
+        for (i in 0 until modulesArray.length()) {
+            val mod = modulesArray.getJSONObject(i)
+            if (mod.optString("type", "") != "script") {
+                newModules.put(mod)
+            }
+        }
+        bpManifestObj.put("modules", newModules)
+
+        // Añadir el módulo script combinado si hay scripts
+        if (scriptResult.addonCount > 0) {
+            newModules.put(JSONObject().apply {
+                put("type", "script")
+                put("language", "javascript")
+                put("uuid", UUID.randomUUID().toString())
+                put("version", JSONArray(listOf(1, 0, 0)))
+                put("entry", "scripts/main.js")  // ⭐ SIEMPRE el combinado
+            })
+        }
 
         val newBpHeaderUuid = bpManifestObj.optJSONObject("header")?.optString("uuid")
             ?: java.util.UUID.randomUUID().toString()
@@ -1087,6 +1185,86 @@ object PackForgeOrchestrator {
         }
     }
     
+    data class ScriptMergeResult(
+        val addonCount: Int,
+        val libraryDeps: Map<String, String>  // module_name -> versión máxima
+    )
+
+    private fun mergeScripts(
+        bpSources: List<Pair<String, File>>,
+        bpManifests: Map<String, JSONObject>,
+        mergedBpDir: File
+    ): ScriptMergeResult {
+        val imports = mutableListOf<String>()
+        val libraryDeps = mutableMapOf<String, String>()
+
+        bpSources.forEach { (key, bpDir) ->
+            val scriptsDir = File(bpDir, "scripts")
+            if (!scriptsDir.exists()) return@forEach
+
+            // 1. Copiar la carpeta COMPLETA a su propio espacio
+            val targetDir = File(mergedBpDir, "scripts/$key")
+            scriptsDir.copyRecursively(targetDir, overwrite = true)
+            PackForgeLog.d("PackForge_Scripts", "📜 Scripts de '$key' → scripts/$key/")
+
+            // 2. Leer el entry original del manifest
+            val manifest = bpManifests[key]
+            var entry = "scripts/main.js"
+            manifest?.optJSONArray("modules")?.let { mods ->
+                for (i in 0 until mods.length()) {
+                    val m = mods.getJSONObject(i)
+                    if (m.optString("type") == "script") {
+                        entry = m.optString("entry", "scripts/main.js")
+                    }
+                }
+            }
+            val relativeEntry = entry.removePrefix("scripts/")
+            imports.add("import \"./$key/$relativeEntry\";")
+
+            // 3. Recoger versiones de librerías @minecraft/*
+            manifest?.optJSONArray("dependencies")?.let { deps ->
+                for (i in 0 until deps.length()) {
+                    val dep = deps.getJSONObject(i)
+                    val name = dep.optString("module_name", "")
+                    if (name.startsWith("@minecraft/")) {
+                        val ver = dep.optString("version", "1.0.0")
+                        val current = libraryDeps[name]
+                        if (current == null || compareSemver(ver, current) > 0) {
+                            libraryDeps[name] = ver
+                        }
+                    }
+                }
+            }
+        }
+
+        if (imports.isEmpty()) return ScriptMergeResult(0, emptyMap())
+
+        // 4. ⭐ Generar el main.js COMBINADO ⭐
+        val mainJs = File(mergedBpDir, "scripts/main.js")
+        mainJs.parentFile?.mkdirs()
+        mainJs.writeText(
+            "// PackForge combined entry\n" +
+            imports.joinToString("\n") + "\n"
+        )
+
+        PackForgeLog.d("PackForge_Scripts", "✅ main.js combinado con ${imports.size} imports")
+        libraryDeps.forEach { (name, ver) ->
+            PackForgeLog.d("PackForge_Scripts", "📚 $name → $ver")
+        }
+
+        return ScriptMergeResult(imports.size, libraryDeps)
+    }
+
+    private fun compareSemver(a: String, b: String): Int {
+        val pa = a.split(".").map { it.toIntOrNull() ?: 0 }
+        val pb = b.split(".").map { it.toIntOrNull() ?: 0 }
+        for (i in 0 until 3) {
+            val cmp = (pa.getOrElse(i){0}).compareTo(pb.getOrElse(i){0})
+            if (cmp != 0) return cmp
+        }
+        return 0
+    }
+
     /**
      * Limpia directorios temporales
      */
