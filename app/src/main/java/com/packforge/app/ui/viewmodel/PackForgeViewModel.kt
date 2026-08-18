@@ -451,7 +451,9 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                                 message.contains("Clasificando") -> 30
                                 message.contains("Behavior") -> 45
                                 message.contains("Resource") -> 65
+                                message.contains("críticos") -> 72
                                 message.contains("manifiestos") -> 80
+                                message.contains("Validando") -> 85
                                 message.contains("Empaquetando") -> 90
                                 message.contains("Limpiando") -> 98
                                 else -> 5

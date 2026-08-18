@@ -319,7 +319,8 @@ object PackForgeOrchestrator {
             val validationResult = PackForgeValidator.validate(
                 bpDir = mergedBpDir,
                 rpDir = mergedRpDir,
-                originalAddons = extractedDirs
+                originalAddons = extractedDirs,
+                progressCallback = progressCallback
             )
             PackForgeLog.d("PackForge_Export", "🔧 PASO 5 completado")
 
