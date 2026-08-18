@@ -19,7 +19,9 @@ import java.nio.charset.StandardCharsets
 import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
-import java.util.zip.ZipOutputStream
+import java.util.zip.ZipFile
+import com.packforge.app.domain.engine.FastModpackExporter
+import com.packforge.app.domain.engine.JsonDeepMerger
 
 object PackForgeOrchestrator {
     private const val TAG = "PackForge_Orchestrator"
@@ -69,6 +71,7 @@ object PackForgeOrchestrator {
         
         // Clear previous conflicts
         JsonDeepMerger.clearConflicts()
+        ConflictRegistry.clear()
         
         try {
             // a) EXTRAER TODOS LOS ADDONS
@@ -342,10 +345,10 @@ object PackForgeOrchestrator {
                  PackForgeLog.d("PackForge_Export", "   RP file: ${file.name} (${file.length()} bytes)")
              }
 
-            // h) EMPAQUETAR
+// h) EMPAQUETAR
             progressCallback?.onProgress("Empaquetando modpack...")
             val outputFile = File(outputDir, "$customName.mcaddon")
-            
+
             // LOG OBLIGATORIO: Antes de crear ZIP
             PackForgeLog.d("PackForge_Export", "📦 CREANDO ZIP:")
             PackForgeLog.d("PackForge_Export", "  Archivo de salida: ${outputFile.name}")
@@ -353,12 +356,12 @@ object PackForgeOrchestrator {
             if (outputFile.extension != "mcaddon") {
                 PackForgeLog.e("PackForge_Export", "❌ ERROR: La extensión NO es .mcaddon!")
             }
-            
+
             // CRÍTICO: Verificar antes de crear ZIP
             if (bpDirs.isNotEmpty() && rpDirs.isNotEmpty()) {
                 verifyBeforeZip(mergedBpDir, mergedRpDir)
             }
-            
+
             createMcAddon(
                 if (bpDirs.isNotEmpty()) mergedBpDir else null,
                 if (rpDirs.isNotEmpty()) mergedRpDir else null,
@@ -579,7 +582,8 @@ object PackForgeOrchestrator {
     }
     
     /**
-     * Fusiona múltiples packs del mismo tipo (BP o RP)
+     * Fusiona múltiples packs del mismo tipo (BP o RP) - PASO ÚNICO
+     * Ahora fusiona DIRECTAMENTE desde ZipFiles sin extraer a disco primero
      */
     private fun mergePackType(sourceDirs: List<String>, targetDir: File, manifestName: String): Int {
         var jsonCount = 0
@@ -599,89 +603,110 @@ object PackForgeOrchestrator {
             logFile { "Procesando sourceDir $sourceIndex: $sourceDir" }
             logFile { "  Nombre del addon: $sourceAddonName" }
 
-            // CAMBIO 4: UNA sola pasada. Lista en memoria de archivos (nada de walk repetido)
-            val allFiles = sourceFile.walkTopDown().filter { it.isFile }.toList()
-            var count = 0
+            // ==================== PASO ÚNICO: Fusionar directamente desde ZIP sin extraer ===
+            try {
+                // Abrir el ZIP original (ZIP completo, no solo archivos críticos)
+                ZipFile(sourceFile).use { zf ->
+                    zf.entries().toList().forEach { entry ->
+                        if (entry.isDirectory) return@forEach
 
-            allFiles.forEach { file ->
-                // Reporte cada 2000 archivos (sin spam)
-                if (++count % 2000 == 0) {
-                    PackForgeLog.d("PackForge_Perf", "   ...$count/${allFiles.size} archivos procesados")
-                }
+                        val relativePath = entry.name
+                        // Saltar manifest.json (se generará nuevo al final)
+                        if (relativePath == manifestName || relativePath == "manifest.json") {
+                            logFile { "  ⏭️  Saltando manifest.json: $relativePath" }
+                            return@forEach
+                        }
 
-                val relativePath = file.relativeTo(sourceFile).path
-                val targetFile = File(targetDir, relativePath)
-                targetFile.parentFile?.mkdirs()
+                        // ⭐ PASO 1: Excluir "scripts/" de la copia genérica ⭐
+                        if (relativePath.startsWith("scripts/")) {
+                            logFile { "  ⏭️  Saltando scripts/: $relativePath" }
+                            return@forEach
+                        }
 
-                // Skip manifest.json (se generará nuevo al final)
-                if (file.name == manifestName) {
-                    logFile { "  ⏭️  Saltando manifest.json: $relativePath" }
-                    return@forEach
-                }
+                        val targetFile = File(targetDir, relativePath)
+                        targetFile.parentFile?.mkdirs()
 
-                // ⭐ PASO 1: Excluir "scripts/" de la copia genérica ⭐
-                if (relativePath.startsWith("scripts/")) {
-                    logFile { "  ⏭️  Saltando scripts/: $relativePath" }
-                    return@forEach
-                }
+                        if (entry.name.endsWith(".json", ignoreCase = true)) {
+                            // Archivo JSON - Fusionar o copiar directamente
+                            if (targetFile.exists()) {
+                                // Fusionar con DeepMerge
+                                logFile { "  🔀 Fusionando (JSON): $relativePath" }
+                                try {
+                                    val existingContent = targetFile.readText()
 
-                if (file.name.endsWith(".json", ignoreCase = true)) {
-                    // Archivo JSON
-                    if (targetFile.exists()) {
-                        // Fusionar con DeepMerge
-                        logFile { "  🔀 Fusionando (JSON): $relativePath" }
+                                    // Leer del ZIP directamente (sin extraer a disco)
+                                    val newContent = zf.getInputStream(entry).bufferedReader(
+                                        StandardCharsets.UTF_8).readText()
 
-                        try {
-                            val existingContent = targetFile.readText()
-                            val newContent = file.readText()
+                                    JsonDeepMerger.setMergeContext(
+                                        sourceAddon = sourceAddonName,
+                                        targetAddon = targetDir.name,
+                                        filePath = relativePath
+                                    )
 
-                            JsonDeepMerger.setMergeContext(
-                                sourceAddon = sourceAddonName,
-                                targetAddon = targetDir.name,
-                                filePath = relativePath
-                            )
-
-                            val merged = JsonDeepMerger.deepMergeStrings(existingContent, newContent)
-                            targetFile.writeText(merged)
-
-                            jsonCount++
-                        } catch (e: Exception) {
-                            PackForgeLog.e("PackForge_Debug", "    ❌ Error al fusionar $relativePath: ${e.message}")
-                            try {
-                                val cleanJson = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText()))
-                                targetFile.writeText(cleanJson.toString()) // ⚡ JSON COMPACTO
-                            } catch (e2: Exception) {
-                                FileUtils.fastCopy(file, targetFile)
+                                    val merged = JsonDeepMerger.deepMergeStrings(existingContent, newContent)
+                                    targetFile.writeText(merged)
+                                    jsonCount++
+                                } catch (e: Exception) {
+                                    PackForgeLog.e("PackForge_Debug", "    ❌ Error al fusionar $relativePath: ${e.message}")
+                                    try {
+                                        val cleanJson = JsonDeepMerger.cleanJsonObject(JSONObject(
+                                            zf.getInputStream(entry).bufferedReader(Charsets.UTF_8).readText()))
+                                        targetFile.writeText(cleanJson.toString()) // ⚡ JSON COMPACTO
+                                    } catch (e2: Exception) {
+                                        // Fallback: copiar directamente desde el ZIP
+                                        FileUtils.fastCopy(
+                                            File.createTempFile("temp_entry", null).also { tempFile ->
+                                                zf.getInputStream(entry).copyTo(FileOutputStream(tempFile))
+                                            },
+                                            targetFile
+                                        )
+                                    }
+                                    jsonCount++
+                                }
+                            } else {
+                                // Nuevo archivo JSON - copiar directamente desde el ZIP
+                                logFile { "  ✅ Copiando (JSON nuevo): $relativePath" }
+                                try {
+                                    val cleanJson = JsonDeepMerger.cleanJsonObject(JSONObject(
+                                        zf.getInputStream(entry).bufferedReader(Charsets.UTF_8).readText()))
+                                    targetFile.writeText(cleanJson.toString()) // ⚡ JSON COMPACTO
+                                } catch (e2: Exception) {
+                                    // Fallback: copiar directamente desde el ZIP
+                                    FileUtils.fastCopy(
+                                        File.createTempFile("temp_entry", null).also { tempFile ->
+                                            zf.getInputStream(entry).copyTo(FileOutputStream(tempFile))
+                                        },
+                                        targetFile
+                                    )
+                                }
+                                jsonCount++
                             }
-                            jsonCount++
-                        }
-                    } else {
-                        logFile { "  ✅ Copiando (JSON nuevo): $relativePath" }
-                        try {
-                            val cleanJson = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText()))
-                            targetFile.writeText(cleanJson.toString()) // ⚡ JSON COMPACTO
-                        } catch (e2: Exception) {
-                            logFile { "    ✅ Copiando (no-JSON nuevo): $relativePath" }
-                            FileUtils.fastCopy(file, targetFile)
-                        }
-                        jsonCount++
-                    }
-                } else {
-                    // Archivo no-JSON (texturas, sonidos, modelos, etc.) → fastCopy FileChannel
-                    logFile { "  📄 Procesando (no-JSON): $relativePath" }
+                        } else {
+                            // Archivo no-JSON (texturas, sonidos, modelos, etc.) → fastCopy desde ZIP
+                            logFile { "  📄 Procesando (no-JSON): $relativePath" }
 
-                    if (targetFile.exists()) {
-                        PackForgeLog.w("PackForge_Debug", "    ⚠️  Colisión (no-JSON): $relativePath")
-                        FileUtils.fastCopy(file, targetFile)
-                    } else {
-                        FileUtils.fastCopy(file, targetFile)
+                            if (targetFile.exists()) {
+                                PackForgeLog.w("PackForge_Debug", "    ⚠️  Colisión (no-JSON): $relativePath")
+                            }
+
+                            // Copiar directamente desde el ZIP sin extraer a disco primero
+                            FileUtils.fastCopy(
+                                File.createTempFile("temp_entry", null).also { tempFile ->
+                                    zf.getInputStream(entry).copyTo(FileOutputStream(tempFile))
+                                },
+                                targetFile
+                            )
+                            nonJsonCount++
+                        }
                     }
-                    nonJsonCount++
                 }
+            } catch (e: Exception) {
+                PackForgeLog.e("PackForge_Debug", "Error procesando addon $sourceAddonName: ${e.message}")
             }
 
             logFile { "  Finalizado procesamiento de $sourceAddonName" }
-            logFile { "    - Archivos procesados en este addon: ${allFiles.size}" }
+            logFile { "    - Archivos procesados en este addon: (contados en el ZIP)" }
         }
 
         PackForgeLog.d("PackForge_Debug", "=== Resumen mergePackType ===")
@@ -713,6 +738,28 @@ object PackForgeOrchestrator {
         customVersion: String = "1.0.0",
         customDescription: String = ""
     ): Pair<String?, String?> {
+        // Preflight the actual extracted content, not just the metadata shown in the
+        // import screen. Findings are added to the existing conflict UI so the user
+        // gets an actionable reason for every unsafe export.
+        val compatibilityFindings = BedrockCompatibilityAnalyzer.analyze(bpDirs, rpDirs)
+        compatibilityFindings.forEach { finding ->
+            ConflictRegistry.logConflict(
+                severity = finding.severity,
+                type = finding.type,
+                file = finding.file,
+                addon1 = finding.source,
+                addon2 = finding.target,
+                description = finding.description
+            )
+        }
+        val blockingFindings = compatibilityFindings.filter { it.blocksExport }
+        if (blockingFindings.isNotEmpty()) {
+            throw IllegalStateException(
+                "Compatibilidad no resuelta: " +
+                    blockingFindings.joinToString(" | ") { it.description }
+            )
+        }
+
         // Recolectar manifests originales de BP y RP
         val originalBpManifestFiles = bpDirs.mapNotNull { dir ->
             val f = File(dir, "manifest.json")
@@ -723,17 +770,18 @@ object PackForgeOrchestrator {
             if (f.exists()) f else null
         }
 
-        // Leer los manifiestos BP como JSON para mergeScripts
-        val bpManifests = mutableMapOf<String, JSONObject>()
-        val bpSources = mutableListOf<Pair<String, File>>()
-        bpDirs.forEach { dir ->
+        // El nombre visible de un addon no es una identidad segura: muchos packs
+        // comparten el mismo header.name. Usar el UUID evita sobrescrituras de scripts.
+        val bpSources = mutableListOf<ScriptSource>()
+        bpDirs.forEachIndexed { index, dir ->
             val f = File(dir, "manifest.json")
             if (f.exists()) {
                 try {
                     val json = JSONObject(f.readText())
-                    val name = json.optJSONObject("header")?.optString("name") ?: File(dir).name
-                    bpManifests[name] = json
-                    bpSources.add(Pair(name, File(dir)))
+                    val uuid = json.optJSONObject("header")?.optString("uuid", "")
+                    val stablePart = uuid.filter { it.isLetterOrDigit() }.take(12)
+                        .ifBlank { "source_${index + 1}" }
+                    bpSources.add(ScriptSource("addon_${index + 1}_$stablePart", File(dir), json))
                 } catch (e: Exception) {
                     PackForgeLog.w(TAG, "Error leyendo manifest de $dir: ${e.message}")
                 }
@@ -744,7 +792,16 @@ object PackForgeOrchestrator {
         PackForgeLog.d(TAG, "Manifests RP originales: ${originalRpManifests.size}")
 
         // ══ PASO 2: FUSIONAR SCRIPTS ══
-        val scriptResult = mergeScripts(bpSources, bpManifests, mergedBpDir)
+        val scriptResult = mergeScripts(bpSources, mergedBpDir)
+        // Nunca exportar un addon "plano" si su lógica no pudo conservarse. Es
+        // preferible detener la exportación con una causa accionable a generar un
+        // .mcaddon que parezca válido pero haya perdido comportamiento.
+        if (scriptResult.skippedAddons.isNotEmpty()) {
+            throw IllegalStateException(
+                "No se pudieron preservar los scripts de: ${scriptResult.skippedAddons.joinToString()}. " +
+                    "Revisa el entry del módulo script en el manifest original."
+            )
+        }
 
         // ══ GENERAR RP MANIFEST (función exacta) ══
         val rpManifestObj = ManifestGenerator.generateRpManifest(customName)
@@ -1187,30 +1244,43 @@ object PackForgeOrchestrator {
     
     data class ScriptMergeResult(
         val addonCount: Int,
-        val libraryDeps: Map<String, String>  // module_name -> versión máxima
+        val libraryDeps: Map<String, String>,  // module_name -> versión máxima
+        val skippedAddons: List<String> = emptyList()
+    )
+
+    private data class ScriptSource(
+        val key: String,
+        val directory: File,
+        val manifest: JSONObject
     )
 
     private fun mergeScripts(
-        bpSources: List<Pair<String, File>>,
-        bpManifests: Map<String, JSONObject>,
+        bpSources: List<ScriptSource>,
         mergedBpDir: File
     ): ScriptMergeResult {
         val imports = mutableListOf<String>()
         val libraryDeps = mutableMapOf<String, String>()
+        val skippedAddons = mutableListOf<String>()
 
-        bpSources.forEach { (key, bpDir) ->
+        bpSources.forEach { source ->
+            val key = source.key
+            val bpDir = source.directory
             val scriptsDir = File(bpDir, "scripts")
             if (!scriptsDir.exists()) return@forEach
 
             // 1. Copiar la carpeta COMPLETA a su propio espacio
             val targetDir = File(mergedBpDir, "scripts/$key")
-            scriptsDir.copyRecursively(targetDir, overwrite = true)
+            if (!scriptsDir.copyRecursively(targetDir, overwrite = true)) {
+                skippedAddons.add(key)
+                PackForgeLog.e("PackForge_Scripts", "No se pudieron copiar los scripts de '$key'")
+                return@forEach
+            }
             PackForgeLog.d("PackForge_Scripts", "📜 Scripts de '$key' → scripts/$key/")
 
             // 2. Leer el entry original del manifest
-            val manifest = bpManifests[key]
+            val manifest = source.manifest
             var entry = "scripts/main.js"
-            manifest?.optJSONArray("modules")?.let { mods ->
+            manifest.optJSONArray("modules")?.let { mods ->
                 for (i in 0 until mods.length()) {
                     val m = mods.getJSONObject(i)
                     if (m.optString("type") == "script") {
@@ -1218,11 +1288,28 @@ object PackForgeOrchestrator {
                     }
                 }
             }
-            val relativeEntry = entry.removePrefix("scripts/")
+            val relativeEntry = entry
+                .replace('\\', '/')
+                .removePrefix("./")
+                .removePrefix("scripts/")
+            val entryFile = File(targetDir, relativeEntry)
+            val targetRoot = targetDir.canonicalFile
+            val validEntry = !relativeEntry.isBlank() &&
+                !relativeEntry.startsWith('/') &&
+                entryFile.canonicalFile.path.startsWith(targetRoot.path + File.separator) &&
+                entryFile.isFile
+            if (!validEntry) {
+                skippedAddons.add(key)
+                PackForgeLog.e(
+                    "PackForge_Scripts",
+                    "Script omitido para '$key': entry inválido o inexistente '$entry'"
+                )
+                return@forEach
+            }
             imports.add("import \"./$key/$relativeEntry\";")
 
             // 3. Recoger versiones de librerías @minecraft/*
-            manifest?.optJSONArray("dependencies")?.let { deps ->
+            manifest.optJSONArray("dependencies")?.let { deps ->
                 for (i in 0 until deps.length()) {
                     val dep = deps.getJSONObject(i)
                     val name = dep.optString("module_name", "")
@@ -1237,7 +1324,7 @@ object PackForgeOrchestrator {
             }
         }
 
-        if (imports.isEmpty()) return ScriptMergeResult(0, emptyMap())
+        if (imports.isEmpty()) return ScriptMergeResult(0, emptyMap(), skippedAddons)
 
         // 4. ⭐ Generar el main.js COMBINADO ⭐
         val mainJs = File(mergedBpDir, "scripts/main.js")
@@ -1252,7 +1339,13 @@ object PackForgeOrchestrator {
             PackForgeLog.d("PackForge_Scripts", "📚 $name → $ver")
         }
 
-        return ScriptMergeResult(imports.size, libraryDeps)
+        if (skippedAddons.isNotEmpty()) {
+            PackForgeLog.w(
+                "PackForge_Scripts",
+                "Scripts no incluidos por entry inválido: ${skippedAddons.joinToString()}"
+            )
+        }
+        return ScriptMergeResult(imports.size, libraryDeps, skippedAddons)
     }
 
     private fun compareSemver(a: String, b: String): Int {

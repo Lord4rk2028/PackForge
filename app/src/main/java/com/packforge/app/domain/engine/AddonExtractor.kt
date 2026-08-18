@@ -23,6 +23,19 @@ object AddonExtractor {
     /** Tamaño total máximo acumulado de la extracción (200 MB). */
     private const val MAX_TOTAL_SIZE = 200L * 1024 * 1024
 
+    val CRITICAL_PATTERNS = listOf(
+        "manifest.json", "terrain_texture.json", "item_texture.json",
+        "blocks.json", "sounds.json"
+    )
+
+    fun shouldExtractToDisk(name: String): Boolean {
+        return name.endsWith("manifest.json")
+            || name.endsWith(".mcpack") || name.endsWith(".zip")
+            || name.startsWith("texts/")
+            || name.startsWith("scripts/")
+            || CRITICAL_PATTERNS.any { name.endsWith(it) }
+    }
+
     /**
      * Resultado del análisis de un addon extraído
      */
@@ -106,35 +119,37 @@ object AddonExtractor {
                         }
 
                         if (!entry.isDirectory) {
-                            // 3) Límite por archivo según el tamaño declarado en la cabecera ZIP.
-                            if (entry.size > MAX_ENTRY_SIZE) {
-                                throw IllegalStateException("Archivo demasiado grande en ZIP: ${entry.name} (${entry.size} bytes)")
-                            }
-
-                            val newFile = File(destDir, entry.name)
-                            newFile.parentFile?.mkdirs()
-
-                            // Descompresión normal (con byte-accounting para los límites).
-                            var fileWritten = 0L
-                            FileOutputStream(newFile).use { fos ->
-                                var read = zis.read(buffer)
-                                while (read != -1) {
-                                    fos.write(buffer, 0, read)
-                                    fileWritten += read
-                                    totalWritten += read
-
-                                    // 4) Límite real por archivo (cubre entradas con size = -1).
-                                    if (fileWritten > MAX_ENTRY_SIZE) {
-                                        throw IllegalStateException("Archivo demasiado grande al descomprimir: ${entry.name}")
-                                    }
-                                    // 5) Límite total acumulado (200 MB).
-                                    if (totalWritten > MAX_TOTAL_SIZE) {
-                                        throw IllegalStateException("Tamaño total de extracción supera el límite (200 MB)")
-                                    }
-                                    read = zis.read(buffer)
+                            if (shouldExtractToDisk(entry.name)) {
+                                // 3) Límite por archivo según el tamaño declarado en la cabecera ZIP.
+                                if (entry.size > MAX_ENTRY_SIZE) {
+                                    throw IllegalStateException("Archivo demasiado grande en ZIP: ${entry.name} (${entry.size} bytes)")
                                 }
+
+                                val newFile = File(destDir, entry.name)
+                                newFile.parentFile?.mkdirs()
+
+                                // Descompresión normal (con byte-accounting para los límites).
+                                var fileWritten = 0L
+                                FileOutputStream(newFile).use { fos ->
+                                    var read = zis.read(buffer)
+                                    while (read != -1) {
+                                        fos.write(buffer, 0, read)
+                                        fileWritten += read
+                                        totalWritten += read
+
+                                        // 4) Límite real por archivo (cubre entradas con size = -1).
+                                        if (fileWritten > MAX_ENTRY_SIZE) {
+                                            throw IllegalStateException("Archivo demasiado grande al descomprimir: ${entry.name}")
+                                        }
+                                        // 5) Límite total acumulado (200 MB).
+                                        if (totalWritten > MAX_TOTAL_SIZE) {
+                                            throw IllegalStateException("Tamaño total de extracción supera el límite (200 MB)")
+                                        }
+                                        read = zis.read(buffer)
+                                    }
+                                }
+                                logFile { "Extraído: ${entry.name} ($fileWritten bytes)" }
                             }
-                            logFile { "Extraído: ${entry.name} ($fileWritten bytes)" }
                         } else {
                             // Entrada de directorio: también debe estar dentro de la zona segura.
                             File(destDir, entry.name).mkdirs()
