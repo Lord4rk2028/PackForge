@@ -222,7 +222,7 @@ object IdentifierRemapper {
         dir.walkTopDown().forEach { file ->
             if (!file.isFile) return@forEach
             val ext = file.extension.lowercase(Locale.ROOT)
-            if (ext !in setOf("json", "lang", "mcfunction", "txt", "js", "mjs", "ts")) return@forEach
+            if (ext !in setOf("json", "lang", "mcfunction", "txt") + SCRIPT_EXTENSIONS) return@forEach
             try {
                 when (ext) {
                     "json" -> rewriteIdentifiersInJson(file, oldId, newId)
@@ -235,46 +235,16 @@ object IdentifierRemapper {
         }
     }
 
-    /** Barrido profundo: sustituye TODO valor string igual al id viejo en el JSON completo. */
+    /** Barrido profundo: sustituye TODO valor string igual al id viejo en el JSON completo.
+     *  Delegado al rewriter compartido (política trim-aware única del pipeline). */
     private fun rewriteIdentifiersInJson(file: File, oldId: String, newId: String) {
         val text = file.readText(StandardCharsets.UTF_8)
         // Fast-path: si el id no aparece como texto, no parsear nada.
         if (!text.contains(oldId)) return
         val json = JSONObject(text)
-        if (replaceValuesDeep(json, oldId, newId)) {
+        if (JsonValueRewriter.replaceValues(json, mapOf(oldId to newId))) {
             file.writeText(json.toString(4), StandardCharsets.UTF_8)
         }
-    }
-
-    private fun replaceValuesDeep(node: Any, oldId: String, newId: String): Boolean {
-        var changed = false
-        when (node) {
-            is JSONObject -> {
-                val keys = node.keys()
-                while (keys.hasNext()) {
-                    val key = keys.next()
-                    when (val value = node.get(key)) {
-                        is String -> if (value == oldId) {
-                            node.put(key, newId)
-                            changed = true
-                        }
-                        is JSONObject, is JSONArray -> changed = replaceValuesDeep(value, oldId, newId) || changed
-                    }
-                }
-            }
-            is JSONArray -> {
-                for (i in 0 until node.length()) {
-                    when (val value = node.get(i)) {
-                        is String -> if (value == oldId) {
-                            node.put(i, newId)
-                            changed = true
-                        }
-                        is JSONObject, is JSONArray -> changed = replaceValuesDeep(value, oldId, newId) || changed
-                    }
-                }
-            }
-        }
-        return changed
     }
 
     /** Reemplaza en .lang solo líneas completas clave=valor donde el valor o clave coincida exactamente */

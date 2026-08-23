@@ -106,7 +106,7 @@ object AddonParser {
                         lower.contains("resource") || lower.contains("rp/") || lower.startsWith("textures/") || lower.startsWith("models/") -> resourceFiles.add(entryName)
                     }
 
-                    if (lower.endsWith(".js") && (lower.startsWith("scripts/") || lower.contains("/scripts/"))) {
+                    if (SCRIPT_EXTENSIONS.any { lower.endsWith(".$it") } && (lower.startsWith("scripts/") || lower.contains("/scripts/"))) {
                         hasScripts = true
                     }
 

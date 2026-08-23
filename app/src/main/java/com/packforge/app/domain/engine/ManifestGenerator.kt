@@ -52,6 +52,7 @@ object ManifestGenerator {
         val dependencies = JSONArray()
         val seenDeps = mutableSetOf<String>()
         var minEngine = listOf(1, 21, 0)
+        val capabilities = linkedSetOf<String>()
 
         // REGLA 2: Módulo data principal (SÓLO uno, con UUID nuevo)
         modules.put(JSONObject().apply {
@@ -88,6 +89,14 @@ object ManifestGenerator {
                             minEngine = v
                         }
                     }
+
+                // REGLA 7: conservar flags de experimentación/capacidades del header
+                // (necesarios p.ej. para iluminación dinámica, UI custom, holiday features)
+                json.optJSONObject("header")?.optJSONArray("capabilities")?.let { caps ->
+                    for (i in 0 until caps.length()) {
+                        caps.optString(i).takeIf { it.isNotBlank() }?.let { capabilities.add(it) }
+                    }
+                }
 
                 // REGLA 2: modules — conservar script y otros, reconstruir data
                 json.optJSONArray("modules")?.let { mods ->
@@ -181,6 +190,11 @@ object ManifestGenerator {
             }
         }
 
+        // REGLA 7: propagar capacidades/experimentos al header fusionado
+        if (capabilities.isNotEmpty()) {
+            manifest.getJSONObject("header").put("capabilities", JSONArray(capabilities.toList()))
+        }
+
         // LOG OBLIGATORIO: manifiesto del BP completo
         Log.d(MANIFEST_TAG, "=== BP MANIFEST FINAL ===")
         Log.d(MANIFEST_TAG, manifest.toString(2))
@@ -203,6 +217,7 @@ object ManifestGenerator {
         val dependencies = JSONArray()
         val seenDeps = mutableSetOf<String>()
         var minEngine = listOf(1, 21, 0)
+        val capabilities = linkedSetOf<String>()
 
         // module resources nuevo
         modules.put(JSONObject().apply {
@@ -225,6 +240,13 @@ object ManifestGenerator {
                             minEngine = v
                         }
                     }
+
+                // REGLA 7: conservar flags de experimentación/capacidades del header
+                json.optJSONObject("header")?.optJSONArray("capabilities")?.let { caps ->
+                    for (i in 0 until caps.length()) {
+                        caps.optString(i).takeIf { it.isNotBlank() }?.let { capabilities.add(it) }
+                    }
+                }
 
                 // Conservar módulos adicionales que no sean resources puros (ej. client_data)
                 json.optJSONArray("modules")?.let { mods ->
@@ -280,6 +302,11 @@ object ManifestGenerator {
                     put("authors", JSONArray(listOf(packAuthor)))
                 })
             }
+        }
+
+        // REGLA 7: propagar capacidades/experimentos al header fusionado
+        if (capabilities.isNotEmpty()) {
+            manifest.getJSONObject("header").put("capabilities", JSONArray(capabilities.toList()))
         }
 
         // LOG OBLIGATORIO: manifiesto del RP completo

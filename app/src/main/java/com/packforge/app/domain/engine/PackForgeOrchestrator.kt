@@ -254,6 +254,7 @@ object PackForgeOrchestrator {
             // bpDirs contiene las rutas de TODOS los BPs extraídos (para material_instances)
             // extractedDirs contiene las rutas de TODOS los addons extraídos (para .lang)
             var soundKeyRenames: Map<String, String> = emptyMap()
+            var dependencyNotes: List<String> = emptyList()
             if (rpDirs.isNotEmpty() || bpDirs.isNotEmpty()) {
                 progressCallback?.onProgress("Fusionando archivos críticos de Bedrock...")
                 PackForgeLog.d("PackForge_Export", "🔧 FUSIONANDO ARCHIVOS CRÍTICOS DE BEDROCK...")
@@ -326,6 +327,13 @@ object PackForgeOrchestrator {
                 
                 // 15. PARTÍCULAS - dedupe por identifier con alias único
                 merger.mergeParticles(rpDirFiles, mergedRpDir, mergedBpDir)
+                
+                // 16. RESOLUCIÓN DE DEPENDENCIAS DE ENTIDADES (anti-mob-invisible):
+                // rastrea geometry/textures/animations/render_controllers por REFERENCIA
+                // INTERNA del JSON, recupera archivos de los addons origen y registra
+                // conflictos visibles cuando el contenido difiere entre fuentes.
+                progressCallback?.onProgress("Resolviendo dependencias de entidades...")
+                dependencyNotes = EntityDependencyResolver.resolve(rpDirFiles, mergedRpDir)
                 
                 PackForgeLog.d("PackForge_Export", "✅ Archivos críticos fusionados exitosamente")
             }
@@ -406,6 +414,21 @@ object PackForgeOrchestrator {
                 MergeReportGenerator.validateJsonSyntax(mergedRpDir)
             syntaxErrors.forEach { PackForgeLog.e(TAG, it) }
 
+            // ÚLTIMA BARRERA: validar el paquete FINAL empaquetado (referencias de
+            // entidades contra las entradas reales del ZIP). Los errores NO bloquean
+            // la entrega pero SÍ llegan a ConflictRegistry/UI y al reporte.
+            val zipValidation = EntityDependencyResolver.validateMerge(outputFile.absolutePath)
+            zipValidation.take(30).forEach { line ->
+                ConflictRegistry.logConflict(
+                    severity = com.packforge.app.domain.model.ConflictSeverity.HIGH,
+                    type = "BROKEN_REFERENCE_ZIP",
+                    file = outputFile.name,
+                    addon1 = "paquete final",
+                    addon2 = "-",
+                    description = line
+                )
+            }
+
             val reportLines = MergeReportGenerator.build(
                 MergeReportGenerator.Inputs(
                     idRenames = idRenames,
@@ -414,6 +437,8 @@ object PackForgeOrchestrator {
                     scriptFindings = scriptFindings,
                     syntaxErrors = syntaxErrors,
                     validationResult = validationResult,
+                    dependencyNotes = dependencyNotes,
+                    zipValidation = zipValidation,
                     totalJsonsMerged = totalJsonsMerged,
                     elapsedSeconds = (System.currentTimeMillis() - tInicio) / 1000.0
                 )
@@ -1325,7 +1350,7 @@ object PackForgeOrchestrator {
             val key = source.key
             val bpDir = source.directory
             val scriptFiles = bpDir.walkTopDown()
-                .filter { it.isFile && it.extension.equals("js", ignoreCase = true) }
+                .filter { it.isFile && it.extension.lowercase() in SCRIPT_EXTENSIONS }
                 .toList()
             if (scriptFiles.isEmpty()) return@forEach
 

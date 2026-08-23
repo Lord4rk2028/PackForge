@@ -39,7 +39,7 @@ object ScriptCollisionAnalyzer {
         if (scriptsDir == null || !scriptsDir.isDirectory) return findings
 
         val jsFiles = scriptsDir.walkTopDown()
-            .filter { it.isFile && it.extension.lowercase(Locale.ROOT) in setOf("js", "mjs", "ts") }
+            .filter { it.isFile && it.extension.lowercase(Locale.ROOT) in SCRIPT_EXTENSIONS }
             .toList()
 
         // 1) Duplicados de declaraciones top-level dentro del MISMO archivo

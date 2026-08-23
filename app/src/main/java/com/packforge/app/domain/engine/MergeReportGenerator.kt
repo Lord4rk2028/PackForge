@@ -53,6 +53,8 @@ object MergeReportGenerator {
         val scriptFindings: List<String> = emptyList(),
         val syntaxErrors: List<String> = emptyList(),
         val validationResult: PackForgeValidator.ValidationResult? = null,
+        val dependencyNotes: List<String> = emptyList(),
+        val zipValidation: List<String> = emptyList(),
         val totalJsonsMerged: Int = 0,
         val elapsedSeconds: Double = 0.0
     )
@@ -87,9 +89,16 @@ object MergeReportGenerator {
         else inputs.scriptFindings.forEach { lines += it }
         lines += ""
 
-        lines += "── 4. VALIDACIÓN POST-FUSIÓN ──"
+        lines += "── 4. DEPENDENCIAS DE ENTIDADES (geometría/texturas/animaciones) ──"
+        if (inputs.dependencyNotes.isEmpty()) lines += "ℹ️ Sin entidades que procesar."
+        else inputs.dependencyNotes.forEach { lines += it }
+        lines += ""
+
+        lines += "── 5. VALIDACIÓN POST-FUSIÓN ──"
         if (inputs.syntaxErrors.isEmpty()) lines += "✅ Todos los JSON del paquete son sintácticamente válidos."
         else inputs.syntaxErrors.forEach { lines += it }
+        if (inputs.zipValidation.isEmpty()) lines += "✅ Paquete final validado: referencias de entidades íntegras."
+        else inputs.zipValidation.forEach { lines += it }
         inputs.validationResult?.let { vr ->
             lines += "Texturas faltantes: ${vr.missingTextures.size} | Modelos faltantes: ${vr.missingModels.size} " +
                 "| Referencias reparadas: ${vr.fixedReferences} | Claves .lang añadidas: ${vr.langKeysAdded.values.sum()}"

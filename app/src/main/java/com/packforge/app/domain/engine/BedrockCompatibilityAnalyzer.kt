@@ -4,6 +4,9 @@ import com.packforge.app.domain.model.ConflictSeverity
 import org.json.JSONObject
 import java.io.File
 
+/** Extensiones de script reconocidas por TODO el pipeline PackForge (única fuente de verdad). */
+val SCRIPT_EXTENSIONS = setOf("js", "mjs", "ts", "mcs")
+
 /**
  * Static preflight for behavior packs that contain Script API code.
  *
@@ -217,7 +220,7 @@ object BedrockCompatibilityAnalyzer {
         // Final fallback: only accept a filename match when it is unambiguous.
         val fileName = File(entry).name
         val matches = packRoot.walkTopDown()
-            .filter { it.isFile && it.name.equals(fileName, ignoreCase = true) && it.extension.equals("js", true) }
+            .filter { it.isFile && it.name.equals(fileName, ignoreCase = true) && it.extension.lowercase() in SCRIPT_EXTENSIONS }
             .take(2)
             .toList()
         return matches.singleOrNull()?.relativeTo(packRoot)?.invariantSeparatorsPath

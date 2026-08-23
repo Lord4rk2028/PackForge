@@ -1,8 +1,6 @@
 package com.packforge.app.domain.engine
 
 import com.packforge.app.util.PackForgeLog
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 import java.util.Locale
@@ -93,32 +91,10 @@ class ResourcePathRegistry {
             return ext in BINARY_EXTS
         }
 
-        /** Aplica los renombres de ruta sobre un JSONObject YA parseado (valores exactos). */
-        fun applyRenames(node: Any, renames: Map<String, String>): Boolean {
-            if (renames.isEmpty()) return false
-            var changed = false
-            when (node) {
-                is JSONObject -> {
-                    val keys = node.keys()
-                    while (keys.hasNext()) {
-                        val key = keys.next()
-                        when (val value = node.get(key)) {
-                            is String -> renames[value]?.let { node.put(key, it); changed = true }
-                            is JSONObject, is JSONArray -> changed = applyRenames(value, renames) || changed
-                        }
-                    }
-                }
-                is JSONArray -> {
-                    for (i in 0 until node.length()) {
-                        when (val value = node.get(i)) {
-                            is String -> renames[value]?.let { node.put(i, it); changed = true }
-                            is JSONObject, is JSONArray -> changed = applyRenames(value, renames) || changed
-                        }
-                    }
-                }
-            }
-            return changed
-        }
+        /** Aplica los renombres de ruta sobre un JSONObject YA parseado (valores exactos).
+         *  Delegado al rewriter compartido: política de normalización única del pipeline. */
+        fun applyRenames(node: Any, renames: Map<String, String>): Boolean =
+            JsonValueRewriter.replaceValues(node, renames)
 
         private fun buildAlias(rel: String, hash: String): String {
             val dot = rel.lastIndexOf('.')

@@ -727,7 +727,21 @@ object BedrockCriticalFilesMerger {
                                 }
                                 PackForgeLog.d("PackForge_Recipes", "✅ Receta agregada: $identifier (${file.name})")
                             } else {
-                                PackForgeLog.w("PackForge_Recipes", "⚠️ Receta duplicada ignorada: $identifier (${file.name} vs ${seenRecipes[identifier]?.name})")
+                                // Colisión de receta: alias del identifier y conservar AMBAS
+                                // (las recetas no se referencian por id desde los items, así
+                                // que ambas variantes quedan craftables sin romper nada).
+                                val token = Integer.toHexString(bpDir.name.hashCode()).takeLast(4).padStart(4, '0')
+                                val newId = "${identifier}_pf$token"
+                                val recipeKey = json.keys().asSequence()
+                                    .firstOrNull { it.startsWith("minecraft:recipe_") }
+                                recipeKey?.let { rk ->
+                                    json.optJSONObject(rk)?.optJSONObject("description")?.put("identifier", newId)
+                                }
+                                val destFile = File(destRecipesDir, "${file.nameWithoutExtension}_pf$token.json")
+                                OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
+                                    it.write(json.toString())
+                                }
+                                PackForgeLog.d("PackForge_Recipes", "🔀 Receta duplicada con alias: $identifier → $newId")
                             }
                         } else {
                             // Sin identifier, copiar con nombre único
