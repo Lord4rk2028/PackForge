@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Environment
+import android.util.Log
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.ExportState
 import com.packforge.app.domain.model.ModpackMetadata
@@ -100,17 +101,37 @@ object ModpackExporter {
             val fileName = "${safeFileName}_v${metadata.version}.mcaddon"
             val tempFile = File(context.cacheDir, fileName)
             
-            ZipOutputStream(FileOutputStream(tempFile)).use { zos ->
-                if (mergedBP.files.size > 1) writeMergedToZip(zos, mergedBP, "modpack_BP", iconBytes)
-                if (mergedRP.files.size > 1) writeMergedToZip(zos, mergedRP, "modpack_RP", iconBytes)
+            // Verificar que tenemos contenido para empaquetar
+            val bpHasContent = mergedBP.files.size > 1 // >1 porque siempre tiene manifest.json
+            val rpHasContent = mergedRP.files.size > 1
+            
+            if (!bpHasContent && !rpHasContent) {
+                return@withContext ExportState.Error("No hay contenido válido para exportar. Los addons seleccionados pueden estar vacíos o corruptos.")
             }
-
+            
+            ZipOutputStream(FileOutputStream(tempFile)).use { zos ->
+                if (bpHasContent) writeMergedToZip(zos, mergedBP, "modpack_BP", iconBytes)
+                if (rpHasContent) writeMergedToZip(zos, mergedRP, "modpack_RP", iconBytes)
+            }
+            
+            // Validar que el archivo temporal se creó y tiene tamaño > 0
+            if (!tempFile.exists() || tempFile.length() == 0L) {
+                return@withContext ExportState.Error("El archivo de exportación se generó vacío (0 bytes). Revisa Logcat para detalles.")
+            }
+            
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val outputFile = File(downloadsDir, fileName)
             tempFile.copyTo(outputFile, overwrite = true)
             
+            // Verificación final
+            if (!outputFile.exists() || outputFile.length() == 0L) {
+                return@withContext ExportState.Error("El archivo se copió pero resultó vacío en Descargas.")
+            }
+            
+            Log.i("ModpackExporter", "Exportación exitosa: ${outputFile.absolutePath} (${outputFile.length()} bytes)")
             ExportState.Success(fileName, "Descargas/$fileName", false)
         } catch (e: Exception) {
+            Log.e("ModpackExporter", "Error crítico durante exportación", e)
             ExportState.Error("Error en fusión: ${e.message}")
         }
     }
@@ -129,7 +150,10 @@ object ModpackExporter {
                 newJson.keys().forEach { if (it != "format_version") oldJson.put(it, newJson.get(it)) }
             }
             oldJson.toString(4).toByteArray()
-        } catch (e: Exception) { existing }
+        } catch (e: Exception) {
+            Log.e("ModpackExporter", "Error al fusionar JSON en $path", e)
+            existing
+        }
     }
 
     private fun detectIfResourcePack(files: Map<String, ByteArray>): Boolean {
@@ -162,20 +186,27 @@ object ModpackExporter {
                 zos.putNextEntry(ZipEntry("$folder/$path"))
                 zos.write(bytes)
                 zos.closeEntry()
-            } catch (e: Exception) {}
+            } catch (e: Exception) {
+                Log.e("ModpackExporter", "Error al escribir entrada en zip: $path", e)
+            }
         }
         icon?.let {
             try {
                 zos.putNextEntry(ZipEntry("$folder/pack_icon.png"))
                 zos.write(it)
                 zos.closeEntry()
-            } catch (e: Exception) {}
+            } catch (e: Exception) {
+                Log.e("ModpackExporter", "Error al escribir icono en zip", e)
+            }
         }
     }
 
     private fun extractAndNormalizePacks(addon: Addon): List<MergedPack> {
         val file = File(addon.sourceFilePath)
-        if (!file.exists()) return emptyList()
+        if (!file.exists()) {
+            Log.w("ModpackExporter", "Archivo de addon no existe: ${file.absolutePath}")
+            return emptyList()
+        }
         val results = mutableListOf<MergedPack>()
         try {
             ZipInputStream(BufferedInputStream(FileInputStream(file))).use { zip ->
@@ -183,19 +214,30 @@ object ModpackExporter {
                 while (entry != null) {
                     if (entry.name.lowercase().endsWith(".mcpack")) {
                         val content = readZipToMap(zip.readBytes())
-                        val p = MergedPack(addon.name, "")
-                        p.files.putAll(normalizePaths(content))
-                        results.add(p)
+                        if (content.isNotEmpty()) {
+                            val p = MergedPack(addon.name, "")
+                            p.files.putAll(normalizePaths(content))
+                            results.add(p)
+                        } else {
+                            Log.w("ModpackExporter", "mcpack vacío o corrupto en: ${addon.name} - ${entry.name}")
+                        }
                     }
                     entry = zip.nextEntry
                 }
             }
             if (results.isEmpty()) {
-                val p = MergedPack(addon.name, "")
-                p.files.putAll(normalizePaths(readZipToMapFromUri(file)))
-                results.add(p)
+                val content = readZipToMapFromUri(file)
+                if (content.isNotEmpty()) {
+                    val p = MergedPack(addon.name, "")
+                    p.files.putAll(normalizePaths(content))
+                    results.add(p)
+                } else {
+                    Log.w("ModpackExporter", "Addon sin contenido válido: ${addon.name}")
+                }
             }
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.e("ModpackExporter", "Error al extraer addon: ${addon.name}", e)
+        }
         return results
     }
 
@@ -208,25 +250,45 @@ object ModpackExporter {
 
     private fun readZipToMapFromUri(file: File): Map<String, ByteArray> {
         val res = mutableMapOf<String, ByteArray>()
-        try { ZipInputStream(BufferedInputStream(FileInputStream(file))).use { zip ->
-            var entry = zip.nextEntry
-            while (entry != null) {
-                if (!entry.isDirectory) res[entry.name] = zip.readBytes()
-                entry = zip.nextEntry
-            }
-        } } catch (e: Exception) {}
+        try { 
+            ZipInputStream(BufferedInputStream(FileInputStream(file))).use { zip ->
+                var entry = zip.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory) {
+                        val bytes = zip.readBytes()
+                        if (bytes.isNotEmpty()) {
+                            res[entry.name] = bytes
+                        } else {
+                            Log.w("ModpackExporter", "Entrada vacía detectada: ${entry.name}")
+                        }
+                    }
+                    entry = zip.nextEntry
+                }
+            } 
+        } catch (e: Exception) {
+            Log.e("ModpackExporter", "Error al leer ZIP desde archivo: ${file.name}", e)
+        }
         return res
     }
 
     private fun readZipToMap(bytes: ByteArray): Map<String, ByteArray> {
         val res = mutableMapOf<String, ByteArray>()
-        try { ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
-            var entry = zip.nextEntry
-            while (entry != null) {
-                if (!entry.isDirectory) res[entry.name] = zip.readBytes()
-                entry = zip.nextEntry
-            }
-        } } catch (e: Exception) {}
+        try { 
+            ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+                var entry = zip.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory) {
+                        val content = zip.readBytes()
+                        if (content.isNotEmpty()) {
+                            res[entry.name] = content
+                        }
+                    }
+                    entry = zip.nextEntry
+                }
+            } 
+        } catch (e: Exception) {
+            Log.e("ModpackExporter", "Error al leer ZIP desde bytes (mcpack interno)", e)
+        }
         return res
     }
 

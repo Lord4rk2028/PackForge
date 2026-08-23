@@ -1,9 +1,12 @@
 package com.packforge.app.domain.engine
 
 import com.packforge.app.util.PackForgeLog
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.regex.Pattern
 
 /**
  * ═══════════════════════════════════════════════════════════════════════
@@ -183,7 +186,7 @@ object IdentifierRemapper {
     /** Lee `description.identifier` del JSON si alguna raíz lo declara. */
     private fun readDeclaredIdentifier(file: File): String? {
         return try {
-            val json = JSONObject(file.readText(Charsets.UTF_8))
+            val json = JSONObject(file.readText(StandardCharsets.UTF_8))
             for (key in json.keys()) {
                 if (key in DECLARING_KEYS) {
                     val id = json.getJSONObject(key)
@@ -201,20 +204,155 @@ object IdentifierRemapper {
 
     // ── REESCRITURA ───────────────────────────────────────────────────────
 
-    /** Reemplaza el id viejo por el nuevo en todos los ficheros de texto del pack. */
+    /** Reemplaza el id viejo por el nuevo SOLO en campos de identificador de JSONs.
+     * Para .lang y .mcfunction usa límites de palabra para evitar coincidencias parciales. */
     private fun rewriteIdentifiersInDir(dir: File, oldId: String, newId: String) {
+        val oldIdRegex = Regex("\\b" + Regex.escape(oldId) + "\\b")
+        
         dir.walkTopDown().forEach { file ->
             if (!file.isFile) return@forEach
             val ext = file.extension.lowercase(Locale.ROOT)
             if (ext !in setOf("json", "lang", "mcfunction", "txt")) return@forEach
             try {
-                val text = file.readText(Charsets.UTF_8)
-                if (oldId in text) {
-                    file.writeText(text.replace(oldId, newId), Charsets.UTF_8)
+                when (ext) {
+                    "json" -> rewriteIdentifiersInJson(file, oldId, newId)
+                    "lang" -> rewriteIdentifiersInLang(file, oldId, newId)
+                    else -> rewriteIdentifiersWithWordBoundary(file, oldIdRegex, newId)
                 }
             } catch (e: Exception) {
                 PackForgeLog.e(TAG, "No se pudo reescribir ${file.name}: ${e.message}")
             }
+        }
+    }
+
+    /** Reescribe IDs en JSON solo en campos conocidos de identificador (description.identifier, etc.) */
+    private fun rewriteIdentifiersInJson(file: File, oldId: String, newId: String) {
+        val text = file.readText(StandardCharsets.UTF_8)
+        val json = JSONObject(text)
+        var changed = false
+        
+        // Claves que contienen identificadores en la estructura de Bedrock
+        val idPaths = listOf(
+            "description.identifier",
+            "minecraft:entity.description.identifier",
+            "minecraft:item.description.identifier",
+            "minecraft:block.description.identifier",
+            "minecraft:client_entity.description.identifier",
+            "minecraft:recipe_shaped.key",
+            "minecraft:recipe_shapeless.key",
+            "minecraft:recipe_furnace.input",
+            "minecraft:recipe_brewing_mix.input",
+            "minecraft:recipe_potion.input",
+            "minecraft:recipe_container_mix.input",
+            "minecraft:loot_table.pools.entries.name",
+            "minecraft:trade_table.tiers.wants.item",
+            "minecraft:spawn_rules.description.identifier"
+        )
+        
+        // Buscar y reemplazar recursivamente en paths conocidos
+        idPaths.forEach { path ->
+            changed = replaceIdAtPath(json, path.split("."), oldId, newId) || changed
+        }
+        
+        // También buscar en campos "identifier" en cualquier nivel (genérico)
+        changed = replaceIdInAnyIdentifierField(json, oldId, newId) || changed
+        
+        if (changed) {
+            file.writeText(JsonDeepMerger.cleanJsonObject(json).toString(4), StandardCharsets.UTF_8)
+        }
+    }
+
+    /** Reemplaza ID en una ruta específica del JSON (ej: description.identifier) */
+    private fun replaceIdAtPath(obj: JSONObject, path: List<String>, oldId: String, newId: String): Boolean {
+        var current: Any? = obj
+        var changed = false
+        
+        for (idx in path.indices) {
+            val key = path[idx]
+            val isLast = idx == path.lastIndex
+            
+            when (current) {
+                is JSONObject -> {
+                    if (isLast) {
+                        val currentVal = current.optString(key, "")
+                        if (currentVal == oldId) {
+                            current.put(key, newId)
+                            changed = true
+                        }
+                    } else {
+                        current = current.opt(key)
+                        if (current == null) return false
+                    }
+                }
+                is JSONArray -> {
+                    // Intentar buscar en arrays (como loot tables pools)
+                    for (i in 0 until current.length()) {
+                        val item = current.opt(i)
+                        if (item is JSONObject) {
+                            val result = replaceIdAtPath(item, path.subList(idx + 1, path.size), oldId, newId)
+                            changed = changed || result
+                        }
+                    }
+                    return changed
+                }
+                else -> return false
+            }
+        }
+        return changed
+    }
+
+    /** Reemplaza cualquier campo llamado "identifier" en cualquier nivel del JSON */
+    private fun replaceIdInAnyIdentifierField(obj: Any, oldId: String, newId: String): Boolean {
+        var changed = false
+        when (obj) {
+            is JSONObject -> {
+                val keys = obj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    if (key == "identifier") {
+                        val value = obj.optString(key, "")
+                        if (value == oldId) {
+                            obj.put(key, newId)
+                            changed = true
+                        }
+                    } else {
+                        changed = replaceIdInAnyIdentifierField(obj.get(key), oldId, newId) || changed
+                    }
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until obj.length()) {
+                    changed = replaceIdInAnyIdentifierField(obj.get(i), oldId, newId) || changed
+                }
+            }
+        }
+        return changed
+    }
+
+    /** Reemplaza en .lang solo líneas completas clave=valor donde el valor o clave coincida exactamente */
+    private fun rewriteIdentifiersInLang(file: File, oldId: String, newId: String) {
+        val lines = file.readLines(StandardCharsets.UTF_8).map { line ->
+            if (line.contains("=") && !line.startsWith("#")) {
+                val parts = line.split("=", limit = 2)
+                if (parts.size == 2) {
+                    val key = parts[0].trim()
+                    val value = parts[1].trim()
+                    // Reemplazar solo si la clave o valor ES EXACTAMENTE el oldId
+                    val newKey = if (key == oldId) newId else key
+                    val newValue = if (value == oldId) newId else value
+                    "$newKey=$newValue"
+                } else line
+            } else line
+        }
+        file.writeText(lines.joinToString("\n"), StandardCharsets.UTF_8)
+    }
+
+    /** Reemplazo con límite de palabra para .mcfunction y .txt */
+    private fun rewriteIdentifiersWithWordBoundary(file: File, regex: Regex, newId: String) {
+        val text = file.readText(StandardCharsets.UTF_8)
+        val newText = regex.replace(text, newId)
+        if (newText != text) {
+            file.writeText(newText, StandardCharsets.UTF_8)
         }
     }
 

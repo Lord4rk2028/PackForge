@@ -29,11 +29,12 @@ object AddonExtractor {
     )
 
     fun shouldExtractToDisk(name: String): Boolean {
-        return name.endsWith("manifest.json")
-            || name.endsWith(".mcpack") || name.endsWith(".zip")
-            || name.startsWith("texts/")
-            || name.startsWith("scripts/")
-            || CRITICAL_PATTERNS.any { name.endsWith(it) }
+        // Una fusión real necesita el contenido completo. El filtrado anterior por
+        // "archivos críticos" hacía que el export fuese sospechosamente rápido pero
+        // eliminaba texturas, animaciones, definiciones y scripts no convencionales.
+        // La seguridad no depende de filtrar extensiones: Zip Slip y los límites de
+        // entradas/tamaño se validan antes de llegar a este punto.
+        return name.isNotBlank()
     }
 
     /**

@@ -64,4 +64,52 @@ class BedrockCompatibilityAnalyzerTest {
 
         assertTrue(findings.any { it.type == "SCRIPT_ENTRY_INVALID" && it.blocksExport })
     }
+
+    @Test
+    fun rootAndSingularScriptFolderEntriesAreAccepted() {
+        val rootEntry = behaviorPack(
+            "11111111-1111-1111-1111-111111111111",
+            entry = "main.js",
+            code = "export {}"
+        ).apply {
+            File(this, "main.js").writeText("export {}")
+        }
+        val singularFolderEntry = behaviorPack(
+            "22222222-2222-2222-2222-222222222222",
+            entry = "script/main.js",
+            code = "export {}"
+        ).apply {
+            File(this, "script/main.js").apply {
+                parentFile.mkdirs()
+                writeText("export {}")
+            }
+        }
+
+        val findings = BedrockCompatibilityAnalyzer.analyze(listOf(rootEntry.path, singularFolderEntry.path))
+
+        assertTrue(findings.none { it.type == "SCRIPT_ENTRY_INVALID" })
+    }
+
+    @Test
+    fun malformedEntryPathsResolveToThePhysicalJavaScriptFile() {
+        val scriptsPack = behaviorPack(
+            "11111111-1111-1111-1111-111111111111",
+            entry = "main.js",
+            code = "export {}"
+        )
+        val singularPack = behaviorPack(
+            "22222222-2222-2222-2222-222222222222",
+            entry = "scripts/main.js",
+            code = "export {}"
+        ).apply {
+            File(this, "scripts/main.js").delete()
+            File(this, "script/main.js").apply {
+                parentFile.mkdirs()
+                writeText("export {}")
+            }
+        }
+
+        assertEquals("scripts/main.js", BedrockCompatibilityAnalyzer.resolveScriptEntry(scriptsPack, "main.js"))
+        assertEquals("script/main.js", BedrockCompatibilityAnalyzer.resolveScriptEntry(singularPack, "scripts/main.js"))
+    }
 }

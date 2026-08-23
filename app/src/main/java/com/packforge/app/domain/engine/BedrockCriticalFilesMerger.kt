@@ -189,10 +189,18 @@ object BedrockCriticalFilesMerger {
                             val base = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
                             val merge = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
 
-                            // Fusionar cada definición de entidad (claves limpias)
+                            // Fusionar recursivamente las definiciones de entidad
                             merge.keys().forEach { entityKey ->
                                 val cleanKey = entityKey.trim()  // ⭐ QUITAR ESPACIOS
-                                if (!base.has(cleanKey)) {
+                                if (base.has(cleanKey)) {
+                                    val baseVal = base.get(cleanKey)
+                                    val mergeVal = merge.get(cleanKey)
+                                    if (baseVal is JSONObject && mergeVal is JSONObject) {
+                                        base.put(cleanKey, JsonDeepMerger.deepMerge(baseVal, mergeVal))
+                                    } else {
+                                        base.put(cleanKey, mergeVal)
+                                    }
+                                } else {
                                     base.put(cleanKey, merge.get(cleanKey))
                                 }
                             }
@@ -238,13 +246,23 @@ object BedrockCriticalFilesMerger {
                             val base = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
                             val merge = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
 
-                            // Fusionar render_controllers
+                            // Fusionar render_controllers con deepMerge si ya existen
                             merge.optJSONObject("render_controllers")?.let { rcData ->
                                 val baseRc = base.optJSONObject("render_controllers")
                                     ?: JSONObject().also { base.put("render_controllers", it) }
                                 rcData.keys().forEach { key ->
                                     val cleanKey = key.trim()  // ⭐ QUITAR ESPACIOS
-                                    if (!baseRc.has(cleanKey)) baseRc.put(cleanKey, rcData.get(cleanKey))
+                                    if (baseRc.has(cleanKey)) {
+                                        val baseVal = baseRc.get(cleanKey)
+                                        val mergeVal = rcData.get(cleanKey)
+                                        if (baseVal is JSONObject && mergeVal is JSONObject) {
+                                            baseRc.put(cleanKey, JsonDeepMerger.deepMerge(baseVal, mergeVal))
+                                        } else {
+                                            baseRc.put(cleanKey, mergeVal)
+                                        }
+                                    } else {
+                                        baseRc.put(cleanKey, rcData.get(cleanKey))
+                                    }
                                 }
                             }
 
@@ -292,14 +310,22 @@ object BedrockCriticalFilesMerger {
                                 val base = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
                                 val merge = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
 
-                                // Fusionar animations o animation_controllers
+                                // Fusionar animations o animation_controllers de manera recursiva profunda
                                 listOf("animations", "animation_controllers").forEach { key ->
                                     merge.optJSONObject(key)?.let { data ->
                                         val baseData = base.optJSONObject(key)
                                             ?: JSONObject().also { base.put(key, it) }
                                         data.keys().forEach { animKey ->
                                             val cleanAnimKey = animKey.trim()  // ⭐ QUITAR ESPACIOS
-                                            if (!baseData.has(cleanAnimKey)) {
+                                            if (baseData.has(cleanAnimKey)) {
+                                                val baseVal = baseData.get(cleanAnimKey)
+                                                val mergeVal = data.get(cleanAnimKey)
+                                                if (baseVal is JSONObject && mergeVal is JSONObject) {
+                                                    baseData.put(cleanAnimKey, JsonDeepMerger.deepMerge(baseVal, mergeVal))
+                                                } else {
+                                                    baseData.put(cleanAnimKey, mergeVal)
+                                                }
+                                            } else {
                                                 baseData.put(cleanAnimKey, data.get(cleanAnimKey))
                                             }
                                         }
@@ -668,6 +694,180 @@ object BedrockCriticalFilesMerger {
         }
 
         PackForgeLog.d("PackForge_Materials", "Material instances verificados: $addedCount texturas agregadas, ${missingTextures.size} faltantes")
+    }
+
+    // =====================================================================
+    // 12. RECIPES - Fusión semántica de recetas de crafting/hornos/alquimia
+    //     Bedrock usa archivos individuales por receta en recipes/
+    //     Estructura: { "format_version": 1, "minecraft:recipe_shaped": { "description": { "identifier": "..." }, "tags": [...], "pattern": [...], "key": {...}, "result": {...} } }
+    // =====================================================================
+    fun mergeRecipes(bpDirs: List<File>, destDir: File) {
+        val destRecipesDir = File(destDir, "recipes")
+        if (!destRecipesDir.exists()) destRecipesDir.mkdirs()
+
+        val seenRecipes = mutableMapOf<String, File>() // identifier -> archivo origen
+
+        bpDirs.forEach { bpDir ->
+            val recipesDir = File(bpDir, "recipes")
+            if (recipesDir.exists()) {
+                recipesDir.listFiles()?.filter { it.extension == "json" }?.forEach { file ->
+                    try {
+                        val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+                        // Extraer el identifier de la receta
+                        val recipeKey = json.keys().asSequence().firstOrNull { it.startsWith("minecraft:recipe_") }
+                        val identifier = recipeKey?.let { json.getJSONObject(it).optJSONObject("description")?.optString("identifier") }
+                            ?.takeIf { it.isNotBlank() }
+                        
+                        if (identifier != null) {
+                            if (!seenRecipes.containsKey(identifier)) {
+                                seenRecipes[identifier] = file
+                                val destFile = File(destRecipesDir, file.name)
+                                OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
+                                    it.write(json.toString())
+                                }
+                                PackForgeLog.d("PackForge_Recipes", "✅ Receta agregada: $identifier (${file.name})")
+                            } else {
+                                PackForgeLog.w("PackForge_Recipes", "⚠️ Receta duplicada ignorada: $identifier (${file.name} vs ${seenRecipes[identifier]?.name})")
+                            }
+                        } else {
+                            // Sin identifier, copiar con nombre único
+                            val destFile = File(destRecipesDir, "${file.nameWithoutExtension}_${bpDir.name.hashCode().toString(16)}.json")
+                            OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
+                                it.write(json.toString())
+                            }
+                        }
+                    } catch (e: Exception) {
+                        PackForgeLog.e("PackForge_Recipes", "Error procesando receta ${file.name}: ${e.message}")
+                    }
+                }
+            }
+        }
+        PackForgeLog.d("PackForge_Recipes", "Recetas fusionadas: ${seenRecipes.size} únicas")
+    }
+
+    // =====================================================================
+    // 13. LOOT TABLES - Fusión semántica de tablas de botín
+    //     Estructura: { "pools": [ { "rolls": 1, "entries": [ { "type": "item", "name": "minecraft:diamond", "weight": 1, "functions": [...] } ] } ] }
+    //     Fusiona pools por nombre de tabla (archivo), deduplicando entradas por item/identifier
+    // =====================================================================
+    fun mergeLootTables(bpDirs: List<File>, destDir: File) {
+        val destLootDir = File(destDir, "loot_tables")
+        if (!destLootDir.exists()) destLootDir.mkdirs()
+
+        bpDirs.forEach { bpDir ->
+            val lootDir = File(bpDir, "loot_tables")
+            if (lootDir.exists()) {
+                lootDir.walkTopDown().filter { it.isFile && it.extension == "json" }.forEach { file ->
+                    val relativePath = file.relativeTo(lootDir).path
+                    val destFile = File(destLootDir, relativePath)
+                    destFile.parentFile?.mkdirs()
+
+                    try {
+                        val newJson = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+                        
+                        if (destFile.exists()) {
+                            // Fusionar con loot table existente
+                            val baseJson = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
+                            val merged = mergeLootTableObjects(baseJson, newJson)
+                            OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
+                                it.write(merged.toString())
+                            }
+                            PackForgeLog.d("PackForge_Loot", "🔀 Loot table fusionada: $relativePath")
+                        } else {
+                            // Nueva loot table
+                            OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
+                                it.write(newJson.toString())
+                            }
+                            PackForgeLog.d("PackForge_Loot", "✅ Loot table agregada: $relativePath")
+                        }
+                    } catch (e: Exception) {
+                        PackForgeLog.e("PackForge_Loot", "Error fusionando loot table $relativePath: ${e.message}")
+                        file.copyTo(destFile, overwrite = true)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Fusiona dos objetos de loot table combinando sus pools y deduplicando entradas */
+    private fun mergeLootTableObjects(base: JSONObject, merge: JSONObject): JSONObject {
+        val result = JSONObject(base.toString())
+        
+        val basePools = result.optJSONArray("pools") ?: JSONArray().also { result.put("pools", it) }
+        val mergePools = merge.optJSONArray("pools") ?: return result
+        
+        // Para cada pool entrante, buscar pool existente con mismo nombre o combinar
+        for (i in 0 until mergePools.length()) {
+            val mergePool = mergePools.optJSONObject(i) ?: continue
+            val poolName = mergePool.optString("name", "pool_$i")
+            
+            // Buscar pool base con mismo nombre
+            var basePoolIndex = -1
+            for (j in 0 until basePools.length()) {
+                if (basePools.optJSONObject(j)?.optString("name", "pool_$j") == poolName) {
+                    basePoolIndex = j
+                    break
+                }
+            }
+            
+            if (basePoolIndex >= 0) {
+                // Fusionar entries del pool
+                val basePool = basePools.getJSONObject(basePoolIndex)
+                val mergedPool = mergeLootPools(basePool, mergePool)
+                basePools.put(basePoolIndex, mergedPool)
+            } else {
+                // Pool nuevo
+                basePools.put(mergePool)
+            }
+        }
+        
+        return result
+    }
+
+    /** Fusiona dos pools de loot table combinando entries y deduplicando por item/name */
+    private fun mergeLootPools(base: JSONObject, merge: JSONObject): JSONObject {
+        val result = JSONObject(base.toString())
+        
+        val baseEntries = result.optJSONArray("entries") ?: JSONArray().also { result.put("entries", it) }
+        val mergeEntries = merge.optJSONArray("entries") ?: return result
+        
+        val seenEntries = mutableSetOf<String>()
+        
+        // Registrar entries existentes
+        for (i in 0 until baseEntries.length()) {
+            val entry = baseEntries.optJSONObject(i) ?: continue
+            val key = entry.optString("name", "") 
+                .ifEmpty { entry.optString("type", "") }
+                .ifEmpty { entry.toString() }
+            seenEntries.add(key)
+        }
+        
+        // Agregar entries nuevos no duplicados
+        for (i in 0 until mergeEntries.length()) {
+            val entry = mergeEntries.optJSONObject(i) ?: continue
+            val key = entry.optString("name", "")
+                .ifEmpty { entry.optString("type", "") }
+                .ifEmpty { entry.toString() }
+            if (!seenEntries.contains(key)) {
+                baseEntries.put(entry)
+                seenEntries.add(key)
+            } else {
+                PackForgeLog.d("PackForge_Loot", "  Entrada loot duplicada ignorada: $key")
+            }
+        }
+        
+        // Mantener otros campos del pool merge (rolls, conditions, etc.) si son más generosos
+        merge.keys().forEach { key ->
+            if (key != "entries" && key != "name") {
+                val mergeVal = merge.get(key)
+                val baseVal = result.opt(key)
+                if (baseVal == null || (mergeVal is Int && baseVal is Int && mergeVal > baseVal)) {
+                    result.put(key, mergeVal)
+                }
+            }
+        }
+        
+        return result
     }
 
     // =====================================================================

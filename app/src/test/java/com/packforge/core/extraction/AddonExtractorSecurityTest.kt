@@ -138,7 +138,9 @@ class AddonExtractorSecurityTest {
                 ZipEntrySpec("manifest.json", "{\"format_version\":2}".toByteArray()),
                 ZipEntrySpec("BP/entities/cool.entity.json", "{}".toByteArray()),
                 ZipEntrySpec("BP/textures/a.png", ByteArray(4)),
-                ZipEntrySpec("texts/es_ES.lang", "x=1".toByteArray())
+                ZipEntrySpec("texts/es_ES.lang", "x=1".toByteArray()),
+                ZipEntrySpec("script/main.js", "export {}".toByteArray()),
+                ZipEntrySpec("main.js", "export {}".toByteArray())
             )
         )
         val dest = File(root, "out")
@@ -148,6 +150,9 @@ class AddonExtractorSecurityTest {
         assertEquals(dest.absolutePath, result)
         assertTrue(File(dest, "manifest.json").exists())
         assertTrue(File(dest, "BP/entities/cool.entity.json").exists())
+        assertTrue(File(dest, "BP/textures/a.png").exists())
         assertTrue(File(dest, "texts/es_ES.lang").exists())
+        assertTrue(File(dest, "script/main.js").exists())
+        assertTrue(File(dest, "main.js").exists())
     }
 }

@@ -49,7 +49,7 @@ object BedrockCompatibilityAnalyzer {
             if (!manifestFile.isFile) return@mapIndexedNotNull null
             try {
                 val manifest = JSONObject(manifestFile.readText(Charsets.UTF_8))
-                val uuid = manifest.optJSONObject("header")?.optString("uuid", "")
+                val uuid = manifest.optJSONObject("header")?.optString("uuid", "").orEmpty()
                 ScriptPack(uuid.ifBlank { "behavior-pack-${index + 1}" }, directory, manifest)
             } catch (_: Exception) {
                 null
@@ -62,23 +62,19 @@ object BedrockCompatibilityAnalyzer {
         val moduleTracks = mutableMapOf<String, MutableSet<String>>()
 
         packs.forEach { pack ->
-            val scriptsDir = File(pack.directory, "scripts")
             val scriptModules = pack.manifest.optJSONArray("modules")
             for (i in 0 until (scriptModules?.length() ?: 0)) {
                 val module = scriptModules?.optJSONObject(i) ?: continue
                 if (module.optString("type") != "script") continue
-                val entry = module.optString("entry", "").replace('\\', '/')
-                val entryFile = File(pack.directory, entry)
-                val validEntry = entry.isNotBlank() && entry.startsWith("scripts/") &&
-                    entryFile.canonicalFile.path.startsWith(scriptsDir.canonicalFile.path + File.separator) &&
-                    entryFile.isFile
-                if (!validEntry) {
+                val entry = module.optString("entry", "")
+                val resolvedEntry = resolveScriptEntry(pack.directory, entry)
+                if (resolvedEntry == null) {
                     findings += Finding(
                         ConflictSeverity.CRITICAL,
                         "SCRIPT_ENTRY_INVALID",
                         "manifest.json",
                         pack.id,
-                        description = "El módulo script declara '$entry', pero el entry no existe dentro de scripts/.",
+                        description = "El módulo script declara '$entry', pero no se encontró un archivo JavaScript equivalente dentro del Behavior Pack.",
                         blocksExport = true
                     )
                 }
@@ -104,8 +100,7 @@ object BedrockCompatibilityAnalyzer {
                 }
             }
 
-            if (!scriptsDir.isDirectory) return@forEach
-            scriptsDir.walkTopDown().filter { it.isFile && it.extension.equals("js", true) }.forEach { script ->
+            pack.directory.walkTopDown().filter { it.isFile && it.extension.equals("js", true) }.forEach { script ->
                 val relativeFile = script.relativeTo(pack.directory).invariantSeparatorsPath
                 val code = try { script.readText(Charsets.UTF_8) } catch (_: Exception) { return@forEach }
                 customComponentPattern.findAll(code).forEach { match ->
@@ -140,7 +135,7 @@ object BedrockCompatibilityAnalyzer {
                 }
                 localImportPattern.findAll(code).forEach { match ->
                     val importPath = match.groupValues[1]
-                    if (!localModuleExists(scriptsDir, script.parentFile, importPath)) {
+                    if (!localModuleExists(pack.directory, script.parentFile!!, importPath)) {
                         findings += Finding(
                             ConflictSeverity.CRITICAL,
                             "SCRIPT_LOCAL_IMPORT_MISSING",
@@ -188,9 +183,49 @@ object BedrockCompatibilityAnalyzer {
         return findings.distinctBy { listOf(it.type, it.file, it.source, it.target, it.description) }
     }
 
-    private fun localModuleExists(scriptsRoot: File, parent: File, importPath: String): Boolean {
+    /**
+     * Finds an entry point even in common, incorrectly packaged addons. Some
+     * creators declare main.js while placing it in scripts/main.js (or script/).
+     * The returned value is always the physical path relative to the BP root.
+     */
+    fun resolveScriptEntry(packRoot: File, declaredEntry: String): String? {
+        val entry = declaredEntry.replace('\\', '/').removePrefix("./")
+        if (entry.isBlank() || entry.startsWith('/')) return null
+
+        val candidates = linkedSetOf(entry).apply {
+            when {
+                '/' !in entry -> {
+                    add("scripts/$entry")
+                    add("script/$entry")
+                }
+                entry.startsWith("scripts/") -> {
+                    add(entry.removePrefix("scripts/"))
+                    add("script/${entry.removePrefix("scripts/")}")
+                }
+                entry.startsWith("script/") -> {
+                    add(entry.removePrefix("script/"))
+                    add("scripts/${entry.removePrefix("script/")}")
+                }
+            }
+        }
+        val rootPath = packRoot.canonicalFile.path + File.separator
+        candidates.firstOrNull { candidate ->
+            val file = File(packRoot, candidate)
+            file.canonicalFile.path.startsWith(rootPath) && file.isFile
+        }?.let { return it }
+
+        // Final fallback: only accept a filename match when it is unambiguous.
+        val fileName = File(entry).name
+        val matches = packRoot.walkTopDown()
+            .filter { it.isFile && it.name.equals(fileName, ignoreCase = true) && it.extension.equals("js", true) }
+            .take(2)
+            .toList()
+        return matches.singleOrNull()?.relativeTo(packRoot)?.invariantSeparatorsPath
+    }
+
+    private fun localModuleExists(packRoot: File, parent: File, importPath: String): Boolean {
         val candidate = File(parent, importPath)
-        val root = scriptsRoot.canonicalFile.path + File.separator
+        val root = packRoot.canonicalFile.path + File.separator
         val validLocation = candidate.canonicalFile.path.startsWith(root)
         if (!validLocation) return false
         return candidate.isFile || File("${candidate.path}.js").isFile || File(candidate, "index.js").isFile
