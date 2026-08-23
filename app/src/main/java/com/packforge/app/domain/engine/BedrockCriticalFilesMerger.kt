@@ -871,6 +871,242 @@ object BedrockCriticalFilesMerger {
     }
 
     // =====================================================================
+    // 14. PLAYER.ENTITY.JSON - Fusión profunda del jugador entre addons.
+    //     Base = el addon con manifest de versión MÁS ALTA; los demás se
+    //     fusionan en orden ascendente para que el de mayor versión gane las
+    //     colisiones escalares (deepMerge: el último en fusionar gana).
+    //     Colisiones numéricas bajo "components" se registran como conflictos
+    //     HIGH para revisión manual (ej. dos addons cambiando minecraft:movement).
+    // =====================================================================
+    fun mergePlayerEntity(bpDirs: List<File>, mergedBpDir: File) {
+        data class Candidate(val json: JSONObject, val version: List<Int>, val ownerName: String)
+
+        val candidates = mutableListOf<Candidate>()
+        bpDirs.forEach { bpDir ->
+            val playerFile = sequenceOf(
+                File(bpDir, "player.entity.json"),
+                File(bpDir, "entities/player.entity.json")
+            ).firstOrNull { it.exists() } ?: return@forEach
+            try {
+                val json = JsonDeepMerger.cleanJsonObject(JSONObject(playerFile.readText(Charsets.UTF_8)))
+                val id = json.optJSONObject("minecraft:entity")?.optJSONObject("description")
+                    ?.optString("identifier").orEmpty()
+                if (id != "minecraft:player") return@forEach // solo overrides reales del jugador
+                val manifest = File(bpDir, "manifest.json")
+                var version = listOf(1, 0, 0)
+                if (manifest.exists()) {
+                    try {
+                        val mev = JSONObject(manifest.readText(Charsets.UTF_8))
+                            .optJSONObject("header")?.optJSONArray("version")
+                        if (mev != null && mev.length() >= 3) {
+                            version = (0 until mev.length()).map { mev.optInt(it, 0) }
+                        }
+                    } catch (_: Exception) {}
+                }
+                candidates.add(Candidate(json, version, bpDir.name))
+            } catch (e: Exception) {
+                PackForgeLog.e("PackForge_Player", "Error leyendo ${playerFile.name}: ${e.message}")
+            }
+        }
+
+        if (candidates.isEmpty()) return
+
+        // Orden ascendente por versión: el más alto se procesa al final (gana).
+        val ordered = candidates.sortedBy { c ->
+            c.version.getOrElse(0) { 0 } * 1_000_000 +
+                c.version.getOrElse(1) { 0 } * 1_000 +
+                c.version.getOrElse(2) { 0 }
+        }
+        var merged = JSONObject(ordered.first().json.toString())
+        val contributors = mutableListOf(ordered.first().ownerName)
+
+        for (i in 1 until ordered.size) {
+            val incoming = ordered[i]
+            contributors.add(incoming.ownerName)
+            registerNumericConflicts(merged, incoming.json, "components", incoming.ownerName)
+            merged = JsonDeepMerger.deepMerge(merged, incoming.json)
+        }
+
+        val destFile = File(mergedBpDir, "player.entity.json")
+        OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
+            it.write(merged.toString())
+        }
+        ConflictRegistry.logConflict(
+            severity = com.packforge.app.domain.model.ConflictSeverity.MEDIUM,
+            type = "PLAYER_JSON_MERGED",
+            file = "player.entity.json",
+            addon1 = contributors.firstOrNull() ?: "?",
+            addon2 = contributors.lastOrNull() ?: "?",
+            description = "Fusión profunda de player.entity.json entre ${contributors.size} addons " +
+                "(${contributors.joinToString()}); base por versión más alta."
+        )
+        PackForgeLog.d("PackForge_Player", "✅ player.entity.json fusionado desde ${candidates.size} addons")
+    }
+
+    /** Registra conflictos HIGH cuando ambos lados definen números distintos en la misma hoja. */
+    private fun registerNumericConflicts(base: Any, incoming: Any, path: String, owner: String) {
+        when {
+            base is JSONObject && incoming is JSONObject -> {
+                incoming.keys().forEach { key ->
+                    base.opt(key)?.let { registerNumericConflicts(it, incoming.get(key), "$path.$key", owner) }
+                }
+            }
+            base is JSONArray && incoming is JSONArray -> Unit // arrays: deepMerge concatena
+            base is Number && incoming is Number -> {
+                if (base.toDouble() != incoming.toDouble()) {
+                    ConflictRegistry.logConflict(
+                        severity = com.packforge.app.domain.model.ConflictSeverity.HIGH,
+                        type = "PLAYER_NUMERIC_CONFLICT",
+                        file = "player.entity.json",
+                        addon1 = "base(mayorVersión)",
+                        addon2 = owner,
+                        description = "'$path': ${base} → ${incoming}. Revisa manualmente si el comportamiento no es el esperado."
+                    )
+                }
+            }
+        }
+    }
+
+    // =====================================================================
+    // 15. SOUND_DEFINITIONS.JSON - Fusiona definiciones de sonido del RP.
+    //     Clave duplicada con contenido distinto → la clave del addon posterior
+    //     se renombra a `<clave>_pf<hex4>` y SE DEVUELVE el mapa de renombres
+    //     para actualizar referencias en sounds.json / entidades (applySoundKeyRenames).
+    // =====================================================================
+    fun mergeSoundDefinitions(rpDirs: List<File>, destDir: File): Map<String, String> {
+        val renames = LinkedHashMap<String, String>()
+        val mergedDefs = JSONObject()
+        var formatVersion = 1
+
+        rpDirs.forEach { rpDir ->
+            val file = File(rpDir, "sound_definitions.json")
+            if (!file.exists()) return@forEach
+            try {
+                val token = Integer.toHexString(rpDir.name.hashCode()).takeLast(4).padStart(4, '0')
+                val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+                formatVersion = maxOf(formatVersion, json.optInt("format_version", 1))
+                json.keys().forEach { key ->
+                    if (key == "format_version") return@forEach
+                    val value = json.get(key)
+                    if (!mergedDefs.has(key)) {
+                        mergedDefs.put(key, value)
+                    } else {
+                        // Duplicada: si es idéntica, dedupe; si difiere, alias.
+                        if (mergedDefs.get(key).toString() != value.toString()) {
+                            var newKey = "${key}_pf$token"
+                            while (mergedDefs.has(newKey)) newKey += "_x"
+                            mergedDefs.put(newKey, value)
+                            renames[key] = newKey
+                            PackForgeLog.d("PackForge_SoundDef", "🔊 Definición duplicada '$key' → '$newKey'")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                PackForgeLog.e("PackForge_SoundDef", "Error en ${rpDir.name}: ${e.message}")
+            }
+        }
+
+        if (mergedDefs.length() == 0) return renames
+
+        val output = JSONObject().apply {
+            put("format_version", formatVersion)
+            mergedDefs.keys().forEach { put(it, mergedDefs.get(it)) }
+        }
+        val destFile = File(destDir, "sound_definitions.json")
+        OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use { it.write(output.toString()) }
+        PackForgeLog.d("PackForge_SoundDef", "✅ sound_definitions.json: ${mergedDefs.length()} definiciones, ${renames.size} aliases")
+        return renames
+    }
+
+    /**
+     * Aplica los renombres de claves de sound_definitions sobre TODOS los JSON
+     * del pack fusionado (sounds.json del RP y entidades/eventos del BP).
+     * Reemplazo por VALOR EXACTO: seguro contra subcadenas.
+     */
+    fun applySoundKeyRenames(mergedRpDir: File, mergedBpDir: File, renames: Map<String, String>) {
+        if (renames.isEmpty()) return
+        listOf(mergedRpDir, mergedBpDir).forEach { root ->
+            if (!root.isDirectory) return@forEach
+            root.walkTopDown().filter { it.isFile && it.extension.equals("json", true) }.forEach { file ->
+                try {
+                    val text = file.readText(Charsets.UTF_8)
+                    if (renames.keys.any { text.contains("\"$it\"") }) {
+                        val json = JSONObject(text)
+                        if (ResourcePathRegistry.applyRenames(json, renames)) {
+                            OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8).use {
+                                it.write(json.toString())
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+        PackForgeLog.d("PackForge_SoundDef", "🔁 Referencias de sonido actualizadas: ${renames.size} claves")
+    }
+
+    // =====================================================================
+    // 16. PARTICLE EFFECTS - particles/*.json declaran description.identifier.
+    //     Colisión de identifier → se renombra (y también el archivo físico,
+    //     inocuo porque el binding es por identifier) y se actualiza cualquier
+    //     referencia exacta al identificador viejo dentro del RP/BP fusionados.
+    // =====================================================================
+    fun mergeParticles(rpDirs: List<File>, mergedRpDir: File, mergedBpDir: File) {
+        val seen = mutableMapOf<String, String>() // identifier → token usado
+        var added = 0
+
+        rpDirs.forEach { rpDir ->
+            val particlesDir = File(rpDir, "particles")
+            if (!particlesDir.isDirectory) return@forEach
+            val token = Integer.toHexString(rpDir.name.hashCode()).takeLast(4).padStart(4, '0')
+
+            particlesDir.listFiles()?.filter { it.extension.equals("json", true) }?.forEach { file ->
+                try {
+                    val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+                    val desc = json.optJSONObject("particle_effect")?.optJSONObject("description")
+                    val id = desc?.optString("identifier").orEmpty()
+
+                    var finalId = id
+                    if (id.isNotEmpty() && !id.startsWith("minecraft:")) {
+                        if (seen.containsKey(id)) {
+                            finalId = "${id}_pf$token"
+                            if (desc != null) desc.put("identifier", finalId)
+                            rewriteParticleRefs(listOf(mergedRpDir, mergedBpDir), id, finalId)
+                            PackForgeLog.d("PackForge_Particles", "✨ Partícula duplicada '$id' → '$finalId'")
+                        } else {
+                            seen[id] = token
+                        }
+                    }
+
+                    val destFile = File(File(mergedRpDir, "particles"), file.name)
+                    destFile.parentFile?.mkdirs()
+                    OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use { it.write(json.toString()) }
+                    added++
+                } catch (e: Exception) {
+                    PackForgeLog.e("PackForge_Particles", "Error en ${file.name}: ${e.message}")
+                }
+            }
+        }
+        if (added > 0) PackForgeLog.d("PackForge_Particles", "✅ $added efectos de partículas fusionados")
+    }
+
+    private fun rewriteParticleRefs(roots: List<File>, oldId: String, newId: String) {
+        roots.forEach { root ->
+            if (!root.isDirectory) return@forEach
+            root.walkTopDown().filter { it.isFile && it.extension.equals("json", true) }.forEach { file ->
+                try {
+                    val text = file.readText(Charsets.UTF_8)
+                    if (text.contains("\"$oldId\"")) {
+                        val json = JSONObject(text)
+                        val probe = JSONObject(json.toString())
+                        ResourcePathRegistry.applyRenames(probe, mapOf(oldId to newId))
+                        OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8).use { it.write(probe.toString()) }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // =====================================================================
     // VALIDADOR POST-FUSIÓN: verifica que los archivos JSON críticos no
     // tengan espacios al final en claves (causa de bloques "?" y "desconocido")
     // =====================================================================

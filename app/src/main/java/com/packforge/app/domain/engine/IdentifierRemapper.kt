@@ -47,6 +47,8 @@ object IdentifierRemapper {
         "minecraft:item",
         "minecraft:block",
         "minecraft:client_entity",
+        "minecraft:attachable",
+        "particle_effect",
         "minecraft:recipe_shaped",
         "minecraft:recipe_shapeless",
         "minecraft:recipe_furnace",
@@ -204,15 +206,23 @@ object IdentifierRemapper {
 
     // ── REESCRITURA ───────────────────────────────────────────────────────
 
-    /** Reemplaza el id viejo por el nuevo SOLO en campos de identificador de JSONs.
-     * Para .lang y .mcfunction usa límites de palabra para evitar coincidencias parciales. */
+    /**
+     * Reescribe el id viejo por el nuevo en todo el pack del addon:
+     *  - JSON: barrido recursivo de TODOS los valores string; se reemplaza solo
+     *    cuando el valor ES EXACTAMENTE el id (cubre description.identifier,
+     *    minecraft:ingredient, result.item, spawn_egg, rideable, leashable,
+     *    loot entries, familias, eventos y cualquier referencia cruzada).
+     *  - .lang: reemplazo exacto por clave/valor.
+     *  - .js/.ts/.mcfunction/.txt: regex con límites de palabra (evita que
+     *    "mi_mod:espada" toque "mi_mod:espada_spawn_egg").
+     */
     private fun rewriteIdentifiersInDir(dir: File, oldId: String, newId: String) {
         val oldIdRegex = Regex("\\b" + Regex.escape(oldId) + "\\b")
-        
+
         dir.walkTopDown().forEach { file ->
             if (!file.isFile) return@forEach
             val ext = file.extension.lowercase(Locale.ROOT)
-            if (ext !in setOf("json", "lang", "mcfunction", "txt")) return@forEach
+            if (ext !in setOf("json", "lang", "mcfunction", "txt", "js", "mjs", "ts")) return@forEach
             try {
                 when (ext) {
                     "json" -> rewriteIdentifiersInJson(file, oldId, newId)
@@ -225,104 +235,42 @@ object IdentifierRemapper {
         }
     }
 
-    /** Reescribe IDs en JSON solo en campos conocidos de identificador (description.identifier, etc.) */
+    /** Barrido profundo: sustituye TODO valor string igual al id viejo en el JSON completo. */
     private fun rewriteIdentifiersInJson(file: File, oldId: String, newId: String) {
         val text = file.readText(StandardCharsets.UTF_8)
+        // Fast-path: si el id no aparece como texto, no parsear nada.
+        if (!text.contains(oldId)) return
         val json = JSONObject(text)
-        var changed = false
-        
-        // Claves que contienen identificadores en la estructura de Bedrock
-        val idPaths = listOf(
-            "description.identifier",
-            "minecraft:entity.description.identifier",
-            "minecraft:item.description.identifier",
-            "minecraft:block.description.identifier",
-            "minecraft:client_entity.description.identifier",
-            "minecraft:recipe_shaped.key",
-            "minecraft:recipe_shapeless.key",
-            "minecraft:recipe_furnace.input",
-            "minecraft:recipe_brewing_mix.input",
-            "minecraft:recipe_potion.input",
-            "minecraft:recipe_container_mix.input",
-            "minecraft:loot_table.pools.entries.name",
-            "minecraft:trade_table.tiers.wants.item",
-            "minecraft:spawn_rules.description.identifier"
-        )
-        
-        // Buscar y reemplazar recursivamente en paths conocidos
-        idPaths.forEach { path ->
-            changed = replaceIdAtPath(json, path.split("."), oldId, newId) || changed
-        }
-        
-        // También buscar en campos "identifier" en cualquier nivel (genérico)
-        changed = replaceIdInAnyIdentifierField(json, oldId, newId) || changed
-        
-        if (changed) {
-            file.writeText(JsonDeepMerger.cleanJsonObject(json).toString(4), StandardCharsets.UTF_8)
+        if (replaceValuesDeep(json, oldId, newId)) {
+            file.writeText(json.toString(4), StandardCharsets.UTF_8)
         }
     }
 
-    /** Reemplaza ID en una ruta específica del JSON (ej: description.identifier) */
-    private fun replaceIdAtPath(obj: JSONObject, path: List<String>, oldId: String, newId: String): Boolean {
-        var current: Any? = obj
+    private fun replaceValuesDeep(node: Any, oldId: String, newId: String): Boolean {
         var changed = false
-        
-        for (idx in path.indices) {
-            val key = path[idx]
-            val isLast = idx == path.lastIndex
-            
-            when (current) {
-                is JSONObject -> {
-                    if (isLast) {
-                        val currentVal = current.optString(key, "")
-                        if (currentVal == oldId) {
-                            current.put(key, newId)
-                            changed = true
-                        }
-                    } else {
-                        current = current.opt(key)
-                        if (current == null) return false
-                    }
-                }
-                is JSONArray -> {
-                    // Intentar buscar en arrays (como loot tables pools)
-                    for (i in 0 until current.length()) {
-                        val item = current.opt(i)
-                        if (item is JSONObject) {
-                            val result = replaceIdAtPath(item, path.subList(idx + 1, path.size), oldId, newId)
-                            changed = changed || result
-                        }
-                    }
-                    return changed
-                }
-                else -> return false
-            }
-        }
-        return changed
-    }
-
-    /** Reemplaza cualquier campo llamado "identifier" en cualquier nivel del JSON */
-    private fun replaceIdInAnyIdentifierField(obj: Any, oldId: String, newId: String): Boolean {
-        var changed = false
-        when (obj) {
+        when (node) {
             is JSONObject -> {
-                val keys = obj.keys()
+                val keys = node.keys()
                 while (keys.hasNext()) {
                     val key = keys.next()
-                    if (key == "identifier") {
-                        val value = obj.optString(key, "")
-                        if (value == oldId) {
-                            obj.put(key, newId)
+                    when (val value = node.get(key)) {
+                        is String -> if (value == oldId) {
+                            node.put(key, newId)
                             changed = true
                         }
-                    } else {
-                        changed = replaceIdInAnyIdentifierField(obj.get(key), oldId, newId) || changed
+                        is JSONObject, is JSONArray -> changed = replaceValuesDeep(value, oldId, newId) || changed
                     }
                 }
             }
             is JSONArray -> {
-                for (i in 0 until obj.length()) {
-                    changed = replaceIdInAnyIdentifierField(obj.get(i), oldId, newId) || changed
+                for (i in 0 until node.length()) {
+                    when (val value = node.get(i)) {
+                        is String -> if (value == oldId) {
+                            node.put(i, newId)
+                            changed = true
+                        }
+                        is JSONObject, is JSONArray -> changed = replaceValuesDeep(value, oldId, newId) || changed
+                    }
                 }
             }
         }
@@ -347,7 +295,7 @@ object IdentifierRemapper {
         file.writeText(lines.joinToString("\n"), StandardCharsets.UTF_8)
     }
 
-    /** Reemplazo con límite de palabra para .mcfunction y .txt */
+    /** Reemplazo con límite de palabra para .js/.ts/.mcfunction/.txt */
     private fun rewriteIdentifiersWithWordBoundary(file: File, regex: Regex, newId: String) {
         val text = file.readText(StandardCharsets.UTF_8)
         val newText = regex.replace(text, newId)

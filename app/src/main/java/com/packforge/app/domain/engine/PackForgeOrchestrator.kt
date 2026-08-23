@@ -37,7 +37,8 @@ object PackForgeOrchestrator {
         val rpUuid: String?,
         val totalJsonsMerged: Int,
         val errorMessage: String? = null,
-        val validationResult: PackForgeValidator.ValidationResult? = null
+        val validationResult: PackForgeValidator.ValidationResult? = null,
+        val reportPath: String? = null
     )
 
     /**
@@ -69,6 +70,10 @@ object PackForgeOrchestrator {
         val tInicio = System.currentTimeMillis()
         val extractedDirs = mutableListOf<String>()
         val tempDir = File(outputDir, "temp_merge")
+        // Registro compartido BP/RP: garantiza aliases únicos en TODO el paquete.
+        val resourceRegistry = ResourcePathRegistry()
+        // Renombres de IDs para el reporte final.
+        var idRenames: List<IdentifierRemapper.RemapEntry> = emptyList()
         
         // Clear previous conflicts
         JsonDeepMerger.clearConflicts()
@@ -208,7 +213,7 @@ object PackForgeOrchestrator {
             // ═══ RENAMESPACER: hacer compatibles addons que definen el MISMO
             // identificador (entity/item/recipe). Renombra los que colisionan y
             // reescribe sus referencias ANTES de fusionar para que coexistan.
-            IdentifierRemapper.run(
+            idRenames = IdentifierRemapper.run(
                 behaviorDirs = bpDirs.map { File(it) },
                 resourceDirs = rpDirs.map { File(it) }
             )
@@ -218,7 +223,7 @@ object PackForgeOrchestrator {
             val bpJsonCount = if (bpDirs.isNotEmpty()) {
                 progressCallback?.onProgress("Fusionando Behavior Packs...")
                 PackForgeLog.d("PackForge_Debug", "Iniciando fusión de ${bpDirs.size} Behavior Packs")
-                mergePackType(bpDirs, mergedBpDir, "manifest.json")
+                mergePackType(bpDirs, mergedBpDir, "manifest.json", resourceRegistry)
             } else 0
             
             // d) FUSIONAR RESOURCE PACKS
@@ -226,7 +231,7 @@ object PackForgeOrchestrator {
             val rpJsonCount = if (rpDirs.isNotEmpty()) {
                 progressCallback?.onProgress("Fusionando Resource Packs...")
                 PackForgeLog.d("PackForge_Debug", "Iniciando fusión de ${rpDirs.size} Resource Packs")
-                mergePackType(rpDirs, mergedRpDir, "manifest.json")
+                mergePackType(rpDirs, mergedRpDir, "manifest.json", resourceRegistry)
             } else 0
             
             val totalJsonsMerged = bpJsonCount + rpJsonCount
@@ -248,6 +253,7 @@ object PackForgeOrchestrator {
             // rpDirs contiene las rutas de TODOS los RPs extraídos (NO el mergedRpDir)
             // bpDirs contiene las rutas de TODOS los BPs extraídos (para material_instances)
             // extractedDirs contiene las rutas de TODOS los addons extraídos (para .lang)
+            var soundKeyRenames: Map<String, String> = emptyMap()
             if (rpDirs.isNotEmpty() || bpDirs.isNotEmpty()) {
                 progressCallback?.onProgress("Fusionando archivos críticos de Bedrock...")
                 PackForgeLog.d("PackForge_Export", "🔧 FUSIONANDO ARCHIVOS CRÍTICOS DE BEDROCK...")
@@ -277,8 +283,15 @@ object PackForgeOrchestrator {
                 // 6. Fusionar animations + animation_controllers - CRÍTICO para animaciones
                 merger.mergeAnimations(rpDirFiles, mergedRpDir)
                 
-                // 7. Fusionar sounds.json (sonidos de bloques/entidades)
+                // 7a. Fusionar sound_definitions.json (definiciones de audio).
+                // Duplicados con contenido distinto → clave con alias + mapa de renombres.
+                soundKeyRenames = merger.mergeSoundDefinitions(rpDirFiles, mergedRpDir)
+                
+                // 7b. Fusionar sounds.json (eventos → definiciones de audio)
                 merger.mergeSoundsJson(rpDirFiles, mergedRpDir)
+                
+                // 7c. Actualizar referencias a claves de sonido renombradas en RP y BP
+                merger.applySoundKeyRenames(mergedRpDir, mergedBpDir, soundKeyRenames)
                 
                 // 8. Fusionar .lang + crear languages.json (CRÍTICO para nombres "desconocido")
                 // En AMBOS packs (BP y RP pueden tener traducciones)
@@ -307,6 +320,13 @@ object PackForgeOrchestrator {
                 // 13. Fusionar LOOT TABLES (drops de mobs, bloques, cofres) - CRÍTICO para drops
                 merger.mergeLootTables(bpDirFiles, mergedBpDir)
                 
+                // 14. PLAYER.ENTITY.JSON - fusión profunda del jugador entre addons
+                // (base = manifest de versión más alta; colisiones numéricas → conflicto HIGH)
+                merger.mergePlayerEntity(bpDirFiles, mergedBpDir)
+                
+                // 15. PARTÍCULAS - dedupe por identifier con alias único
+                merger.mergeParticles(rpDirFiles, mergedRpDir, mergedBpDir)
+                
                 PackForgeLog.d("PackForge_Export", "✅ Archivos críticos fusionados exitosamente")
             }
             
@@ -324,6 +344,11 @@ object PackForgeOrchestrator {
             )
             
             PackForgeLog.d(TAG, "UUIDs generados - BP: $bpUuid, RP: $rpUuid")
+
+            // f2) ANÁLISIS DE COLISIONES DE SCRIPTS (no bloqueante)
+            progressCallback?.onProgress("Analizando scripts...")
+            val scriptFindings = ScriptCollisionAnalyzer.analyze(File(mergedBpDir, "scripts"))
+            scriptFindings.forEach { PackForgeLog.w(TAG, it) }
 
             // f) EJECUTAR VALIDADOR DE REFERENCIAS CRUZADAS
             progressCallback?.onProgress("Validando referencias...")
@@ -375,6 +400,27 @@ object PackForgeOrchestrator {
                 outputFile
             )
 
+            // ══ VALIDACIÓN POST-FUSIÓN + REPORTE LEGIBLE ══
+            progressCallback?.onProgress("Generando reporte de fusión...")
+            val syntaxErrors = MergeReportGenerator.validateJsonSyntax(mergedBpDir) +
+                MergeReportGenerator.validateJsonSyntax(mergedRpDir)
+            syntaxErrors.forEach { PackForgeLog.e(TAG, it) }
+
+            val reportLines = MergeReportGenerator.build(
+                MergeReportGenerator.Inputs(
+                    idRenames = idRenames,
+                    resourceAliases = resourceRegistry.aliasLog.toList(),
+                    soundRenames = soundKeyRenames,
+                    scriptFindings = scriptFindings,
+                    syntaxErrors = syntaxErrors,
+                    validationResult = validationResult,
+                    totalJsonsMerged = totalJsonsMerged,
+                    elapsedSeconds = (System.currentTimeMillis() - tInicio) / 1000.0
+                )
+            )
+            val reportFile = File(outputDir, "fusion_report.txt")
+            MergeReportGenerator.writeToFile(reportLines, reportFile)
+
             val tZip = System.currentTimeMillis()
             PackForgeLog.d("PackForge_Perf", "⏱️ ZIP: ${(tZip - tCriticosValidacionIconoFin) / 1000.0}s")
             PackForgeLog.d("PackForge_Perf", "⏱️ TOTAL: ${(tZip - tInicio) / 1000.0}s")
@@ -397,7 +443,8 @@ object PackForgeOrchestrator {
                 bpUuid = bpUuid,
                 rpUuid = rpUuid,
                 totalJsonsMerged = totalJsonsMerged,
-                validationResult = validationResult
+                validationResult = validationResult,
+                reportPath = if (reportFile.exists()) reportFile.absolutePath else null
             )
             
         } catch (e: Exception) {
@@ -598,7 +645,12 @@ object PackForgeOrchestrator {
      *
      * Ahora recorre cada directorio con walkTopDown() y copia/fusiona cada archivo.
      */
-    private fun mergePackType(sourceDirs: List<String>, targetDir: File, manifestName: String): Int {
+    private fun mergePackType(
+        sourceDirs: List<String>,
+        targetDir: File,
+        manifestName: String,
+        registry: ResourcePathRegistry = ResourcePathRegistry()
+    ): Int {
         var jsonCount = 0
         var nonJsonCount = 0
 
@@ -621,6 +673,16 @@ object PackForgeOrchestrator {
                 continue
             }
 
+            // ⭐ RESOURCE PATH REGISTRY: pre-planificar aliases de binarios ANTES de copiar.
+            // Devuelve rutaAntigua→rutaNueva (con variantes sin extensión) para ESTA fuente.
+            val pathRenames = try { registry.planAndCommit(sourceFile) } catch (e: Exception) {
+                PackForgeLog.e("PackForge_Debug", "Error planificando recursos de $sourceAddonName: ${e.message}")
+                emptyMap<String, String>()
+            }
+            if (pathRenames.isNotEmpty()) {
+                PackForgeLog.d("PackForge_Debug", "  🖼️ ${pathRenames.size} rutas con alias para $sourceAddonName")
+            }
+
             try {
                 // Recorrer el directorio extraído (NO es un ZIP, es una carpeta en disco)
                 sourceFile.walkTopDown().filter { it.isFile }.forEach { file ->
@@ -638,14 +700,16 @@ object PackForgeOrchestrator {
                         return@forEach
                     }
 
-                    val targetFile = File(targetDir, relativePath)
+                    // Ruta física efectiva tras aliasing del registro
+                    val effectivePath = pathRenames[relativePath] ?: relativePath
+                    val targetFile = File(targetDir, effectivePath)
                     targetFile.parentFile?.mkdirs()
 
                     if (file.name.endsWith(".json", ignoreCase = true)) {
                         // Archivo JSON - Fusionar o copiar directamente
                         if (targetFile.exists()) {
                             // Fusionar con DeepMerge
-                            logFile { "  🔀 Fusionando (JSON): $relativePath" }
+                            logFile { "  🔀 Fusionando (JSON): $effectivePath" }
                             try {
                                 val existingContent = targetFile.readText()
                                 val newContent = file.readText(StandardCharsets.UTF_8)
@@ -653,18 +717,19 @@ object PackForgeOrchestrator {
                                 JsonDeepMerger.setMergeContext(
                                     sourceAddon = sourceAddonName,
                                     targetAddon = targetDir.name,
-                                    filePath = relativePath
+                                    filePath = effectivePath
                                 )
 
                                 val merged = JsonDeepMerger.deepMergeStrings(existingContent, newContent)
                                 targetFile.writeText(merged)
                                 jsonCount++
                             } catch (e: Exception) {
-                                PackForgeLog.e("PackForge_Debug", "    ❌ Error al fusionar $relativePath: ${e.message}")
+                                PackForgeLog.e("PackForge_Debug", "    ❌ Error al fusionar $effectivePath: ${e.message}")
                                 try {
                                     val cleanJson = JsonDeepMerger.cleanJsonObject(
                                         JSONObject(file.readText(Charsets.UTF_8))
                                     )
+                                    ResourcePathRegistry.applyRenames(cleanJson, pathRenames)
                                     targetFile.writeText(cleanJson.toString()) // ⚡ JSON COMPACTO
                                 } catch (e2: Exception) {
                                     // Fallback: copiar el archivo directamente
@@ -674,11 +739,13 @@ object PackForgeOrchestrator {
                             }
                         } else {
                             // Nuevo archivo JSON - copiar directamente
-                            logFile { "  ✅ Copiando (JSON nuevo): $relativePath" }
+                            logFile { "  ✅ Copiando (JSON nuevo): $effectivePath" }
                             try {
                                 val cleanJson = JsonDeepMerger.cleanJsonObject(
                                     JSONObject(file.readText(Charsets.UTF_8))
                                 )
+                                // Aplicar aliases de rutas de texturas/sonidos de ESTA fuente
+                                ResourcePathRegistry.applyRenames(cleanJson, pathRenames)
                                 targetFile.writeText(cleanJson.toString()) // ⚡ JSON COMPACTO
                             } catch (e2: Exception) {
                                 // Fallback: copiar el archivo directamente
@@ -688,13 +755,8 @@ object PackForgeOrchestrator {
                         }
                     } else {
                         // Archivo no-JSON (texturas, sonidos, modelos, etc.) → fastCopy
-                        logFile { "  📄 Procesando (no-JSON): $relativePath" }
+                        logFile { "  📄 Procesando (no-JSON): $effectivePath" }
 
-                        if (targetFile.exists()) {
-                            PackForgeLog.w("PackForge_Debug", "    ⚠️  Colisión (no-JSON): $relativePath")
-                        }
-
-                        // Copiar el archivo directamente desde el directorio extraído
                         FileUtils.fastCopy(file, targetFile)
                         nonJsonCount++
                     }
