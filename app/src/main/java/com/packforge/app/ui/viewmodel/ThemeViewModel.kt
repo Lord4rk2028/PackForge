@@ -86,3 +86,24 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { dataStore.edit { it[VERBOSE_FILE_LOGS_KEY] = enabled } }
     }
 }
+
+/**
+ * Acceso puntual al color de acento definido por el usuario para componentes
+ * NO-Compose (ej. notificación del servicio de fusión). Usa el MISMO DataStore.
+ */
+object ThemeAccent {
+    private const val DEFAULT_HEX = "#2ECC71"
+
+    suspend fun hex(context: Context): String = try {
+        context.themeDataStore.data.first()[ACCENT_HEX_KEY] ?: DEFAULT_HEX
+    } catch (_: Exception) { DEFAULT_HEX }
+
+    /** Lectura bloqueante breve (≤50ms) pensada para onStartCommand del servicio. */
+    fun colorBlocking(context: Context): Int = runBlocking {
+        try {
+            android.graphics.Color.parseColor(hex(context).trim())
+        } catch (_: Exception) {
+            0xFF2ECC71.toInt()
+        }
+    }
+}

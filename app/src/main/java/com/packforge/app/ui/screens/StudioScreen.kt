@@ -75,6 +75,9 @@ fun StudioScreen(
     val showThemeSettings by viewModel.showThemeSettings.collectAsStateWithLifecycle()
     val webImportSuccess by viewModel.webImportSuccess.collectAsStateWithLifecycle()
 
+    // Confirmation dialog for modpack regeneration
+    var modpackToRegenerate by remember { mutableStateOf<SavedModpack?>(null) }
+
     // Manejo de navegadores internos con persistencia
     activeWebSource?.let { source ->
         val site = AddonSite.fromSourceKey(source)
@@ -119,8 +122,36 @@ fun StudioScreen(
             onBack = { viewModel.setShowMyModpacks(false) },
             onDelete = onDeleteModpack,
             onLoad = onLoadModpack,
-            onOpenSources = { viewModel.setShowMyModpacks(false) }
+            onOpenSources = { viewModel.setShowMyModpacks(false) },
+            onRegenerate = { modpack ->
+                modpackToRegenerate = modpack
+            },
         )
+        modpackToRegenerate?.let { target ->
+            AlertDialog(
+                onDismissRequest = { modpackToRegenerate = null },
+                title = { Text("Regenerar modpack", fontWeight = FontWeight.Bold) },
+                text = {
+                    Text(
+                        text = "¿Estás seguro de regenerar '${target.name}' con el motor actual?\nEsto fusionará todos los addons nuevamente y reemplazará el contenido actual.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        modpackToRegenerate = null
+                        viewModel.regenerateModpack(target.id)
+                    }) {
+                        Text("Aceptar", color = MaterialTheme.colorScheme.primary)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { modpackToRegenerate = null }) {
+                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            )
+        }
         return
     }
 
@@ -297,7 +328,8 @@ fun MyModpacksScreen(
     onBack: () -> Unit,
     onDelete: (String) -> Unit,
     onLoad: (SavedModpack) -> Unit,
-    onOpenSources: () -> Unit = {}
+    onOpenSources: () -> Unit = {},
+    onRegenerate: (SavedModpack) -> Unit = {}
 ) {
     val context = LocalContext.current
     val shareScope = rememberCoroutineScope()
@@ -338,11 +370,13 @@ fun MyModpacksScreen(
                     val onLoadThis = remember(modpack.id) { { onLoad(modpack); onBack() } }
                     val onDeleteThis = remember(modpack.id) { { modpackToDelete = modpack } }
                     val onShareThis = remember(modpack.id) { { shareModpack(context, modpack, shareScope) } }
+                    val onRegenThis = remember(modpack.id) { { onRegenerate(modpack) } }
                     ModpackLibraryCard(
                         modpack = modpack,
                         onLoad = onLoadThis,
                         onDelete = onDeleteThis,
-                        onShare = onShareThis
+                        onShare = onShareThis,
+                        onRegenerate = onRegenThis
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -489,7 +523,8 @@ fun ModpackLibraryCard(
     modpack: SavedModpack,
     onLoad: () -> Unit,
     onDelete: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    onRegenerate: () -> Unit = {}
 ) {
     val coverPath = modpack.coverUriString
     // Coil necesita un File (no un String de ruta absoluta) para cargar la
@@ -588,7 +623,7 @@ fun ModpackLibraryCard(
                 )
             }
 
-            // ── Acciones ─────────────────────────────────────
+            // ── Acciones: fila uniforme de 4 botones (estable en vertical) ──
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -596,28 +631,32 @@ fun ModpackLibraryCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FilledTonalButton(
+                FilledTonalIconButton(
                     onClick = onLoad,
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 6.dp)
+                    modifier = Modifier.weight(1f).height(38.dp)
                 ) {
-                    Icon(Icons.Default.Refresh, null, Modifier.size(15.dp))
-                    Text("Editar", style = MaterialTheme.typography.labelSmall)
+                    Icon(Icons.Default.Edit, contentDescription = "Editar", modifier = Modifier.size(17.dp))
                 }
                 FilledTonalIconButton(
                     onClick = onShare,
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.weight(1f).height(38.dp)
                 ) {
-                    Icon(Icons.Default.Share, null, Modifier.size(16.dp))
+                    Icon(Icons.Default.Share, contentDescription = "Compartir", modifier = Modifier.size(17.dp))
+                }
+                // Re-fusionar con el motor actual (anti-obsolescencia)
+                FilledTonalIconButton(
+                    onClick = onRegenerate,
+                    modifier = Modifier.weight(1f).height(38.dp)
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Regenerar con el motor actual", modifier = Modifier.size(17.dp))
                 }
                 IconButton(
                     onClick = onDelete,
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.weight(1f).height(38.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = null,
+                        contentDescription = "Eliminar",
                         modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.error
                     )

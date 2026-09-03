@@ -21,11 +21,56 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import java.util.zip.ZipFile
-import com.packforge.app.domain.engine.FastModpackExporter
 import com.packforge.app.domain.engine.JsonDeepMerger
+import com.packforge.app.domain.engine.FusionIssue
+import com.packforge.app.domain.engine.FusionReportBuilder
 
 object PackForgeOrchestrator {
     private const val TAG = "PackForge_Orchestrator"
+
+    /** Directorios/archivos que se excluyen del merge genérico porque tienen fusiones dedicadas. */
+    private val CRITICAL_DIRS = listOf(
+        "entity/",            // RP entity/*.entity.json → mergeEntityDefinitions
+        "attachables/",       // RP attachables/ → mergeEntityDefinitions + graph resolver
+        "particles/",         // RP particles/ → mergeParticles + graph resolver
+        "render_controllers/", // RP render_controllers/ → mergeRenderControllers
+        "animations/",        // RP animations/ → mergeAnimations
+        "animation_controllers/", // RP animation_controllers/ → mergeAnimations
+        "blocks.json",        // RP blocks.json → mergeBlocksJson
+        "textures/terrain_texture.json", // → mergeTerrainTexture
+        "textures/item_texture.json",    // → mergeItemTexture
+        "sounds.json",        // → mergeSoundsJson
+        "sound_definitions.json", // → mergeSoundDefinitions
+        "textures/flipbook_textures.json", // → mergeFlipbookTextures
+        "player.json",        // RP player.json → analyzed, not auto-merged
+        "player.entity.json", // BP player.entity.json → mergePlayerEntity
+        "loot_tables/",       // BP loot_tables/ → mergeLootTables
+        "recipes/",           // BP recipes/ → mergeRecipes
+    )
+
+    /** Directorios críticos específicos del Behavior Pack. */
+    private val CRITICAL_DIRS_BP = listOf(
+        "loot_tables/",
+        "recipes/",
+        "player.entity.json",
+    )
+
+    /** Directorios críticos específicos del Resource Pack. */
+    private val CRITICAL_DIRS_RP = listOf(
+        "entity/",
+        "attachables/",
+        "particles/",
+        "render_controllers/",
+        "animations/",
+        "animation_controllers/",
+        "blocks.json",
+        "textures/terrain_texture.json",
+        "textures/item_texture.json",
+        "sounds.json",
+        "sound_definitions.json",
+        "textures/flipbook_textures.json",
+        "player.json",
+    )
 
     /**
      * Resultado de la fusión de addons
@@ -70,45 +115,59 @@ object PackForgeOrchestrator {
         val tInicio = System.currentTimeMillis()
         val extractedDirs = mutableListOf<String>()
         val tempDir = File(outputDir, "temp_merge")
-        // Registro compartido BP/RP: garantiza aliases únicos en TODO el paquete.
         val resourceRegistry = ResourcePathRegistry()
-        // Renombres de IDs para el reporte final.
         var idRenames: List<IdentifierRemapper.RemapEntry> = emptyList()
-        
-        // Clear previous conflicts
+
+        // Clear previous state
         JsonDeepMerger.clearConflicts()
         ConflictRegistry.clear()
-        
+        FolderAliasRegistry.clear()
+        DirIndexCache.clear()
+        FusionReportBuilder.clear()
+
         try {
             // a) EXTRAER TODOS LOS ADDONS
             progressCallback?.onProgress("Extrayendo addons...")
-            
             PackForgeLog.d("PackForge_Export", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            PackForgeLog.d("PackForge_Export", "🚀 INICIANDO EXPORTACIÓN")
-            
-            var totalFilesToProcess = 0
-            
+            PackForgeLog.d("PackForge_Export", "🚀 INICIANDO EXPORTACIÓN: ${addonPaths.size} addons")
+
             for ((index, addonPath) in addonPaths.withIndex()) {
                 val addonFile = File(addonPath)
-                if (!addonFile.exists()) continue
-                
-                logFile { "Procesando addon $index: $addonPath" }
-                
+                val addonDisplayName = addonNames.getOrNull(index) ?: addonFile.nameWithoutExtension
+                progressCallback?.onProgress("Extrayendo ${index + 1}/${addonPaths.size}: $addonDisplayName...")
+
+                if (!addonFile.exists()) {
+                    PackForgeLog.w(TAG, "⚠️ Addon no existe, saltando: $addonPath")
+                    FusionReportBuilder.addIssue(addonDisplayName, "ZIP", "El archivo no existe en disco", "El archivo del addon no se encontró.", FusionIssue.Severity.FATAL)
+                    continue
+                }
+
+                PackForgeLog.d("PackForge_Perf", "⏱️ Extrayendo ${addonFile.name} (${addonFile.length() / 1024} KB)")
+                val tAddonInicio = System.currentTimeMillis()
                 val extractDir = File(tempDir, "extracted_${System.currentTimeMillis()}_${addonFile.nameWithoutExtension}")
-                val extractedPath = AddonExtractor.extractAddon(addonPath, extractDir.absolutePath)
-                
+                val extractedPath = try {
+                    AddonExtractor.extractAddon(addonPath, extractDir.absolutePath)
+                } catch (e: Exception) {
+                    PackForgeLog.e(TAG, "Error extrayendo $addonDisplayName: ${e.message}")
+                    FusionReportBuilder.addIssue(addonDisplayName, "ZIP", e.message ?: "Error desconocido", "No se pudo extraer el addon.", FusionIssue.Severity.FATAL)
+                    null
+                }
+                PackForgeLog.d("PackForge_Perf", "⏱️ Extraído en ${(System.currentTimeMillis() - tAddonInicio) / 1000.0}s")
+
                 if (extractedPath != null) {
                     extractedDirs.add(extractedPath)
-                    
-                    totalFilesToProcess += File(extractedPath).walkTopDown().count { it.isFile }
                 }
             }
-            
+
             val tExtraccion = System.currentTimeMillis()
-            PackForgeLog.d("PackForge_Perf", "⏱️ Extracción: ${(tExtraccion - tInicio) / 1000.0}s")
-            
+            PackForgeLog.d("PackForge_Perf", "⏱️ Extracción total: ${(tExtraccion - tInicio) / 1000.0}s")
+
             if (extractedDirs.isEmpty()) {
-                return MergeResult(false, null, null, null, 0, "No se pudo extraer ningún addon", null)
+                val reportStr = buildString {
+                    appendLine("FUSIÓN FALLIDA: ningún addon pudo extraerse.")
+                    appendLine(FusionReportBuilder.generateReport())
+                }
+                return MergeResult(false, null, null, null, 0, reportStr)
             }
             
             // b) CLASIFICAR ADDONS POR TIPO
@@ -118,9 +177,12 @@ object PackForgeOrchestrator {
             val bpDirs = mutableListOf<String>()
             val rpDirs = mutableListOf<String>()
             
-            for (extractedDir in extractedDirs) {
+            for ((idx, extractedDir) in extractedDirs.withIndex()) {
+                val dirFile = File(extractedDir)
+                PackForgeLog.d(TAG, "🔍 Analizando directorio: ${dirFile.name}") // DIAGNÓSTICO
+                progressCallback?.onProgress("Clasificando addon ${idx + 1}/${extractedDirs.size}: ${dirFile.name}...")
                 val analysis = AddonExtractor.analyzeExtractedAddon(extractedDir)
-                logFile { "Addon $extractedDir clasificado como: ${analysis.addonType} | JSONs=${analysis.totalJsonFiles} manifests=${analysis.manifestFiles} items=${analysis.itemFiles.size} entities=${analysis.entityFiles.size}" }
+                logFile { "Addon $extractedDir clasificado como: ${analysis.addonType} | JSONs=${analysis.totalJsonFiles} manifests=${analysis.manifestFiles.size} items=${analysis.itemFiles.size} entities=${analysis.entityFiles.size}" }
                 
                 when (analysis.addonClassification) {
                     is AddonExtractor.AddonClassification.BEHAVIOR_PACK -> {
@@ -223,7 +285,7 @@ object PackForgeOrchestrator {
             val bpJsonCount = if (bpDirs.isNotEmpty()) {
                 progressCallback?.onProgress("Fusionando Behavior Packs...")
                 PackForgeLog.d("PackForge_Debug", "Iniciando fusión de ${bpDirs.size} Behavior Packs")
-                mergePackType(bpDirs, mergedBpDir, "manifest.json", resourceRegistry)
+                mergePackType(bpDirs, mergedBpDir, "manifest.json", resourceRegistry, CRITICAL_DIRS_BP)
             } else 0
             
             // d) FUSIONAR RESOURCE PACKS
@@ -231,7 +293,7 @@ object PackForgeOrchestrator {
             val rpJsonCount = if (rpDirs.isNotEmpty()) {
                 progressCallback?.onProgress("Fusionando Resource Packs...")
                 PackForgeLog.d("PackForge_Debug", "Iniciando fusión de ${rpDirs.size} Resource Packs")
-                mergePackType(rpDirs, mergedRpDir, "manifest.json", resourceRegistry)
+                mergePackType(rpDirs, mergedRpDir, "manifest.json", resourceRegistry, CRITICAL_DIRS_RP)
             } else 0
             
             val totalJsonsMerged = bpJsonCount + rpJsonCount
@@ -240,9 +302,17 @@ object PackForgeOrchestrator {
             val tFusionFin = System.currentTimeMillis()
             PackForgeLog.d("PackForge_Perf", "⏱️ Fusión: ${(tFusionFin - tExtraccion) / 1000.0}s")
             
+            // Cachear índices de los BPs/RPs extraídos una sola vez para Reuse por grafo/validator/healer
+            PackForgeLog.d("PackForge_Perf", "⏱️ Iniciando indexación de ${bpDirs.size} BPs + ${rpDirs.size} RPs...")
+            val bpFilesForCache = bpDirs.map { File(it) }
+            val rpFilesForCache = rpDirs.map { File(it) }
+            bpFilesForCache.forEach { DirIndexCache.index(it) }
+            rpFilesForCache.forEach { DirIndexCache.index(it) }
+            PackForgeLog.d("PackForge_Perf", "⏱️ Indexación: ${(System.currentTimeMillis() - tFusionFin) / 1000.0}s (${DirIndexCache.totalFilesIndexed()} archivos)")
+            
             // Verificar archivos en directorios fusionados
-            val bpFileCount = mergedBpDir.walkTopDown().count { it.isFile }
-            val rpFileCount = mergedRpDir.walkTopDown().count { it.isFile }
+            val bpFileCount = DirIndexCache.index(mergedBpDir).allFiles.size
+            val rpFileCount = DirIndexCache.index(mergedRpDir).allFiles.size
             PackForgeLog.d("PackForge_Debug", "Archivos en BP fusionado: $bpFileCount")
             PackForgeLog.d("PackForge_Debug", "Archivos en RP fusionado: $rpFileCount")
             PackForgeLog.d("PackForge_Debug", "=== FIN FUSIÓN ===")
@@ -258,83 +328,126 @@ object PackForgeOrchestrator {
             if (rpDirs.isNotEmpty() || bpDirs.isNotEmpty()) {
                 progressCallback?.onProgress("Fusionando archivos críticos de Bedrock...")
                 PackForgeLog.d("PackForge_Export", "🔧 FUSIONANDO ARCHIVOS CRÍTICOS DE BEDROCK...")
-                
+
                 // Convertir listas de strings a List<File>
                 val rpDirFiles = rpDirs.map { File(it) }
                 val bpDirFiles = bpDirs.map { File(it) }
                 val addonDirFiles = extractedDirs.map { File(it) }
-                
+
+                // ⭐ PRE-CACHEAR: indexar TODAS las raíces en DirIndexCache ANTES de
+                // que los mergers hagan walkTopDown. Esto convierte N×M walkTopDown
+                // redundantes en UNA sola pasada por addon.
+                val tCacheInicio = System.currentTimeMillis()
+                val allDirsToIndex = (rpDirFiles + bpDirFiles + addonDirFiles).distinct()
+                allDirsToIndex.forEach { DirIndexCache.index(it) }
+                PackForgeLog.d("PackForge_Perf", "⏱️ Pre-cacheo de ${allDirsToIndex.size} raíces: ${(System.currentTimeMillis() - tCacheInicio) / 1000.0}s")
+
                 val merger = BedrockCriticalFilesMerger
-                
+
                 // 1. Fusionar terrain_texture.json (mapea bloques → texturas) - CRÍTICO
+                progressCallback?.onProgress("Fusionando terrain_texture.json...")
                 merger.mergeTerrainTexture(rpDirFiles, mergedRpDir)
-                
+
                 // 2. Fusionar item_texture.json (mapea items → texturas) - CRÍTICO
+                progressCallback?.onProgress("Fusionando item_texture.json...")
                 merger.mergeItemTexture(rpDirFiles, mergedRpDir)
-                
+
                 // 3. Fusionar blocks.json (define renderizado de bloques, conservando format_version alto) - CRÍTICO
+                progressCallback?.onProgress("Fusionando blocks.json...")
                 merger.mergeBlocksJson(rpDirFiles, mergedRpDir)
-                
+
                 // 4. Fusionar entity/*.entity.json (definiciones de mobs 3D) - CRÍTICO para mobs
+                progressCallback?.onProgress("Fusionando entidades...")
                 merger.mergeEntityDefinitions(rpDirFiles, mergedRpDir)
-                
+
                 // 5. Fusionar render_controllers (controladores de render de mobs) - CRÍTICO para mobs
+                progressCallback?.onProgress("Fusionando render_controllers...")
                 merger.mergeRenderControllers(rpDirFiles, mergedRpDir)
-                
+
                 // 6. Fusionar animations + animation_controllers - CRÍTICO para animaciones
+                progressCallback?.onProgress("Fusionando animaciones...")
                 merger.mergeAnimations(rpDirFiles, mergedRpDir)
-                
+
                 // 7a. Fusionar sound_definitions.json (definiciones de audio).
                 // Duplicados con contenido distinto → clave con alias + mapa de renombres.
+                progressCallback?.onProgress("Fusionando sound_definitions.json...")
                 soundKeyRenames = merger.mergeSoundDefinitions(rpDirFiles, mergedRpDir)
-                
+
                 // 7b. Fusionar sounds.json (eventos → definiciones de audio)
+                progressCallback?.onProgress("Fusionando sounds.json...")
                 merger.mergeSoundsJson(rpDirFiles, mergedRpDir)
-                
+
                 // 7c. Actualizar referencias a claves de sonido renombradas en RP y BP
+                progressCallback?.onProgress("Aplicando renombres de sonidos...")
                 merger.applySoundKeyRenames(mergedRpDir, mergedBpDir, soundKeyRenames)
-                
+
                 // 8. Fusionar .lang + crear languages.json (CRÍTICO para nombres "desconocido")
                 // En AMBOS packs (BP y RP pueden tener traducciones)
+                progressCallback?.onProgress("Fusionando traducciones .lang...")
                 merger.mergeLangFiles(addonDirFiles, mergedRpDir)
                 merger.mergeLangFiles(addonDirFiles, mergedBpDir)
-                
+
                 // 9. Fusionar geometrías 3D (.geo.json) deduplicando por identifier
                 // CRÍTICO para bloques con geometría compleja: enredaderas, vallas, cruces, plantas 3D
+                progressCallback?.onProgress("Fusionando geometrías 3D...")
                 merger.mergeGeometryFiles(rpDirFiles, mergedRpDir)
-                
+
                 // 10. Fusionar flipbook_textures.json (texturas animadas)
+                progressCallback?.onProgress("Fusionando flipbook_textures...")
                 merger.mergeFlipbookTextures(rpDirFiles, mergedRpDir)
-                
+
                 // 11. Verificar material_instances del BP contra terrain_texture.json del RP
                 // Si un bloque referencía una textura no mapeada, se agrega y se copia el PNG
+                progressCallback?.onProgress("Fusionando material_instances...")
                 merger.mergeMaterialInstances(
                     bpDirs = bpDirFiles,
                     rpDirs = rpDirFiles,
                     mergedBpDir = mergedBpDir,
                     mergedRpDir = mergedRpDir
                 )
-                
+
                 // 12. Fusionar RECETAS (crafting, horno, alquimia, etc.) - CRÍTICO para items funcionales
+                progressCallback?.onProgress("Fusionando recetas...")
                 merger.mergeRecipes(bpDirFiles, mergedBpDir)
-                
+
                 // 13. Fusionar LOOT TABLES (drops de mobs, bloques, cofres) - CRÍTICO para drops
+                progressCallback?.onProgress("Fusionando loot_tables...")
                 merger.mergeLootTables(bpDirFiles, mergedBpDir)
-                
+
                 // 14. PLAYER.ENTITY.JSON - fusión profunda del jugador entre addons
                 // (base = manifest de versión más alta; colisiones numéricas → conflicto HIGH)
+                progressCallback?.onProgress("Fusionando player.entity.json...")
                 merger.mergePlayerEntity(bpDirFiles, mergedBpDir)
-                
+
                 // 15. PARTÍCULAS - dedupe por identifier con alias único
+                progressCallback?.onProgress("Fusionando partículas...")
                 merger.mergeParticles(rpDirFiles, mergedRpDir, mergedBpDir)
                 
-                // 16. RESOLUCIÓN DE DEPENDENCIAS DE ENTIDADES (anti-mob-invisible):
-                // rastrea geometry/textures/animations/render_controllers por REFERENCIA
-                // INTERNA del JSON, recupera archivos de los addons origen y registra
-                // conflictos visibles cuando el contenido difiere entre fuentes.
-                progressCallback?.onProgress("Resolviendo dependencias de entidades...")
-                dependencyNotes = EntityDependencyResolver.resolve(rpDirFiles, mergedRpDir)
-                
+                // 16. RESOLUCIÓN DE DEPENDENCIAS POR GRAFO (FASES 1-3):
+                // indexa TODOS los inputs por identificador interno y resuelve
+                // recursivamente cada referencia real de entidades/items del destino.
+                progressCallback?.onProgress("Resolviendo grafo de dependencias...")
+                val graph = DependencyGraphResolver.run(
+                    rpDirs = rpDirFiles,
+                    bpDirs = bpDirFiles,
+                    outputRp = mergedRpDir,
+                    outputBp = mergedBpDir
+                )
+                dependencyNotes = graph.notes
+
+                // FASE 4: si falta algo crítico NO-vanilla, registrar error pero continuar (Fusión Robusta).
+                if (graph.criticalErrors.isNotEmpty()) {
+                    graph.criticalErrors.forEach { error ->
+                        FusionReportBuilder.addIssue(
+                            "Grafo de dependencias",
+                            error.requester,
+                            "Falta ${error.type.label} '\${error.id}' requerido por \${error.requester}",
+                            "Al addon le falta un recurso necesario para funcionar. Algunos objetos podrían verse invisibles o rotos.",
+                            FusionIssue.Severity.RECOVERABLE
+                        )
+                    }
+                }
+
                 PackForgeLog.d("PackForge_Export", "✅ Archivos críticos fusionados exitosamente")
             }
             
@@ -368,6 +481,20 @@ object PackForgeOrchestrator {
                 progressCallback = progressCallback
             )
             PackForgeLog.d("PackForge_Export", "🔧 PASO 5 completado")
+
+            // g1) HEALER: análisis post-merge NO bloqueante (texturas rotas, fuzzy match)
+            progressCallback?.onProgress("Analizando integridad del pack...")
+            PackForgeLog.d("PackForge_Export", "💊 PASO 5b: Ejecutando PackForgeHealer...")
+            val healReport = try {
+                PackForgeHealer.heal(mergedBpDir, mergedRpDir)
+            } catch (e: Exception) {
+                PackForgeLog.w("PackForge_Export", "Healer tuvo error no bloqueante: ${e.message}")
+                PackForgeHealer.HealReport(emptyList(), emptyList(), listOf("Error: ${e.message}"))
+            }
+            if (healReport.hasIssues) {
+                PackForgeLog.w("PackForge_Export", "💊 ${healReport.summary}")
+            }
+            PackForgeLog.d("PackForge_Export", "💊 PASO 5b completado")
 
             // g) APLICAR ICONO PERSONALIZADO (AL FINAL, DESPUÉS DE TODO)
             PackForgeLog.d("PackForge_Export", "🔧 PASO 6: Aplicando icono personalizado...")
@@ -459,23 +586,32 @@ object PackForgeOrchestrator {
             // h) LIMPIEZA
             progressCallback?.onProgress("Limpiando temporales...")
             cleanupTempDirs(tempDir)
-            
-            PackForgeLog.d(TAG, "Modpack creado exitosamente: ${outputFile.absolutePath}")
-            
+            val reportPath = File(outputDir, "fusion_report.txt").absolutePath
+            OutputStreamWriter(FileOutputStream(reportPath), StandardCharsets.UTF_8).use {
+                it.write(FusionReportBuilder.generateReport())
+            }
+
             return MergeResult(
-                success = true,
+                success = !FusionReportBuilder.hasFatal(),
                 outputPath = outputFile.absolutePath,
                 bpUuid = bpUuid,
                 rpUuid = rpUuid,
                 totalJsonsMerged = totalJsonsMerged,
-                validationResult = validationResult,
-                reportPath = if (reportFile.exists()) reportFile.absolutePath else null
+                reportPath = reportPath
             )
             
         } catch (e: Exception) {
-            PackForgeLog.e(TAG, "Error en fusión de addons: ${e.message}", e)
-            cleanupTempDirs(tempDir)
-            return MergeResult(false, null, null, null, 0, "Error: ${e.message}", null)
+            PackForgeLog.e(TAG, "Error crítico en fusión: ${e.message}", e)
+            FusionReportBuilder.addIssue("Orchestrator", "Global", e.message ?: "Error desconocido", "Error inesperado al fusionar.", FusionIssue.Severity.FATAL)
+            
+            val reportPath = File(outputDir, "fusion_report.txt").absolutePath
+            OutputStreamWriter(FileOutputStream(reportPath), StandardCharsets.UTF_8).use {
+                it.write(FusionReportBuilder.generateReport())
+            }
+            
+            return MergeResult(false, null, null, null, 0, "Error: ${e.message}", null, reportPath)
+        } finally {
+            // No limpiar tempDir aquí para que el usuario pueda ver los archivos fallidos si hay reporte
         }
     }
     
@@ -497,17 +633,15 @@ object PackForgeOrchestrator {
             bpDir.mkdirs()
             
             var bpFileCount = 0
-            bpSubfolder.walkTopDown().forEach { file ->
-                if (file.isFile) {
-                    val relativePath = file.relativeTo(bpSubfolder).path
-                    val targetFile = File(bpDir, relativePath)
-                    targetFile.parentFile?.mkdirs()
-                    FileUtils.fastCopy(file, targetFile)
-                    bpFileCount++
+            DirIndexCache.index(bpSubfolder).allFiles.forEach { file ->
+                val relativePath = file.relativeTo(bpSubfolder).path
+                val targetFile = File(bpDir, relativePath)
+                targetFile.parentFile?.mkdirs()
+                FileUtils.fastCopy(file, targetFile)
+                bpFileCount++
 
-                    if (file.name == "manifest.json") {
-                        logFile { "  ✅ manifest.json copiado a: ${targetFile.relativeTo(bpDir).path}" }
-                    }
+                if (file.name == "manifest.json") {
+                    logFile { "  ✅ manifest.json copiado a: ${targetFile.relativeTo(bpDir).path}" }
                 }
             }
             
@@ -528,7 +662,7 @@ object PackForgeOrchestrator {
             rpDir.mkdirs()
             
             var rpFileCount = 0
-            rpSubfolder.walkTopDown().filter { it.isFile }.toList().forEach { file ->
+            DirIndexCache.index(rpSubfolder).allFiles.forEach { file ->
                 val relativePath = file.relativeTo(rpSubfolder).path
                 val targetFile = File(rpDir, relativePath)
                 targetFile.parentFile?.mkdirs()
@@ -590,7 +724,7 @@ object PackForgeOrchestrator {
             // Copiar todo el contenido de BP_* al directorio separado
             // CRÍTICO: Usar ruta relativa para NO incluir la carpeta BP_* en el destino
             var bpFileCount = 0
-            bpSubfolder.walkTopDown().filter { it.isFile }.toList().forEach { file ->
+            DirIndexCache.index(bpSubfolder).allFiles.forEach { file ->
                 val relativePath = file.relativeTo(bpSubfolder).path
                 val targetFile = File(bpDir, relativePath)
                 targetFile.parentFile?.mkdirs()
@@ -626,7 +760,7 @@ object PackForgeOrchestrator {
             // Copiar todo el contenido de RP_* al directorio separado
             // CRÍTICO: Usar ruta relativa para NO incluir la carpeta RP_* en el destino
             var rpFileCount = 0
-            rpSubfolder.walkTopDown().filter { it.isFile }.toList().forEach { file ->
+            DirIndexCache.index(rpSubfolder).allFiles.forEach { file ->
                 val relativePath = file.relativeTo(rpSubfolder).path
                 val targetFile = File(rpDir, relativePath)
                 targetFile.parentFile?.mkdirs()
@@ -674,7 +808,8 @@ object PackForgeOrchestrator {
         sourceDirs: List<String>,
         targetDir: File,
         manifestName: String,
-        registry: ResourcePathRegistry = ResourcePathRegistry()
+        registry: ResourcePathRegistry = ResourcePathRegistry(),
+        criticalDirs: List<String> = emptyList()
     ): Int {
         var jsonCount = 0
         var nonJsonCount = 0
@@ -686,11 +821,14 @@ object PackForgeOrchestrator {
         logFile { "Iniciando mergePackType con ${sourceDirs.size} directorios fuente" }
         logFile { "Directorio destino: ${targetDir.absolutePath}" }
 
+        // Prioridad: índice 0 = mayor prioridad (usuario ordena de mayor a menor).
+        // Se trackea quién escribió cada fichero para que el ganador real sea el que creó el base.
+        val fileOriginIndex = mutableMapOf<String, Int>()
         for ((sourceIndex, sourceDir) in sourceDirs.withIndex()) {
             val sourceFile = File(sourceDir)
             val sourceAddonName = sourceFile.name
 
-            logFile { "Procesando sourceDir $sourceIndex: $sourceDir" }
+            logFile { "Procesando sourceDir $sourceIndex (prioridad ${sourceIndex + 1}/${sourceDirs.size}): $sourceDir" }
             logFile { "  Nombre del addon: $sourceAddonName" }
 
             if (!sourceFile.exists() || !sourceFile.isDirectory) {
@@ -704,85 +842,76 @@ object PackForgeOrchestrator {
                 PackForgeLog.e("PackForge_Debug", "Error planificando recursos de $sourceAddonName: ${e.message}")
                 emptyMap<String, String>()
             }
-            if (pathRenames.isNotEmpty()) {
-                PackForgeLog.d("PackForge_Debug", "  🖼️ ${pathRenames.size} rutas con alias para $sourceAddonName")
+
+            // ⭐ FOLDER ALIAS REGISTRY: aliasing de estructuras/fogs/ui por contenido.
+            val folderRenames = try { FolderAliasRegistry.planAndCommit(sourceFile, sourceAddonName) } catch (e: Exception) {
+                PackForgeLog.e("PackForge_Debug", "Error planificando carpetas de $sourceAddonName: ${e.message}")
+                emptyMap<String, String>()
+            }
+
+            // Combinar ambos mapas de renombre (binarios + carpetas)
+            val allRenames = pathRenames + folderRenames
+            if (allRenames.isNotEmpty()) {
+                PackForgeLog.d("PackForge_Debug", "  🖼️ ${pathRenames.size} rutas de recurso + ${folderRenames.size} rutas de carpeta con alias para $sourceAddonName")
             }
 
             try {
-                // Recorrer el directorio extraído (NO es un ZIP, es una carpeta en disco)
-                sourceFile.walkTopDown().filter { it.isFile }.forEach { file ->
+                // Usar índice cacheado en vez de segundo walkTopDown (reducción 3-10x en I/O)
+                val cachedFiles = DirIndexCache.index(sourceFile).allFiles
+                for (file in cachedFiles) {
                     val relativePath = file.relativeTo(sourceFile).path.replace("\\", "/")
 
                     // Saltar manifest.json (se generará nuevo al final)
                     if (relativePath == manifestName || relativePath == "manifest.json" || file.name == "manifest.json") {
-                        logFile { "  ⏭️  Saltando manifest.json: $relativePath" }
-                        return@forEach
+                        continue
                     }
 
                     // ⭐ PASO 1: Excluir "scripts/" de la copia genérica (se fusionan aparte) ⭐
                     if (relativePath.startsWith("scripts/")) {
-                        logFile { "  ⏭️  Saltando scripts/: $relativePath" }
-                        return@forEach
+                        continue
                     }
 
-                    // Ruta física efectiva tras aliasing del registro
-                    val effectivePath = pathRenames[relativePath] ?: relativePath
+                    // ⭐ PASO 2: Excluir archivos críticos que tienen fusiones DEDICADAS y semánticas
+                    // (evita "Frankenstein" por deep-merge genérico + fusión dedicada duplicada)
+                    if (criticalDirs.any { relativePath.startsWith(it) }) {
+                        continue
+                    }
+
+                    // Ruta física efectiva tras aliasing del registro (recursos + carpetas)
+                    val effectivePath = allRenames[relativePath] ?: relativePath
                     val targetFile = File(targetDir, effectivePath)
                     targetFile.parentFile?.mkdirs()
 
                     if (file.name.endsWith(".json", ignoreCase = true)) {
-                        // Archivo JSON - Fusionar o copiar directamente
-                        if (targetFile.exists()) {
-                            // Fusionar con DeepMerge
-                            logFile { "  🔀 Fusionando (JSON): $effectivePath" }
-                            try {
-                                val existingContent = targetFile.readText()
-                                val newContent = file.readText(StandardCharsets.UTF_8)
+                        // Archivo JSON - Fusionar en memoria (sin I/O intermedio)
+                        try {
+                            val newJson = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+                            ResourcePathRegistry.applyRenames(newJson, allRenames)
 
-                                JsonDeepMerger.setMergeContext(
-                                    sourceAddon = sourceAddonName,
-                                    targetAddon = targetDir.name,
-                                    filePath = effectivePath
-                                )
+                            JsonDeepMerger.setMergeContext(
+                                sourceAddon = sourceAddonName,
+                                targetAddon = targetDir.name,
+                                filePath = effectivePath
+                            )
+                            val winnerIndex = fileOriginIndex[effectivePath] ?: 0
+                            JsonDeepMerger.setPriorityContext(sourceIndex = sourceIndex, winnerIndex = winnerIndex)
 
-                                val merged = JsonDeepMerger.deepMergeStrings(existingContent, newContent)
-                                targetFile.writeText(merged)
-                                jsonCount++
-                            } catch (e: Exception) {
-                                PackForgeLog.e("PackForge_Debug", "    ❌ Error al fusionar $effectivePath: ${e.message}")
-                                try {
-                                    val cleanJson = JsonDeepMerger.cleanJsonObject(
-                                        JSONObject(file.readText(Charsets.UTF_8))
-                                    )
-                                    ResourcePathRegistry.applyRenames(cleanJson, pathRenames)
-                                    targetFile.writeText(cleanJson.toString()) // ⚡ JSON COMPACTO
-                                } catch (e2: Exception) {
-                                    // Fallback: copiar el archivo directamente
-                                    FileUtils.fastCopy(file, targetFile)
-                                }
-                                jsonCount++
-                            }
-                        } else {
-                            // Nuevo archivo JSON - copiar directamente
-                            logFile { "  ✅ Copiando (JSON nuevo): $effectivePath" }
-                            try {
-                                val cleanJson = JsonDeepMerger.cleanJsonObject(
-                                    JSONObject(file.readText(Charsets.UTF_8))
-                                )
-                                // Aplicar aliases de rutas de texturas/sonidos de ESTA fuente
-                                ResourcePathRegistry.applyRenames(cleanJson, pathRenames)
-                                targetFile.writeText(cleanJson.toString()) // ⚡ JSON COMPACTO
-                            } catch (e2: Exception) {
-                                // Fallback: copiar el archivo directamente
-                                FileUtils.fastCopy(file, targetFile)
-                            }
+                            // Fusión en memoria - sin I/O
+                            JsonDeepMerger.mergeIntoBuffer(effectivePath, newJson, sourceAddonName, targetDir.name)
+                            fileOriginIndex[effectivePath] = sourceIndex
+                            JsonDeepMerger.clearPriorityContext()
+                            jsonCount++
+                        } catch (e: Exception) {
+                            JsonDeepMerger.clearPriorityContext()
+                            PackForgeLog.e("PackForge_Debug", "    ❌ Error procesando JSON $effectivePath: ${e.message}")
+                            // Fallback a copia directa
+                            FileUtils.fastCopy(file, targetFile)
+                            fileOriginIndex.putIfAbsent(effectivePath, sourceIndex)
                             jsonCount++
                         }
                     } else {
-                        // Archivo no-JSON (texturas, sonidos, modelos, etc.) → fastCopy
-                        logFile { "  📄 Procesando (no-JSON): $effectivePath" }
-
                         FileUtils.fastCopy(file, targetFile)
+                        fileOriginIndex.putIfAbsent(effectivePath, sourceIndex)
                         nonJsonCount++
                     }
                 }
@@ -796,7 +925,7 @@ object PackForgeOrchestrator {
         PackForgeLog.d("PackForge_Debug", "=== Resumen mergePackType ===")
         PackForgeLog.d("PackForge_Debug", "Total JSONs fusionados: $jsonCount")
         PackForgeLog.d("PackForge_Debug", "Total no-JSONs copiados: $nonJsonCount")
-        PackForgeLog.d("PackForge_Debug", "Total archivos en destino: ${targetDir.walkTopDown().count { it.isFile }}")
+        PackForgeLog.d("PackForge_Debug", "Total archivos en destino: ${DirIndexCache.index(targetDir).allFiles.size}")
 
         return jsonCount
     }
@@ -1007,7 +1136,7 @@ object PackForgeOrchestrator {
         android.util.Log.d("PackForge_Manifest", rpManifestContent)
         android.util.Log.d("PackForge_Manifest", "═══════════════════════════════════════")
 
-        // ══ CAMBIO 3: VALIDACIONES OBLIGATORIAS ══
+        // ══ CAMBIO 3: VALIDACIONES OBLIGATORIAS (flexibles: soportan packs sin scripts) ══
         val bpContent = bpManifestFile.readText()
         val bpJson = JSONObject(bpContent)
         val bpHeader = bpJson.getJSONObject("header")
@@ -1019,16 +1148,28 @@ object PackForgeOrchestrator {
         require(mev.getInt(0) >= 1 && mev.getInt(1) >= 20) {
             "❌ min_engine_version es muy bajo: ${mev}"
         }
-        require(bpJson.getJSONArray("modules").length() >= 2) {
-            "❌ BP debe tener al menos 2 módulos (data + script)"
+
+        // Validar integridad: debe existir al menos un módulo "data"
+        val modules = bpJson.getJSONArray("modules")
+        val hasDataModule = (0 until modules.length()).any { i ->
+            modules.optJSONObject(i)?.optString("type", "") == "data"
         }
-        require(bpJson.getJSONArray("dependencies").length() >= 3) {
-            "❌ BP debe tener al menos 3 dependencies (RP + @minecraft/server + @minecraft/server-ui)"
+        require(hasDataModule) {
+            "❌ BP manifest sin módulo 'data' obligatorio"
+        }
+
+        // Validar que si hay RP, el BP tiene la dependencia al RP
+        val dependencies = bpJson.optJSONArray("dependencies") ?: JSONArray()
+        val rpDepPresent = (0 until dependencies.length()).any { i ->
+            (dependencies.optJSONObject(i)?.optString("uuid", "") ?: "").lowercase() == newRpHeaderUuid.lowercase()
+        }
+        require(rpDepPresent) {
+            "❌ BP manifest sin dependencia al RP fusionado"
         }
 
         android.util.Log.d(
             "PackForge_Manifest",
-            "✅ BP manifest VALIDADO: min_engine_version=${mev}, modules=${bpJson.getJSONArray("modules").length()}, deps=${bpJson.getJSONArray("dependencies").length()}"
+            "✅ BP manifest VALIDADO: min_engine_version=${mev}, modules=${modules.length()} (data+${if (hasDataModule) "✓" else "✗"}), deps=${dependencies.length()}"
         )
 
         PackForgeLog.d(TAG, "Manifests escritos con UTF-8 sin BOM")
@@ -1238,6 +1379,10 @@ object PackForgeOrchestrator {
      * CRÍTICO: NO usar behavior_packs/ o resource_packs/
      */
     private fun createMcAddon(mergedBpDir: File?, mergedRpDir: File?, outputFile: File) {
+        if (mergedBpDir != null) DirIndexCache.invalidate(mergedBpDir)
+        if (mergedRpDir != null) DirIndexCache.invalidate(mergedRpDir)
+        val bpIdx = mergedBpDir?.let { DirIndexCache.index(it) }
+        val rpIdx = mergedRpDir?.let { DirIndexCache.index(it) }
         var entryCount = 0
         ZipOutputStream(
             BufferedOutputStream(FileOutputStream(outputFile), 262144) // ⭐ 256KB buffer
@@ -1245,12 +1390,12 @@ object PackForgeOrchestrator {
             zos.setLevel(Deflater.BEST_SPEED) // ⭐ Nivel 1: ~5x más rápido, tamaño casi igual
 
             if (mergedBpDir != null && mergedBpDir.exists()) {
-                entryCount += addFolderToZip(zos, mergedBpDir, "BP_PackForge")
+                entryCount += addFolderToZip(zos, mergedBpDir, "BP_PackForge", bpIdx)
                 PackForgeLog.d("PackForge_ZIP", "✅ BP agregado como BP_PackForge/")
             }
 
             if (mergedRpDir != null && mergedRpDir.exists()) {
-                entryCount += addFolderToZip(zos, mergedRpDir, "RP_PackForge")
+                entryCount += addFolderToZip(zos, mergedRpDir, "RP_PackForge", rpIdx)
                 PackForgeLog.d("PackForge_ZIP", "✅ RP agregado como RP_PackForge/")
             }
 
@@ -1268,33 +1413,19 @@ object PackForgeOrchestrator {
         PackForgeLog.d("PackForge_ZIP", "   Tamaño: ${outputFile.length() / 1024} KB")
     }
     
-    private fun addFolderToZip(zos: ZipOutputStream, sourceFolder: File, zipFolderPath: String): Int {
+    private fun addFolderToZip(zos: ZipOutputStream, sourceFolder: File, zipFolderPath: String, idx: DirIndexCache.IndexedDir? = null): Int {
+        val entries: List<File> = idx?.allFiles ?: sourceFolder.walkTopDown().filter { it.isFile }.toList()
         var count = 0
-        sourceFolder.walkTopDown().forEach { file ->
-            val relativePath = file.relativeTo(sourceFolder).path
-            
-            // LOG ESPECIAL para pack_icon.png
-            if (file.name == "pack_icon.png") {
-                logFile { "🎨 Agregando pack_icon.png al ZIP desde: ${file.absolutePath} (${file.length()} bytes) en $zipFolderPath/$relativePath" }
+        entries.forEach { curFile: File ->
+            val relativePath = curFile.relativeTo(sourceFolder).path
+            if (curFile.name == "pack_icon.png") {
+                logFile { "🎨 Agregando pack_icon.png al ZIP desde: ${curFile.absolutePath} (${curFile.length()} bytes) en $zipFolderPath/$relativePath" }
             }
-            
-            if (file.isDirectory) {
-                // Agregar entrada de directorio
-                val dirEntry = ZipEntry("$zipFolderPath/$relativePath/")
-                zos.putNextEntry(dirEntry)
-                zos.closeEntry()
-                count++
-            } else {
-                val zipEntryName = if (relativePath.isEmpty()) 
-                    "$zipFolderPath/${file.name}" 
-                else 
-                    "$zipFolderPath/$relativePath"
-                
-                zos.putNextEntry(ZipEntry(zipEntryName))
-                FileInputStream(file).use { it.copyTo(zos, 65536) }
-                zos.closeEntry()
-                count++
-            }
+            val zipEntryName = if (relativePath.isEmpty()) "$zipFolderPath/${curFile.name}" else "$zipFolderPath/$relativePath"
+            zos.putNextEntry(ZipEntry(zipEntryName))
+            FileInputStream(curFile).use { ins -> ins.copyTo(zos, 65536) }
+            zos.closeEntry()
+            count++
         }
         return count
     }

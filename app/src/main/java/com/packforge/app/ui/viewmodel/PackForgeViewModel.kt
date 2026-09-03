@@ -15,6 +15,8 @@ import com.packforge.app.domain.engine.AddonUriCache
 import com.packforge.app.domain.engine.ConflictEngine
 import com.packforge.app.domain.engine.ModpackExporter
 import com.packforge.app.domain.engine.PackForgeOrchestrator
+import com.packforge.app.service.MergeForegroundService
+import com.packforge.app.service.MergeSession
 import com.packforge.app.domain.model.*
 import com.google.gson.Gson
 import kotlinx.coroutines.*
@@ -436,95 +438,79 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 val customName = _metadata.value.name.trim()
                     .replace(Regex("[/\\\\:*?\"<>|]"), "_") // Eliminar caracteres inválidos
                     .ifBlank { "PackForge_Modpack" }
-                
-                // Usar PackForgeOrchestrator para fusionar
-                val outputDir = context.cacheDir.absolutePath
-                val addonNames = activeAddons.map { it.name }
-                
-                val result = PackForgeOrchestrator.mergeAddons(
-                    addonPaths = activeAddonPaths,
-                    outputDir = outputDir,
-                    progressCallback = object : PackForgeOrchestrator.ProgressCallback {
-                        override suspend fun onProgress(message: String) {
-                            val percent = when {
-                                message.contains("Extrayendo") -> 10
-                                message.contains("Clasificando") -> 30
-                                message.contains("Behavior") -> 45
-                                message.contains("Resource") -> 65
-                                message.contains("críticos") -> 72
-                                message.contains("manifiestos") -> 80
-                                message.contains("Validando") -> 85
-                                message.contains("Empaquetando") -> 90
-                                message.contains("Limpiando") -> 98
-                                else -> 5
-                            }
-                            _exportState.value = ExportState.Progress(message, percent)
-                        }
-                    },
-                    addonNames = addonNames,
-                    customName = customName,
-                    customAuthor = _metadata.value.author.trim(),
-                    customVersion = _metadata.value.version.trim().ifBlank { "1.0.0" },
-                    customDescription = _metadata.value.description.trim(),
-                    customIconPath = customIconPath
-                )
-                
-                // Borrar icono temporal si se creó
-                customIconPath?.let { File(it).delete() }
-                
-                // Update merge conflicts after merge
+
+                // ═══ FUSIÓN EN SERVICIO EN PRIMER PLANO ═══
+                // La fusión corre en MergeForegroundService con notificación de progreso
+                // temática; sobrevive a que la app pase a segundo plano y este coroutine
+                // solo espera el resultado para mapear los estados de la UI.
+                if (MergeSession.isBusy()) {
+                    _exportState.value = ExportState.Error("Ya hay una fusión en curso")
+                    return@launch
+                }
+
+                // Reutilizar/editar el mismo ID del historial si ya existía.
+                if (editingModpackId == null) editingModpackId = UUID.randomUUID().toString()
+
+                MergeSession.reset(origin = "editor")
+
+                // Escribir paths a archivo de cache para evitar
+                // TransactionTooLargeException al pasar String[] por Intent.
+                val pathsFile = File(context.cacheDir, "pending_export_${System.currentTimeMillis()}.txt")
+                pathsFile.writeText(activeAddonPaths.joinToString("\n"))
+
+                MergeForegroundService.startExport(context) { intent ->
+                    intent
+                        .putExtra(MergeForegroundService.EXTRA_PATHS_FILE, pathsFile.absolutePath)
+                        .putStringArrayListExtra(MergeForegroundService.EXTRA_NAMES, ArrayList(activeAddons.map { it.name }))
+                        .putExtra(MergeForegroundService.EXTRA_NAME, customName)
+                        .putExtra(MergeForegroundService.EXTRA_AUTHOR, _metadata.value.author.trim())
+                        .putExtra(MergeForegroundService.EXTRA_VERSION, _metadata.value.version.trim().ifBlank { "1.0.0" })
+                        .putExtra(MergeForegroundService.EXTRA_DESC, _metadata.value.description.trim())
+                        .putExtra(MergeForegroundService.EXTRA_ICON, customIconPath)
+                        .putExtra(MergeForegroundService.EXTRA_COVER, _metadata.value.coverUriString)
+                        .putExtra(MergeForegroundService.EXTRA_TAGS, _metadata.value.tags.joinToString(","))
+                        .putExtra(MergeForegroundService.EXTRA_OUT_URI, outUri?.toString())
+                        .putExtra(MergeForegroundService.EXTRA_EDIT_ID, editingModpackId)
+                        // NO serializar Gson().toJson(activeAddons) aquí: causa
+                        // TransactionTooLargeException (>1 MB) por Binder limit.
+                        // El historial se persiste en el ViewModel tras la fusión
+                        // con _addons.value (la fuente de verdad).
+                }
+
+                // Espera ligera del resultado (la notificación muestra el progreso real).
+                var session = MergeSession.state.value
+                while (!session.done) {
+                    if (session.phase != "idle") {
+                        _exportState.value = ExportState.Progress(session.phase, session.percent)
+                    }
+                    kotlinx.coroutines.delay(150)
+                    session = MergeSession.state.value
+                }
+
+                // ConflictRegistry se pobló en el mismo proceso durante la fusión.
                 updateMergeConflicts()
 
-                if (result.success && result.outputPath != null) {
-                    _exportState.value = ExportState.Progress("Guardando archivo final...", 99)
-                    val outputFile = File(result.outputPath)
-                    
-                    // Si no se seleccionó URI, copiar a Downloads por defecto
-                    val finalPath = if (outUri == null) {
-                        val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                        val targetFile = File(downloadsDir, "$customName.mcaddon")
-                        try {
-                            outputFile.copyTo(targetFile, overwrite = true)
-                            targetFile.absolutePath
-                        } catch (e: Exception) {
-                            PackForgeLog.e("PackForge", "Error al copiar a Downloads: ${e.message}")
-                            outputFile.absolutePath
-                        }
-                    } else {
-                        // Copiar a la ubicación seleccionada por el usuario
-                        try {
-                            context.contentResolver.openOutputStream(outUri)?.use { output ->
-                                outputFile.inputStream().copyTo(output)
-                            }
-                            outUri.toString()
-                        } catch (e: Exception) {
-                            PackForgeLog.e("PackForge", "Error al guardar en ubicación seleccionada: ${e.message}")
-                            outputFile.absolutePath
-                        }
-                    }
-                    
-                    // ─── COPIA PERMANENTE EN ALMACENAMIENTO INTERNO ──
-                    // Garantiza que "Compartir Modpack" funcione SIEMPRE, aunque el
-                    // fichero de Downloads/SAF desaparezca o cambie de ubicación.
-                    val internalExportPath = try {
-                        val exportsDir = File(context.filesDir, "exports").apply { mkdirs() }
-                        val dest = File(exportsDir, "$customName.mcaddon")
-                        outputFile.copyTo(dest, overwrite = true)
-                        dest.absolutePath
+                if (session.success && session.outputPath != null && session.fileName != null) {
+                    // Persistir el historial desde aquí (no desde el Service)
+                    // para evitar TransactionTooLargeException al serializar addons al Intent.
+                    try {
+                        saveModpackToHistory(context, session.fileName, session.outputPath)
                     } catch (e: Exception) {
-                        PackForgeLog.e("PackForge", "No se pudo copiar a almacenamiento interno: ${e.message}")
-                        null
+                        PackForgeLog.e("PackForge_Export", "Error guardando historial: ${e.message}", e)
                     }
-
                     _exportState.value = ExportState.Success(
-                        fileName = "$customName.mcaddon",
-                        filePath = finalPath,
+                        fileName = session.fileName,
+                        filePath = session.outputPath,
                         importedToMinecraft = false
                     )
-                    saveModpackToHistory(context, "$customName.mcaddon", internalExportPath ?: finalPath)
-                    _events.emit(PackForgeEvent.ShowSnackbar("¡Modpack fusionado con éxito!"))
+                    _events.emit(PackForgeEvent.ShowSnackbar(
+                        if (session.reportPath != null)
+                            "¡Modpack fusionado! Reporte incluido junto al archivo"
+                        else
+                            "¡Modpack fusionado con éxito!"
+                    ))
                 } else {
-                    _exportState.value = ExportState.Error(result.errorMessage ?: "Fallo en la fusión")
+                    _exportState.value = ExportState.Error(session.message.ifBlank { "Fallo en la fusión" })
                 }
             } catch (e: Exception) {
                 PackForgeLog.e("PackForge_Export", "Error en exportación", e)
@@ -536,6 +522,51 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun resetExportState() { _exportState.value = ExportState.Idle }
+
+    // ── RE-FUSIÓN DE MODPACKS GUARDADOS (anti-obsolescencia) ────────────────
+
+    data class RegenStatus(val modpackId: String, val phase: String, val done: Boolean, val ok: Boolean)
+
+    private val _regenStatus = MutableStateFlow<RegenStatus?>(null)
+    val regenStatus: StateFlow<RegenStatus?> = _regenStatus.asStateFlow()
+
+    /**
+     * Re-fusiona un modpack guardado en "My Modpacks" con el motor actual,
+     * reemplazando sus artefactos (.mcaddon interno/Descargas + reporte) y
+     * actualizando su fecha. Nunca toca la fila si las fuentes ya no existen.
+     */
+    fun regenerateModpack(modpackId: String) {
+        val app = getApplication<Application>()
+        if (MergeSession.isBusy()) {
+            viewModelScope.launch { _events.emit(PackForgeEvent.ShowSnackbar("Ya hay una fusión en curso")) }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                MergeSession.reset(origin = "library")
+                MergeForegroundService.startRegenerate(app, modpackId)
+                var s = MergeSession.state.value
+                while (!s.done) {
+                    withContext(Dispatchers.Main) {
+                        _regenStatus.value = RegenStatus(modpackId, s.phase, false, false)
+                    }
+                    kotlinx.coroutines.delay(200)
+                    s = MergeSession.state.value
+                }
+                withContext(Dispatchers.Main) {
+                    _regenStatus.value = RegenStatus(modpackId, "done", true, s.success)
+                    _events.emit(PackForgeEvent.ShowSnackbar(
+                        if (s.success) s.message else "Fallo al regenerar: ${s.message}"
+                    ))
+                }
+            } catch (e: Exception) {
+                PackForgeLog.e("PackForge_Regen", "Error regenerando $modpackId", e)
+                withContext(Dispatchers.Main) {
+                    _events.emit(PackForgeEvent.ShowSnackbar("Fallo al regenerar: ${e.message}"))
+                }
+            }
+        }
+    }
 
     fun clearAll() {
         AddonUriCache.clear()
@@ -580,7 +611,13 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 createdAt = System.currentTimeMillis(),
                 coverUriString = persistentCoverPath,
                 tags = _metadata.value.tags.joinToString(","),
-                addonsJson = Gson().toJson(active)
+                // Excluir rawManifest y listas de identificadores pesadas: el historial
+                // solo necesita identidad (id, name, fileName, sourceFilePath, hasScripts).
+                // Mantener los manifests crudos aquí inflaría la DB cientos de MB.
+                addonsJson = Gson().toJson(active.map {
+                    it.copy(rawManifest = "", entityIdentifiers = emptyList(),
+                        itemIdentifiers = emptyList(), recipeIdentifiers = emptyList())
+                })
             )
             db.savedModpackDao().insert(saved)
             // Si era nuevo, ahora ya tenemos su ID

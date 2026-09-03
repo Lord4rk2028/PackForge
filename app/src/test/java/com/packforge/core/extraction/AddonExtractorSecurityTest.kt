@@ -1,5 +1,6 @@
 package com.packforge.core.extraction
 
+import com.packforge.app.domain.engine.AddonExtractor
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

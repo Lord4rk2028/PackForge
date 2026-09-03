@@ -14,6 +14,11 @@
     <!-- Para cargar imágenes web -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Fusión en segundo plano: servicio en primer plano + notificación de progreso -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <queries>
         <package android:name="com.mojang.minecraftpe" />
     </queries>
@@ -70,6 +75,11 @@
                 <data android:pathPattern=".*\\.mcpack" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".service.MergeForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
     </application>
 

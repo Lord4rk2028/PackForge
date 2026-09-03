@@ -771,7 +771,7 @@ object BedrockCriticalFilesMerger {
         bpDirs.forEach { bpDir ->
             val lootDir = File(bpDir, "loot_tables")
             if (lootDir.exists()) {
-                lootDir.walkTopDown().filter { it.isFile && it.extension == "json" }.forEach { file ->
+                lootDir.walkTopDown().filter { it.isFile && it.extension == "json" } .forEach { file ->
                     val relativePath = file.relativeTo(lootDir).path
                     val destFile = File(destLootDir, relativePath)
                     destFile.parentFile?.mkdirs()

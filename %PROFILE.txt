@@ -1,0 +1,7 @@
+function Studio {
+    $env:BROWSER="none"
+    # Ejecuta npx omniroute de forma 100% oculta en segundo plano
+    Start-Process -WindowStyle Hidden -FilePath "cmd.exe" -ArgumentList "/c npx omniroute"
+    # Levanta DeepSeek Harness en la terminal actual de VS Code
+    npx @deepseek-ai/dsh web
+}

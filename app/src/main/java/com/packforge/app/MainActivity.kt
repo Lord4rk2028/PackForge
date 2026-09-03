@@ -53,6 +53,7 @@ import com.packforge.app.ui.navigation.getScreenFromRoute
 import com.packforge.app.ui.screens.ConflictsScreen
 import com.packforge.app.ui.screens.ExportSetupScreen
 import com.packforge.app.ui.screens.ImportScreen
+import com.packforge.app.ui.screens.MergeOverlay
 import com.packforge.app.ui.screens.StudioScreen
 import com.packforge.app.ui.theme.PackForgeTheme
 import com.packforge.app.ui.viewmodel.PackForgeEvent
@@ -61,9 +62,21 @@ import com.packforge.app.ui.viewmodel.ThemeViewModel
 import kotlinx.coroutines.flow.collectLatest
 
 class MainActivity : ComponentActivity() {
+
+    /** Android 13+ exige permiso runtime para mostrar la notificación de progreso. */
+    private fun requestNotificationPermissionIfNeeded() {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            val perm = android.Manifest.permission.POST_NOTIFICATIONS
+            if (checkSelfPermission(perm) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                androidx.core.app.ActivityCompat.requestPermissions(this, arrayOf(perm), 9001)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        requestNotificationPermissionIfNeeded()
         setContent {
             val themeViewModel: ThemeViewModel = viewModel()
             val prefs by themeViewModel.preferences.collectAsStateWithLifecycle()
@@ -238,6 +251,10 @@ fun PackForgeApp(
                     )
                 }
             }
+
+            // Overlay global: bloquea la UI con diálogos de fusión durante la
+            // re-fusión desde "My Modpacks" (la exportación normal tiene su propia UI).
+            MergeOverlay()
         }
     }
 }

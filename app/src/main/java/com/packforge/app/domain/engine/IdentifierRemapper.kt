@@ -54,7 +54,16 @@ object IdentifierRemapper {
         "minecraft:recipe_furnace",
         "minecraft:recipe_brewing_mix",
         "minecraft:recipe_potion",
-        "minecraft:recipe_container_mix"
+        "minecraft:recipe_container_mix",
+        "minecraft:biome",
+        "minecraft:feature",
+        "minecraft:feature_rules",
+        "minecraft:spawn_rules",
+        "minecraft:material",
+        "minecraft:music_definition",
+        "minecraft:music",
+        "minecraft:sounds",
+        "minecraft:particle"
     )
 
     /**
@@ -247,22 +256,14 @@ object IdentifierRemapper {
         }
     }
 
-    /** Reemplaza en .lang solo líneas completas clave=valor donde el valor o clave coincida exactamente */
+    /** Reemplaza en .lang con límite de palabra para claves y valores */
     private fun rewriteIdentifiersInLang(file: File, oldId: String, newId: String) {
-        val lines = file.readLines(StandardCharsets.UTF_8).map { line ->
-            if (line.contains("=") && !line.startsWith("#")) {
-                val parts = line.split("=", limit = 2)
-                if (parts.size == 2) {
-                    val key = parts[0].trim()
-                    val value = parts[1].trim()
-                    // Reemplazar solo si la clave o valor ES EXACTAMENTE el oldId
-                    val newKey = if (key == oldId) newId else key
-                    val newValue = if (value == oldId) newId else value
-                    "$newKey=$newValue"
-                } else line
-            } else line
+        val oldIdRegex = Regex("\\b" + Regex.escape(oldId) + "\\b")
+        val text = file.readText(StandardCharsets.UTF_8)
+        val newText = oldIdRegex.replace(text, newId)
+        if (newText != text) {
+            file.writeText(newText, StandardCharsets.UTF_8)
         }
-        file.writeText(lines.joinToString("\n"), StandardCharsets.UTF_8)
     }
 
     /** Reemplazo con límite de palabra para .js/.ts/.mcfunction/.txt */

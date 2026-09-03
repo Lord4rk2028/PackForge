@@ -207,6 +207,7 @@ object AddonExtractor {
      */
     fun analyzeExtractedAddon(extractedPath: String): AddonAnalysis {
         val extractedDir = File(extractedPath)
+        PackForgeLog.d(TAG, "🔍 DIAG: Analizando addon: ${extractedDir.name}") // DIAGNÓSTICO
         if (!extractedDir.exists()) {
             PackForgeLog.e(TAG, "Carpeta extraída no existe: $extractedPath")
             return AddonAnalysis(
@@ -267,7 +268,8 @@ object AddonExtractor {
     }
 
     /**
-     * Busca recursivamente archivos JSON y los clasifica
+     * Busca recursivamente archivos JSON y los clasifica.
+     * OPTIMIZACIÓN: usa DirIndexCache (cacheado) en lugar de walkTopDown nuevo.
      */
     private fun findJsonFiles(
         dir: File,
@@ -279,34 +281,32 @@ object AddonExtractor {
         recipeFiles: MutableList<String>,
         otherJsonFiles: MutableList<String>
     ) {
-        dir.listFiles()?.forEach { file ->
-            if (file.isDirectory) {
-                val newPath = if (basePath.isEmpty()) file.name else "$basePath/${file.name}"
-                findJsonFiles(file, newPath, manifestFiles, itemFiles, entityFiles, lootFiles, recipeFiles, otherJsonFiles)
-            } else if (file.name.endsWith(".json", ignoreCase = true)) {
-                val fullPath = if (basePath.isEmpty()) file.name else "$basePath/${file.name}"
-                
-                when {
-                    file.name == "manifest.json" -> {
-                        manifestFiles.add(fullPath)
-                    }
-                    file.name == "blocks.json" || 
-                    basePath.contains("items", ignoreCase = true) ||
-                    basePath.contains("item", ignoreCase = true) -> {
-                        itemFiles.add(fullPath)
-                    }
-                    basePath.contains("entities", ignoreCase = true) -> {
-                        entityFiles.add(fullPath)
-                    }
-                    basePath.contains("loot_tables", ignoreCase = true) -> {
-                        lootFiles.add(fullPath)
-                    }
-                    basePath.contains("recipes", ignoreCase = true) -> {
-                        recipeFiles.add(fullPath)
-                    }
-                    else -> {
-                        otherJsonFiles.add(fullPath)
-                    }
+        val jsonFiles = DirIndexCache.index(dir).jsonFiles
+        jsonFiles.forEach { file ->
+            val rel = file.relativeTo(dir).path.replace("\\", "/")
+            val fullPath = if (rel.isEmpty()) file.name else rel
+            val lowerPath = fullPath.lowercase()
+
+            when {
+                file.name == "manifest.json" -> {
+                    manifestFiles.add(fullPath)
+                }
+                file.name == "blocks.json" ||
+                lowerPath.contains("items/") ||
+                lowerPath.contains("/item/") || lowerPath.startsWith("items/") -> {
+                    itemFiles.add(fullPath)
+                }
+                lowerPath.contains("entities/") || lowerPath.contains("/entity/") -> {
+                    entityFiles.add(fullPath)
+                }
+                lowerPath.contains("loot_tables/") || lowerPath.contains("loot_tables") -> {
+                    lootFiles.add(fullPath)
+                }
+                lowerPath.contains("recipes/") || lowerPath.contains("recipes") -> {
+                    recipeFiles.add(fullPath)
+                }
+                else -> {
+                    otherJsonFiles.add(fullPath)
                 }
             }
         }
