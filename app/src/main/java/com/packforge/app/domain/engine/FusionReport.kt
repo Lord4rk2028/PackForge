@@ -1,4 +1,4 @@
-﻿package com.packforge.app.domain.engine
+package com.packforge.app.domain.engine
 
 data class FusionIssue(
     val addonName: String,
@@ -21,7 +21,7 @@ object FusionReportBuilder {
 
     fun generateReport(): String {
         return issues.joinToString("\n\n") { 
-            "[\] Addon: \ | File: \\nTech: \\nUser: \" 
+            "[${it.severity}] Addon: ${it.addonName} | File: ${it.failedFile}\nTech: ${it.technicalReason}\nUser: ${it.userReason}" 
         }
     }
     

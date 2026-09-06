@@ -5,6 +5,7 @@ import com.packforge.app.util.PackForgeLog
 import org.json.JSONObject
 import java.io.File
 import java.nio.charset.StandardCharsets
+import kotlin.math.abs
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════════
@@ -24,6 +25,8 @@ import java.nio.charset.StandardCharsets
 object PackForgeHealer {
     private const val TAG = "PackForge_Healer"
     private const val FUZZY_THRESHOLD = 0.85
+    /** El healer es diagnóstico: nunca debe retener la exportación por miles de avisos similares. */
+    private const val MAX_REFERENCE_REPORTS = 100
 
     data class FuzzyMatch(
         val missingRef: String,
@@ -163,7 +166,9 @@ object PackForgeHealer {
     }
 
     private fun checkMaterialInstances(bpDir: File, rpDir: File, inventory: Set<String>, fuzzy: MutableList<FuzzyMatch>, unresolved: MutableList<UnresolvedRef>) {
-        bpDir.walkTopDown().filter { it.isFile && it.extension.equals("json", true) }.forEach { file ->
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val cachedFiles = DirIndexCache.index(bpDir).jsonFiles
+        for (file in cachedFiles) {
             try {
                 val json = JSONObject(file.readText(StandardCharsets.UTF_8))
                 checkMaterialInstancesInJson(json, file, rpDir, inventory, fuzzy, unresolved)
@@ -199,7 +204,9 @@ object PackForgeHealer {
     private fun checkRenderControllers(rpDir: File, inventory: Set<String>, fuzzy: MutableList<FuzzyMatch>, unresolved: MutableList<UnresolvedRef>) {
         val rcDir = File(rpDir, "render_controllers")
         if (!rcDir.isDirectory) return
-        rcDir.walkTopDown().filter { it.isFile && it.extension.equals("json", true) }.forEach { file ->
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val cachedFiles = DirIndexCache.index(rcDir).jsonFiles
+        for (file in cachedFiles) {
             try {
                 val json = JSONObject(file.readText(StandardCharsets.UTF_8))
                 json.optJSONObject("render_controllers")?.keys()?.forEachRemaining { rcKey ->
@@ -221,7 +228,8 @@ object PackForgeHealer {
     private fun checkEntityTextures(rpDir: File, inventory: Set<String>, fuzzy: MutableList<FuzzyMatch>, unresolved: MutableList<UnresolvedRef>) {
         val entityDir = File(rpDir, "entity")
         if (!entityDir.isDirectory) return
-        entityDir.walkTopDown().filter { it.isFile && it.extension.equals("json", true) }.forEach { file ->
+        val entityFiles = DirIndexCache.index(entityDir).jsonFiles
+        for (file in entityFiles) {
             try {
                 val json = JSONObject(file.readText(StandardCharsets.UTF_8))
                 json.optJSONObject("minecraft:client_entity")?.optJSONObject("description")
@@ -261,6 +269,11 @@ object PackForgeHealer {
     // ── HELPERS ────────────────────────────────────────────────────────
 
     private fun checkTextureReference(texRef: String, fileName: String, inventory: Set<String>, fuzzy: MutableList<FuzzyMatch>, unresolved: MutableList<UnresolvedRef>) {
+        // Referencias dinámicas de render controllers, no rutas de archivos.
+        if (texRef.startsWith("Array.") || texRef.startsWith("variable.") || texRef.startsWith("query.")) return
+        if (fuzzy.size + unresolved.size >= MAX_REFERENCE_REPORTS) return
+        if (fuzzy.any { it.missingRef == texRef } || unresolved.any { it.missingRef == texRef }) return
+
         // Normalize: quitar prefijo "textures/" si existe
         val normalized = texRef.trim().removePrefix("textures/")
         val stem = normalized.substringBeforeLast('.')
@@ -270,7 +283,11 @@ object PackForgeHealer {
         if (inventory.contains(stem) || inventory.contains("$stem.$ext") || inventory.contains(texRef)) return
 
         // Fuzzy match
-        val bestMatch = inventory.maxByOrNull { levenshteinSimilarity(stem, it.substringBeforeLast('.')) }
+        // La similitud es solo una sugerencia visual. Limitar candidatos por longitud
+        // evita O(referencias × todas las texturas) en resource packs grandes.
+        val bestMatch = inventory.asSequence()
+            .filter { abs(it.substringBeforeLast('.').length - stem.length) <= 24 }
+            .maxByOrNull { levenshteinSimilarity(stem, it.substringBeforeLast('.')) }
         val score = if (bestMatch != null) levenshteinSimilarity(stem, bestMatch.substringBeforeLast('.')) else 0.0
 
         if (score >= FUZZY_THRESHOLD) {
@@ -296,7 +313,8 @@ object PackForgeHealer {
         val textures = mutableSetOf<String>()
         val texDir = File(rpDir, "textures")
         if (!texDir.isDirectory) return textures
-        texDir.walkTopDown().filter { it.isFile }.forEach { file ->
+        val textureFiles = DirIndexCache.index(texDir).allFiles
+        for (file in textureFiles) {
             val rel = file.relativeTo(texDir).path.replace("\\", "/")
             val stem = rel.substringBeforeLast('.')
             textures.add(stem)

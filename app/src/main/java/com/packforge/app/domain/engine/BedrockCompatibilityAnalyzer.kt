@@ -103,9 +103,12 @@ object BedrockCompatibilityAnalyzer {
                 }
             }
 
-            pack.directory.walkTopDown().filter { it.isFile && it.extension.equals("js", true) }.forEach { script ->
+            // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+            val allFiles = DirIndexCache.index(pack.directory).allFiles
+            val scriptFiles = allFiles.filter { it.extension.equals("js", true) }
+            for (script in scriptFiles) {
                 val relativeFile = script.relativeTo(pack.directory).invariantSeparatorsPath
-                val code = try { script.readText(Charsets.UTF_8) } catch (_: Exception) { return@forEach }
+                val code = try { script.readText(Charsets.UTF_8) } catch (_: Exception) { continue }
                 customComponentPattern.findAll(code).forEach { match ->
                     val component = match.groupValues[1]
                     val previous = componentOwners.putIfAbsent(component, pack.id)

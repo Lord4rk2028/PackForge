@@ -99,7 +99,7 @@ object PackForgeValidator {
         val idx = PackIndex(rpDir)
 
         // UNA sola pasada por el RP fusionado
-        rpDir.walkTopDown().filter { it.isFile }.forEach { file ->
+        DirIndexCache.index(rpDir).allFiles.forEach { file ->
             idx.rpIndex.add(file.relativeTo(rpDir).invariantSeparatorsPath)
             idx.rpByName.putIfAbsent(file.name.lowercase(), file)
         }
@@ -108,7 +108,7 @@ object PackForgeValidator {
         // reemplaza los walkTopDown().find{} de antes que corrían dentro de bucles)
         addonDirs.forEach { addonDir ->
             if (!addonDir.exists()) return@forEach
-            addonDir.walkTopDown().filter { it.isFile }.forEach { file ->
+            DirIndexCache.index(addonDir).allFiles.forEach { file ->
                 idx.addonByName.putIfAbsent(file.name.lowercase(), file)
             }
         }
@@ -123,6 +123,7 @@ object PackForgeValidator {
         bpDir: File?,
         rpDir: File?,
         originalAddons: List<String>,
+        identifierIndex: BedrockIdentifierIndex? = null,
         progressCallback: PackForgeOrchestrator.ProgressCallback? = null
     ): ValidationResult {
         val tValidador = System.currentTimeMillis()
@@ -173,7 +174,7 @@ object PackForgeValidator {
 
         // VALIDACIÓN 3: Referencias de Entidades (RP ↔ RP)
         PackForgeLog.d(TAG, "📦 VALIDACIÓN 3: Referencias de Entidades")
-        fixedReferences += validateEntityReferences(rpDir, idx, missingTextures, missingModels, progressCallback)
+        fixedReferences += validateEntityReferences(rpDir, idx, identifierIndex ?: BedrockIdentifierIndex(emptyMap()), missingTextures, missingModels, progressCallback)
 
         // VALIDACIÓN 4: Archivos .lang (CRÍTICO - "desconocido")
         PackForgeLog.d(TAG, "📦 VALIDACIÓN 4: Archivos .lang (concatenar)")
@@ -185,7 +186,7 @@ object PackForgeValidator {
 
         // VALIDACIÓN 6: Render controllers y animaciones
         PackForgeLog.d(TAG, "📦 VALIDACIÓN 6: Render controllers y animaciones")
-        fixedReferences += validateRenderControllers(rpDir, idx, missingTextures)
+        fixedReferences += validateRenderControllers(rpDir, idx, identifierIndex ?: BedrockIdentifierIndex(emptyMap()), missingTextures)
 
         val tValidadorFin = System.currentTimeMillis()
 
@@ -389,6 +390,7 @@ object PackForgeValidator {
     private suspend fun validateEntityReferences(
         rpDir: File,
         idx: PackIndex,
+        identifierIndex: BedrockIdentifierIndex,
         missingTextures: MutableList<String>,
         missingModels: MutableList<String>,
         progressCallback: PackForgeOrchestrator.ProgressCallback?
@@ -416,9 +418,10 @@ object PackForgeValidator {
         for (entityFile in entityFiles) {
             try {
                 val json = JSONObject(entityFile.readText())
+                val desc = json.optJSONObject("minecraft:client_entity")?.optJSONObject("description") ?: json.optJSONObject("description")
 
                 // Validar texturas
-                val texturesObj = json.optJSONObject("textures")
+                val texturesObj = json.optJSONObject("textures") ?: desc?.optJSONObject("textures")
                 texturesObj?.keys()?.forEach { textureKey ->
                     val texturePath = texturesObj.optString(textureKey)
                     val textureName = texturePath.substringAfterLast("/")
@@ -436,15 +439,27 @@ object PackForgeValidator {
                 }
 
                 // Validar geometría
-                val geometryStr = json.optString("geometry")
-                if (geometryStr.isNotEmpty()) {
-                    val geometryName = geometryStr.substringAfterLast(".")
+                val geometryList = desc?.optJSONObject("geometry") ?: desc ?: json
+                val geometryNames = mutableListOf<String>()
+                
+                // Extraer geometrías (pueden ser string simple o objeto con alias)
+                val geo = desc?.opt("geometry") ?: json.opt("geometry")
+                if (geo is String) geometryNames.add(geo.substringAfterLast("."))
+                else if (geo is JSONObject) geo.keys().forEach { geometryNames.add(geo.optString(it).substringAfterLast(".")) }
 
+                geometryNames.forEach { geometryName ->
                     if (!idx.has("models/entity/$geometryName.geo.json")) {
-                        logFile { "⚠️ Entidad sin geometría: ${entityFile.name} -> $geometryStr" }
-
-                        val found = searchAndCopyFile(geometryName, ".geo.json", modelsEntityDir, idx)
-                        if (!found) {
+                        logFile { "🔍 Buscando geometría por identificador: $geometryName" }
+                        
+                        // Usar el índice de identificadores Bedrock
+                        val geoFile = identifierIndex?.resolve("geometry.$geometryName")
+                        if (geoFile != null) {
+                            val destFile = File(modelsEntityDir, "${geoFile.name}")
+                            geoFile.copyTo(destFile, overwrite = true)
+                            idx.markCopiedInRp(destFile)
+                            fixedCount++
+                            logFile { "✅ Geometría encontrada en índice y copiada: ${geoFile.name}" }
+                        } else {
                             missingModels.add("models/entity/$geometryName.geo.json")
                         }
                     }
@@ -627,6 +642,7 @@ object PackForgeValidator {
     private fun validateRenderControllers(
         rpDir: File,
         idx: PackIndex,
+        identifierIndex: BedrockIdentifierIndex,
         missingTextures: MutableList<String>
     ): Int {
         var fixedCount = 0
@@ -657,6 +673,9 @@ object PackForgeValidator {
                             }
                         }
                     }
+                    
+                    // Validar referencias a materiales/render controllers (opcional, basado en identifierIndex)
+                    // ...
                 } catch (e: Exception) {
                     logFile { "Error validando render controller ${rcFile.name}: ${e.message}" }
                 }

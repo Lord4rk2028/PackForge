@@ -63,15 +63,12 @@ object DirIndexCache {
             val byPath = HashMap<String, File>()
 
             if (root.isDirectory) {
-                var filesProcessed = 0
                 fun scan(dir: File, depth: Int) {
                     if (depth > 20) return
                     dir.listFiles()?.forEach { f ->
-                        if (filesProcessed > 5000) return@forEach
                         if (f.isDirectory) {
                             scan(f, depth + 1)
                         } else {
-                            filesProcessed++
                             all.add(f)
                             val rel = f.relativeTo(root).path.replace("\\", "/")
                             byPath[rel] = f

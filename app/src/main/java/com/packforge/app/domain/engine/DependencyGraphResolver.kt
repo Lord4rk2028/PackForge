@@ -266,9 +266,11 @@ object DependencyGraphResolver {
 
         fun scan(root: File, filter: (String) -> Boolean, handler: (File, JSONObject) -> Unit) {
             if (!root.isDirectory) return
-            root.walkTopDown().filter { it.isFile && it.extension.equals("json", true) }.forEach { file ->
+            // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+            val cachedFiles = DirIndexCache.index(root).jsonFiles
+            for (file in cachedFiles) {
                 val rel = file.relativeTo(root).path.replace("\\", "/")
-                if (!filter(rel)) return@forEach
+                if (!filter(rel)) continue
                 try {
                     handler(file, JSONObject(file.readText(StandardCharsets.UTF_8)))
                 } catch (_: Exception) {}
@@ -385,7 +387,9 @@ object DependencyGraphResolver {
         (rpDirs + bpDirs).forEach { root ->
             if (!root.isDirectory) return@forEach
             val tag = addonTag(root)
-            root.walkTopDown().filter { it.isFile }.forEach { file ->
+            // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+            val cachedFiles = DirIndexCache.index(root).allFiles
+            for (file in cachedFiles) {
                 val rel = file.relativeTo(root).path.replace("\\", "/")
                 index.putRaw(rel, Entry(rel, ResType.FILE_PATH, file, tag, root))
             }
@@ -731,17 +735,22 @@ object DependencyGraphResolver {
 
     private fun appendTargets(dir: File, root: File, out: MutableList<Pair<File, File>>) {
         if (!dir.isDirectory) return
-        dir.walkTopDown().filter { it.isFile && it.extension.equals("json", true) }
-            .forEach { out.add(it to root) }
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val cachedFiles = DirIndexCache.index(dir).jsonFiles
+        for (file in cachedFiles) {
+            out.add(file to root)
+        }
     }
 
     /** Siembra ids y rutas que YA viven en el pack fusionado. */
     private fun seedOutputs(root: File, state: ResolveState, isBp: Boolean) {
         if (!root.isDirectory) return
-        root.walkTopDown().filter { it.isFile }.forEach { file ->
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val cachedFiles = DirIndexCache.index(root).allFiles
+        for (file in cachedFiles) {
             val rel = file.relativeTo(root).path.replace("\\", "/")
             state.learn(ResType.FILE_PATH, rel)
-            if (!file.extension.equals("json", true)) return@forEach
+            if (!file.extension.equals("json", true)) continue
             try {
                 val j = JSONObject(file.readText(StandardCharsets.UTF_8))
                 if (rel.endsWith(".geo.json", true)) {

@@ -38,9 +38,10 @@ object ScriptCollisionAnalyzer {
         val findings = mutableListOf<String>()
         if (scriptsDir == null || !scriptsDir.isDirectory) return findings
 
-        val jsFiles = scriptsDir.walkTopDown()
-            .filter { it.isFile && it.extension.lowercase(Locale.ROOT) in SCRIPT_EXTENSIONS }
-            .toList()
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val allFiles = DirIndexCache.index(scriptsDir).allFiles
+        val jsFiles = allFiles
+            .filter { it.extension.lowercase(Locale.ROOT) in SCRIPT_EXTENSIONS }
 
         // 1) Duplicados de declaraciones top-level dentro del MISMO archivo
         jsFiles.forEach { file ->

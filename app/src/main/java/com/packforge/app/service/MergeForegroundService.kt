@@ -22,7 +22,9 @@ import com.packforge.app.domain.engine.PackForgeOrchestrator
 import com.packforge.app.ui.viewmodel.ThemeAccent
 import com.packforge.app.util.PackForgeLog
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -97,6 +99,8 @@ object MergeSession {
 class MergeForegroundService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Trabajo en curso; se cancela de forma explícita desde ACTION_CANCEL. */
+    private var activeMergeJob: Job? = null
     private var lastUpdateTime = mutableMapOf<Any?, Long>().withDefault { 0L }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -112,18 +116,24 @@ class MergeForegroundService : Service() {
             ACTION_CANCEL -> {
                 PackForgeLog.d(TAG, "🛑 Solicitud de cancelación recibida")
                 MergeSession.cancel()
+                activeMergeJob?.cancel(CancellationException("Merge cancelled by user"))
                 stopSelf()
             }
             ACTION_REGENERATE -> {
                 val id = intent.getStringExtra(EXTRA_REGENERATE_ID)
-                scope.launch { runRegenerate(id, accentColor) }
+                activeMergeJob?.cancel()
+                activeMergeJob = scope.launch { runRegenerate(id, accentColor) }
             }
-            else -> scope.launch { runExport(intent, accentColor) }
+            else -> {
+                activeMergeJob?.cancel()
+                activeMergeJob = scope.launch { runExport(intent, accentColor) }
+            }
         }
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        activeMergeJob?.cancel()
         scope.cancel()
         super.onDestroy()
     }
@@ -197,6 +207,9 @@ class MergeForegroundService : Service() {
                 reportPath = reportPath, regenerateId = null
             )
             notifyFinal(true, "Guardado en ${dest.whereLabel}. Reporte: ${reportHint(reportPath)}", accentColor)
+        } catch (e: CancellationException) {
+            PackForgeLog.d(TAG, "Export cancelled")
+            throw e
         } catch (e: Exception) {
             PackForgeLog.e(TAG, "Error en servicio de exportación", e)
             fail(e.message ?: "Error desconocido", null, null)
@@ -264,6 +277,9 @@ class MergeForegroundService : Service() {
                 reportPath = reportPath, regenerateId = modpackId
             )
             notifyFinal(true, "Regenerado con el motor actual. ${reportHint(reportPath)}", accentColor)
+        } catch (e: CancellationException) {
+            PackForgeLog.d(TAG, "Regeneration cancelled")
+            throw e
         } catch (e: Exception) {
             PackForgeLog.e(TAG, "Error regenerando modpack", e)
             fail(e.message ?: "Error desconocido", null, modpackId)

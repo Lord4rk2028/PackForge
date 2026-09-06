@@ -85,53 +85,53 @@ object AddonParser {
             var rawManifest = ""
             var iconPath: String? = null
 
-            parseTempDir.walkTopDown().forEach { file ->
-                if (file.isFile) {
-                    val entryName = file.relativeTo(parseTempDir).path.replace("\\", "/")
-                    allFiles.add(entryName)
+            // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+            val cachedFiles = DirIndexCache.index(parseTempDir).allFiles
+            for (file in cachedFiles) {
+                val entryName = file.relativeTo(parseTempDir).path.replace("\\", "/")
+                allFiles.add(entryName)
 
-                    // Extraer icono
-                    if (entryName.lowercase().endsWith("pack_icon.png") && iconPath == null) {
-                        try {
-                            val iconFile = File(context.cacheDir, "icon_${addonId}.png")
-                            FileUtils.fastCopy(file, iconFile)
-                            iconPath = iconFile.absolutePath
-                        } catch (e: Exception) {}
-                    }
+                // Extraer icono
+                if (entryName.lowercase().endsWith("pack_icon.png") && iconPath == null) {
+                    try {
+                        val iconFile = File(context.cacheDir, "icon_${addonId}.png")
+                        FileUtils.fastCopy(file, iconFile)
+                        iconPath = iconFile.absolutePath
+                    } catch (e: Exception) {}
+                }
 
-                    // Clasificación para el modelo visual
-                    val lower = entryName.lowercase()
-                    when {
-                        lower.contains("behavior") || lower.contains("bp/") || lower.startsWith("entities/") || lower.startsWith("items/") -> behaviorFiles.add(entryName)
-                        lower.contains("resource") || lower.contains("rp/") || lower.startsWith("textures/") || lower.startsWith("models/") -> resourceFiles.add(entryName)
-                    }
+                // Clasificación para el modelo visual
+                val lower = entryName.lowercase()
+                when {
+                    lower.contains("behavior") || lower.contains("bp/") || lower.startsWith("entities/") || lower.startsWith("items/") -> behaviorFiles.add(entryName)
+                    lower.contains("resource") || lower.contains("rp/") || lower.startsWith("textures/") || lower.startsWith("models/") -> resourceFiles.add(entryName)
+                }
 
-                    if (SCRIPT_EXTENSIONS.any { lower.endsWith(".$it") } && (lower.startsWith("scripts/") || lower.contains("/scripts/"))) {
-                        hasScripts = true
-                    }
+                if (SCRIPT_EXTENSIONS.any { lower.endsWith(".$it") } && (lower.startsWith("scripts/") || lower.contains("/scripts/"))) {
+                    hasScripts = true
+                }
 
-                    // Leer manifest y identifiers
-                    if (lower.endsWith("manifest.json")) {
-                        try {
-                            val jsonText = file.readText(Charsets.UTF_8)
-                            val json = JSONObject(jsonText)
-                            rawManifest = jsonText
-                            json.optJSONObject("header")?.let { h ->
-                                manifestUuid = h.optString("uuid", manifestUuid)
-                                h.optJSONArray("version")?.let { v -> version = "${v.optInt(0)}.${v.optInt(1)}.${v.optInt(2)}" }
-                                h.optJSONArray("min_engine_version")?.let { v -> minEngineVersion = listOf(v.optInt(0, 1), v.optInt(1, 20), v.optInt(2, 0)) }
-                            }
-                        } catch (e: Exception) {}
-                    }
+                // Leer manifest y identifiers
+                if (lower.endsWith("manifest.json")) {
+                    try {
+                        val jsonText = file.readText(Charsets.UTF_8)
+                        val json = JSONObject(jsonText)
+                        rawManifest = jsonText
+                        json.optJSONObject("header")?.let { h ->
+                            manifestUuid = h.optString("uuid", manifestUuid)
+                            h.optJSONArray("version")?.let { v -> version = "${v.optInt(0)}.${v.optInt(1)}.${v.optInt(2)}" }
+                            h.optJSONArray("min_engine_version")?.let { v -> minEngineVersion = listOf(v.optInt(0, 1), v.optInt(1, 20), v.optInt(2, 0)) }
+                        }
+                    } catch (e: Exception) {}
+                }
 
-                    if (lower.endsWith(".json")) {
-                        try {
-                            val json = JSONObject(file.readText(Charsets.UTF_8))
-                            if (lower.contains("entities/")) extractEntityIdentifier(json)?.let { entityIdentifiers.add(it) }
-                            if (lower.contains("items/")) extractItemIdentifier(json)?.let { itemIdentifiers.add(it) }
-                            if (lower.contains("recipes/")) extractRecipeIdentifier(json)?.let { recipeIdentifiers.add(it) }
-                        } catch (e: Exception) {}
-                    }
+                if (lower.endsWith(".json")) {
+                    try {
+                        val json = JSONObject(file.readText(Charsets.UTF_8))
+                        if (lower.contains("entities/")) extractEntityIdentifier(json)?.let { entityIdentifiers.add(it) }
+                        if (lower.contains("items/")) extractItemIdentifier(json)?.let { itemIdentifiers.add(it) }
+                        if (lower.contains("recipes/")) extractRecipeIdentifier(json)?.let { recipeIdentifiers.add(it) }
+                    } catch (e: Exception) {}
                 }
             }
 
@@ -197,8 +197,10 @@ object AddonParser {
             return null
         }
         var iconPath: String? = null
-        File(extracted).walkTopDown().forEach { f ->
-            if (f.isFile && f.name.equals("pack_icon.png", ignoreCase = true) && iconPath == null) {
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val cachedFiles = DirIndexCache.index(File(extracted)).allFiles
+        for (f in cachedFiles) {
+            if (f.name.equals("pack_icon.png", ignoreCase = true) && iconPath == null) {
                 val dest = File(context.cacheDir, "icon_$addonId.png")
                 try {
                     FileUtils.fastCopy(f, dest)

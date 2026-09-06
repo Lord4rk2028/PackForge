@@ -180,13 +180,13 @@ object IdentifierRemapper {
     private fun collectDeclaredIds(packDir: File): Map<String, File>? {
         val result = mutableMapOf<String, File>()
         try {
-            packDir.walkTopDown().forEach { file ->
-                if (file.isFile && file.extension.equals("json", ignoreCase = true)) {
-                    val id = readDeclaredIdentifier(file) ?: return@forEach
-                    // Evitar renombrar manifest.json por accidente
-                    if (file.name.equals("manifest.json", true)) return@forEach
-                    result[id] = file
-                }
+            // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+            val cachedFiles = DirIndexCache.index(packDir).jsonFiles
+            for (file in cachedFiles) {
+                val id = readDeclaredIdentifier(file) ?: continue
+                // Evitar renombrar manifest.json por accidente
+                if (file.name.equals("manifest.json", true)) continue
+                result[id] = file
             }
         } catch (e: Exception) {
             PackForgeLog.e(TAG, "Error escaneando ${packDir.name}: ${e.message}")
@@ -228,10 +228,11 @@ object IdentifierRemapper {
     private fun rewriteIdentifiersInDir(dir: File, oldId: String, newId: String) {
         val oldIdRegex = Regex("\\b" + Regex.escape(oldId) + "\\b")
 
-        dir.walkTopDown().forEach { file ->
-            if (!file.isFile) return@forEach
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val cachedFiles = DirIndexCache.index(dir).allFiles
+        for (file in cachedFiles) {
             val ext = file.extension.lowercase(Locale.ROOT)
-            if (ext !in setOf("json", "lang", "mcfunction", "txt") + SCRIPT_EXTENSIONS) return@forEach
+            if (ext !in setOf("json", "lang", "mcfunction", "txt") + SCRIPT_EXTENSIONS) continue
             try {
                 when (ext) {
                     "json" -> rewriteIdentifiersInJson(file, oldId, newId)
@@ -283,11 +284,10 @@ object IdentifierRemapper {
      */
     private fun renameCollidingFiles(dir: File, oldId: String, newId: String) {
         val oldName = sanitizeIdName(oldId.substringAfter(':', oldId))
-        dir.walkTopDown().forEach { file ->
-            if (!file.isFile) return@forEach
-            if (file.name.equals("manifest.json", true)) return@forEach
-            val ext = file.extension.lowercase(Locale.ROOT)
-            if (ext != "json") return@forEach
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val cachedFiles = DirIndexCache.index(dir).jsonFiles
+        for (file in cachedFiles) {
+            if (file.name.equals("manifest.json", true)) continue
 
             val declaresOldId = try {
                 readDeclaredIdentifier(file) == oldId
@@ -301,7 +301,7 @@ object IdentifierRemapper {
                     .substringBefore(".client")
                 stem == oldName
             }
-            if (!declaresOldId && !baseMatches) return@forEach
+            if (!declaresOldId && !baseMatches) continue
 
             val suffix = "_${PF_NAMESPACE}_${sanitizeIdName(oldId.substringAfter(':', oldId))}"
             val newPath = File(file.parentFile, "${file.nameWithoutExtension}${suffix}.json")

@@ -95,9 +95,11 @@ object EntityDependencyResolver {
         val index = LinkedHashMap<String, MutableList<Candidate>>()
         for (root in dirs) {
             if (!root.isDirectory) continue
-            root.walkTopDown().filter { it.isFile && it.extension.equals("json", true) }.forEach { file ->
+            // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+            val cachedFiles = DirIndexCache.index(root).jsonFiles
+            for (file in cachedFiles) {
                 val rel = file.relativeTo(root).path.replace("\\", "/")
-                if (!pathMatcher(rel)) return@forEach
+                if (!pathMatcher(rel)) continue
                 try {
                     val bytes = file.readBytes() // UNA sola lectura: parseo + hash desde el mismo buffer
                     val text = String(bytes, StandardCharsets.UTF_8)
@@ -116,7 +118,9 @@ object EntityDependencyResolver {
 
     private fun scanMerged(mergedRpDir: File): MergedIndex {
         val idx = MergedIndex()
-        mergedRpDir.walkTopDown().filter { it.isFile && it.extension.equals("json", true) }.forEach { file ->
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val cachedFiles = DirIndexCache.index(mergedRpDir).jsonFiles
+        for (file in cachedFiles) {
             val rel = file.relativeTo(mergedRpDir).path.replace("\\", "/")
             try {
                 val json = JSONObject(file.readText(StandardCharsets.UTF_8))
@@ -215,9 +219,13 @@ object EntityDependencyResolver {
             val map = HashMap<String, File>()
             for (root in rpDirs) {
                 if (!root.isDirectory) continue
-                root.walkTopDown().filter {
-                    it.isFile && it.extension.lowercase(Locale.ROOT) in IMAGE_EXTS
-                }.forEach { map.putIfAbsent(it.name.lowercase(Locale.ROOT), it) }
+                // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+                val cachedFiles = DirIndexCache.index(root).allFiles
+                for (file in cachedFiles) {
+                    if (file.extension.lowercase(Locale.ROOT) in IMAGE_EXTS) {
+                        map.putIfAbsent(file.name.lowercase(Locale.ROOT), file)
+                    }
+                }
             }
             map
         }
@@ -226,11 +234,13 @@ object EntityDependencyResolver {
         val entityRoot = File(mergedRpDir, "entity")
         if (!entityRoot.isDirectory) return listOf("Sin carpeta entity/ en el RP fusionado.")
 
-        entityRoot.walkTopDown().filter { it.isFile && it.extension.equals("json", true) }.forEach { file ->
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val cachedFiles = DirIndexCache.index(entityRoot).jsonFiles
+        for (file in cachedFiles) {
             try {
                 val json = JSONObject(file.readText(StandardCharsets.UTF_8))
                 val desc = json.optJSONObject("minecraft:client_entity")?.optJSONObject("description")
-                    ?: return@forEach
+                    ?: continue
 
                 // ── 1) GEOMETRÍA (string u objeto {"default": …}) ──
                 val geoId = readGeometryId(desc)

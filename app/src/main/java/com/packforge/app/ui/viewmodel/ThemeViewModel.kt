@@ -19,6 +19,8 @@ import kotlinx.coroutines.withTimeout
 
 private val Context.themeDataStore: DataStore<Preferences> by preferencesDataStore(name = "theme_preferences")
 
+private const val SP_THEME_CACHE = "theme_preferences_cache"
+
 private val DARK_MODE_KEY = booleanPreferencesKey("dark_mode")
 private val AMOLED_MODE_KEY = booleanPreferencesKey("amoled_mode")
 private val ACCENT_HEX_KEY = stringPreferencesKey("accent_hex")
@@ -26,38 +28,66 @@ private val VIVID_COLORS_KEY = booleanPreferencesKey("vivid_colors")
 private val EXPRESSIVE_MOTION_KEY = booleanPreferencesKey("expressive_motion")
 private val VERBOSE_FILE_LOGS_KEY = booleanPreferencesKey("verbose_file_logs")
 
-class ThemeViewModel(application: Application) : AndroidViewModel(application) {
+private fun Preferences.toThemePreferences(): ThemePreferences {
+    val verbose = this[VERBOSE_FILE_LOGS_KEY] ?: false
+    PackForgeConfig.verboseFileLogs = verbose
+    return ThemePreferences(
+        darkMode = this[DARK_MODE_KEY] ?: true,
+        amoledMode = this[AMOLED_MODE_KEY] ?: false,
+        accentHex = this[ACCENT_HEX_KEY] ?: "#2ECC71",
+        vividColors = this[VIVID_COLORS_KEY] ?: true,
+        expressiveMotion = this[EXPRESSIVE_MOTION_KEY] ?: true,
+        verboseFileLogs = verbose
+    )
+}
 
-    private val dataStore = application.themeDataStore
-
-    private fun Preferences.toThemePreferences(): ThemePreferences {
-        val verbose = this[VERBOSE_FILE_LOGS_KEY] ?: false
-        PackForgeConfig.verboseFileLogs = verbose
-        return ThemePreferences(
-            darkMode = this[DARK_MODE_KEY] ?: true,
-            amoledMode = this[AMOLED_MODE_KEY] ?: false,
-            accentHex = this[ACCENT_HEX_KEY] ?: "#2ECC71",
-            vividColors = this[VIVID_COLORS_KEY] ?: true,
-            expressiveMotion = this[EXPRESSIVE_MOTION_KEY] ?: true,
-            verboseFileLogs = verbose
-        )
-    }
-
-    private val _preferences = MutableStateFlow(
-        runBlocking {
+private fun loadCachedPreferences(context: Context, dataStore: DataStore<Preferences>): ThemePreferences {
+    val sp = context.getSharedPreferences(SP_THEME_CACHE, Context.MODE_PRIVATE)
+    if (!sp.contains("dark_mode") && !sp.contains("accent_hex")) {
+        return runBlocking {
             try {
-                withTimeout(50) { dataStore.data.first().toThemePreferences() }
+                withTimeout(1000) { dataStore.data.first().toThemePreferences() }
             } catch (e: Exception) {
                 ThemePreferences()
             }
         }
+    }
+    val verbose = sp.getBoolean("verbose_file_logs", false)
+    PackForgeConfig.verboseFileLogs = verbose
+    return ThemePreferences(
+        darkMode = sp.getBoolean("dark_mode", true),
+        amoledMode = sp.getBoolean("amoled_mode", false),
+        accentHex = sp.getString("accent_hex", "#2ECC71") ?: "#2ECC71",
+        vividColors = sp.getBoolean("vivid_colors", true),
+        expressiveMotion = sp.getBoolean("expressive_motion", true),
+        verboseFileLogs = verbose
     )
+}
+
+private fun saveCachedPreferences(context: Context, prefs: ThemePreferences) {
+    context.getSharedPreferences(SP_THEME_CACHE, Context.MODE_PRIVATE).edit()
+        .putBoolean("dark_mode", prefs.darkMode)
+        .putBoolean("amoled_mode", prefs.amoledMode)
+        .putString("accent_hex", prefs.accentHex)
+        .putBoolean("vivid_colors", prefs.vividColors)
+        .putBoolean("expressive_motion", prefs.expressiveMotion)
+        .putBoolean("verbose_file_logs", prefs.verboseFileLogs)
+        .apply()
+}
+
+class ThemeViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val dataStore = application.themeDataStore
+
+    private val _preferences = MutableStateFlow(loadCachedPreferences(application, dataStore))
     val preferences: StateFlow<ThemePreferences> = _preferences.asStateFlow()
 
     init {
         viewModelScope.launch {
             dataStore.data.collect { prefs ->
-                _preferences.value = prefs.toThemePreferences()
+                val themePrefs = prefs.toThemePreferences()
+                _preferences.value = themePrefs
+                saveCachedPreferences(application, themePrefs)
             }
         }
     }
@@ -89,21 +119,31 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
 
 /**
  * Acceso puntual al color de acento definido por el usuario para componentes
- * NO-Compose (ej. notificación del servicio de fusión). Usa el MISMO DataStore.
+ * NO-Compose (ej. notificación del servicio de fusión). Usa el MISMO DataStore o Caché SP.
  */
 object ThemeAccent {
     private const val DEFAULT_HEX = "#2ECC71"
 
     suspend fun hex(context: Context): String = try {
-        context.themeDataStore.data.first()[ACCENT_HEX_KEY] ?: DEFAULT_HEX
+        val sp = context.getSharedPreferences(SP_THEME_CACHE, Context.MODE_PRIVATE)
+        sp.getString("accent_hex", null) ?: context.themeDataStore.data.first()[ACCENT_HEX_KEY] ?: DEFAULT_HEX
     } catch (_: Exception) { DEFAULT_HEX }
 
-    /** Lectura bloqueante breve (≤50ms) pensada para onStartCommand del servicio. */
-    fun colorBlocking(context: Context): Int = runBlocking {
-        try {
-            android.graphics.Color.parseColor(hex(context).trim())
-        } catch (_: Exception) {
-            0xFF2ECC71.toInt()
+    /** Lectura síncrona instantánea pensada para onStartCommand del servicio. */
+    fun colorBlocking(context: Context): Int {
+        val sp = context.getSharedPreferences(SP_THEME_CACHE, Context.MODE_PRIVATE)
+        val hexStr = sp.getString("accent_hex", null)
+        if (hexStr != null) {
+            try {
+                return android.graphics.Color.parseColor(hexStr.trim())
+            } catch (_: Exception) {}
+        }
+        return runBlocking {
+            try {
+                android.graphics.Color.parseColor(hex(context).trim())
+            } catch (_: Exception) {
+                0xFF2ECC71.toInt()
+            }
         }
     }
 }

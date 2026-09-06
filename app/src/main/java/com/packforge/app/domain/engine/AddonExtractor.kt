@@ -327,9 +327,9 @@ object AddonExtractor {
         }
 
         // CASO 2: ZIPs anidados (.mcpack o .zip dentro) → extraer y clasificar cada uno
-        val nestedZips = dir.walkTopDown()
-            .filter { it.isFile && (it.extension.equals("mcpack", true) || it.extension.equals("zip", true)) }
-            .toList()
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val nestedZips = DirIndexCache.index(dir).allFiles
+            .filter { it.extension.equals("mcpack", true) || it.extension.equals("zip", true) }
 
         if (nestedZips.isNotEmpty()) {
             PackForgeLog.d("PackForge_Classify", "📦 ZIPs anidados detectados: ${nestedZips.size}")
@@ -412,10 +412,11 @@ object AddonExtractor {
     /**
      * Raíz real de un pack anidado: la carpeta que contiene manifest.json.
      * Si el manifest está en la raíz de `dir`, se devuelve `dir` mismo.
+     * ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
      */
     fun resolvePackRoot(dir: File): File {
-        val manifest = dir.walkTopDown()
-            .firstOrNull { it.isFile && it.name.equals("manifest.json", ignoreCase = true) }
+        val manifest = DirIndexCache.index(dir).allFiles
+            .firstOrNull { it.name.equals("manifest.json", ignoreCase = true) }
         return manifest?.parentFile ?: dir
     }
 
@@ -555,21 +556,21 @@ object AddonExtractor {
 
         // ── NIVEL 3: manifest.json DENTRO de .mcpack/.zip anidados ──
         if (name.isNullOrBlank()) {
-            extractedDir.walkTopDown()
+            // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+            val nestedZips = DirIndexCache.index(extractedDir).allFiles
                 .filter {
-                    it.isFile && (
-                        it.extension.equals("mcpack", true) ||
-                        it.extension.equals("zip", true)
-                    )
+                    it.extension.equals("mcpack", true) ||
+                    it.extension.equals("zip", true)
                 }
-                .forEach { nested ->
-                    if (name.isNullOrBlank()) {
-                        val manifest = readManifestFromZip(nested)
-                        name = manifest?.optJSONObject("header")?.optString("name")
-                            ?.takeIf { it.isNotBlank() }
-                        PackForgeLog.d("PackForge_Info", "  Nivel 3 (ZIP ${nested.name}): name=$name")
-                    }
+            
+            nestedZips.forEach { nested ->
+                if (name.isNullOrBlank()) {
+                    val manifest = readManifestFromZip(nested)
+                    name = manifest?.optJSONObject("header")?.optString("name")
+                        ?.takeIf { it.isNotBlank() }
+                    PackForgeLog.d("PackForge_Info", "  Nivel 3 (ZIP ${nested.name}): name=$name")
                 }
+            }
         }
 
         // ── FALLBACK: NUNCA "desconocido" ──

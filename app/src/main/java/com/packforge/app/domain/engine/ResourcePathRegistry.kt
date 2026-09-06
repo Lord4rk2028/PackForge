@@ -45,11 +45,13 @@ class ResourcePathRegistry {
         val renames = LinkedHashMap<String, String>()
         if (!sourceRoot.isDirectory) return renames
 
-        sourceRoot.walkTopDown().filter { it.isFile }.forEach { file ->
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val cachedFiles = DirIndexCache.index(sourceRoot).allFiles
+        for (file in cachedFiles) {
             val rel = file.relativeTo(sourceRoot).path.replace("\\", "/")
-            if (!isEligible(rel)) return@forEach
+            if (!isEligible(rel)) continue
 
-            val hash = try { md5(file) } catch (e: Exception) { return@forEach }
+            val hash = try { md5(file) } catch (e: Exception) { continue }
             val existing = committed[rel]
 
             when {

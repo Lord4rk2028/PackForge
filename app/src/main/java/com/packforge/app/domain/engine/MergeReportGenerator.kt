@@ -27,7 +27,9 @@ object MergeReportGenerator {
     fun validateJsonSyntax(root: File): List<String> {
         val errors = mutableListOf<String>()
         if (!root.isDirectory) return errors
-        root.walkTopDown().filter { it.isFile && it.extension.equals("json", true) }.forEach { file ->
+        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+        val cachedFiles = DirIndexCache.index(root).jsonFiles
+        for (file in cachedFiles) {
             try {
                 JSONObject(file.readText(StandardCharsets.UTF_8))
             } catch (first: Exception) {
