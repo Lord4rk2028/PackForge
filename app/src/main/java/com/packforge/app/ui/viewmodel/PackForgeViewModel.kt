@@ -281,6 +281,27 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun calculateCompatibilityScore(addons: List<Addon>): Int {
+        if (addons.isEmpty()) return 100
+        var score = 100
+        addons.forEach { addon ->
+            if (addon.rawManifest.isBlank()) {
+                score -= 5
+            }
+            val addonVersion = addon.minEngineVersion
+            if (addonVersion.size < 3) {
+                score -= 10
+            } else {
+                if (addonVersion[0] < 1 || (addonVersion[0] == 1 && addonVersion[1] < 20)) {
+                    score -= 15
+                }
+            }
+        }
+        val finalScore = score.coerceIn(0, 100)
+        _compatibilityScore.value = finalScore
+        return finalScore
+    }
+
     private fun recalculateConflicts() {
         viewModelScope.launch(Dispatchers.Default) {
             val active = _addons.value.filter { it.enabled }
@@ -292,7 +313,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             val newConflicts = ConflictEngine.analyze(active, _resolutions.value)
             PackForgeLog.d("PackForge", "Conflictos detectados: ${newConflicts.size}")
             _conflicts.value = newConflicts
-            _compatibilityScore.value = ConflictEngine.getCompatibilityScore(active)
+            calculateCompatibilityScore(active)
             _criticalConflictsCount.value = newConflicts.count { 
                 it.severity == ConflictSeverity.CRITICAL && it.resolution == ConflictResolution.UNRESOLVED
             }

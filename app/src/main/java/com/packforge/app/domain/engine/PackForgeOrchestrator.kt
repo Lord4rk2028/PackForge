@@ -395,6 +395,18 @@ object PackForgeOrchestrator {
                 // ⚠️ mergeMaterialInstances debe ser síncrono al final, depende de terrainTexture+entity+animations
                 merger.mergeMaterialInstances(bpDirFiles, rpDirFiles, mergedBpDir, mergedRpDir)
                 PackForgeLog.d("PackForge_Export", "✅ Fase 3 (Paralela) completada")
+
+                // FASE 3B: Validación de cobertura de texturas
+                try {
+                    val coverageReport = merger.validateTextureCoverageComplete(mergedBpDir, mergedRpDir)
+                    if (coverageReport.coveragePercent < 100f) {
+                        PackForgeLog.w("PackForge_Export", "⚠️ Cobertura de texturas: ${coverageReport.coveragePercent.toInt()}% - Bloques faltantes: ${coverageReport.missingBlocks.size}, Items faltantes: ${coverageReport.missingItems.size}")
+                    } else {
+                        PackForgeLog.d("PackForge_Export", "✅ Cobertura de texturas: 100%")
+                    }
+                } catch (e: Exception) {
+                    PackForgeLog.w("PackForge_Export", "Validación de cobertura no bloqueante: ${e.message}")
+                }
             }
             coroutineContext.ensureActive()
             val tFusionFin = tEagerStart

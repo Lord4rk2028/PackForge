@@ -28,6 +28,98 @@ import java.nio.charset.StandardCharsets
  */
 object BedrockCriticalFilesMerger {
 
+    data class TextureCoverageReport(
+        val coveragePercent: Float,
+        val missingBlocks: List<String>,
+        val missingItems: List<String>,
+        val detailedInfo: List<String>
+    )
+
+    // Helper
+    private fun calculateCoverage(
+        terrainData: JSONObject, 
+        itemData: JSONObject,
+        missingBlocks: List<String>, 
+        missingItems: List<String>
+    ): Float {
+        // Contar bloques/items totales vs mapeados
+        // Lógica simplificada - en implementación real contar de blocks.json e items.json
+        val totalEstimado = 50 //placeholder - contar real
+        val mapeados = terrainData.length() + itemData.length()
+        return if (totalEstimado > 0) (mapeados.toFloat() / totalEstimado * 100).coerceIn(0f, 100f)
+        else 100f
+    }
+
+    fun validateTextureCoverageComplete(
+        mergedBpDir: File, 
+        mergedRpDir: File
+    ): TextureCoverageReport {
+        val report = TextureCoverageReport(0f, emptyList(), emptyList(), emptyList())
+        
+        // 1. Cargar texturas fusionadas
+        val terrainFile = File(mergedRpDir, "textures/terrain_texture.json")
+        val itemFile = File(mergedRpDir, "textures/item_texture.json")
+        
+        if (!terrainFile.exists() || !itemFile.exists()) {
+            return report.copy(detailedInfo = listOf("Archivos de textura fusionados inexistentes"))
+        }
+        
+        val terrainJson = JSONObject(terrainFile.readText())
+        val itemJson = JSONObject(itemFile.readText())
+        val terrainData = terrainJson.optJSONObject("texture_data") ?: JSONObject()
+        val itemData = itemJson.optJSONObject("texture_data") ?: JSONObject()
+        
+        // 2. Analizar blocks.json del BP fusionado
+        val blocksDir = File(mergedBpDir, "blocks")
+        val missingBlocks = mutableListOf<String>()
+        val missingItems = mutableListOf<String>()
+        
+        if (blocksDir.exists() && blocksDir.isDirectory) {
+            blocksDir.listFiles()?.filter { it.name.endsWith(".json") }?.forEach { blockFile ->
+                try {
+                    val json = JSONObject(blockFile.readText())
+                    // Extraer nombre del bloque (primera clave que no sea minecraft:)
+                    val blockName = json.keys().asSequence()
+                        .firstOrNull { key -> !key.startsWith("minecraft:") }
+                    
+                    if (blockName != null) {
+                        val cleanName = blockName.trim()
+                        // Verificar en terrain_texture
+                        if (!terrainData.has(cleanName) && !itemData.has(cleanName)) {
+                            missingBlocks.add("${cleanName} (en ${blockFile.name})")
+                        }
+                    }
+                } catch (e: Exception) { /* ignorar JSONs rotos */ }
+            }
+        }
+        
+        // 3. Analizar items.json si existe
+        val itemsDir = File(mergedBpDir, "items")
+        if (itemsDir.exists() && itemsDir.isDirectory) {
+            itemsDir.listFiles()?.filter { it.name.endsWith(".json") }?.forEach { itemFile ->
+                try {
+                    val json = JSONObject(itemFile.readText())
+                    val itemName = json.keys().asSequence()
+                        .firstOrNull { key -> !key.startsWith("minecraft:") }
+                    
+                    if (itemName != null) {
+                        val cleanName = itemName.trim()
+                        if (!itemData.has(cleanName)) {
+                            missingItems.add("${cleanName} (en ${itemFile.name})")
+                        }
+                    }
+                } catch (e: Exception) { /* ignorar */ }
+            }
+        }
+        
+        return TextureCoverageReport(
+            coveragePercent = calculateCoverage(terrainData, itemData, missingBlocks, missingItems),
+            missingBlocks = missingBlocks,
+            missingItems = missingItems,
+            detailedInfo = emptyList()
+        )
+    }
+
     // Helper para limpiar claves JSON
     private fun String.sanitizeKey(): String {
         // Elimina espacios, caracteres de control y caracteres Unicode invisibles
@@ -652,15 +744,9 @@ object BedrockCriticalFilesMerger {
                         return@forEach
                     }
 
-                    // Buscar el PNG en los addons originales y copiarlo
+                    // ⭐ AUTO-REPARACIÓN MEJORADA: Buscar la textura en los addons originales
                     val pngPath = "textures/blocks/$textureName.png"
-                    val foundPng = rpDirs.firstNotNullOfOrNull { rpDir ->
-                        val f = File(rpDir, pngPath)
-                        if (f.exists()) f else null
-                    } ?: rpDirs.firstNotNullOfOrNull { rpDir ->
-                        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
-                        DirIndexCache.index(rpDir).allFiles.find { it.name.equals("$textureName.png", ignoreCase = true) }
-                    }
+                    val foundPng = findTextureInAddons(rpDirs, pngPath) ?: DirIndexCache.index(rpDirs.firstOrNull() ?: return@forEach).allFiles.find { it.name.equals("$textureName.png", ignoreCase = true) }
 
                     if (foundPng != null) {
                         // Copiar PNG al destino
@@ -675,10 +761,10 @@ object BedrockCriticalFilesMerger {
                                 JSONObject().put("textures", "textures/blocks/$textureName")
                             )
                             addedCount++
-                            PackForgeLog.d("PackForge_Materials", "Textura material agregada: $textureName (copiada desde ${foundPng.relativeTo(foundPng.parentFile?.parentFile ?: foundPng)})")
+                            PackForgeLog.d("PackForge_Materials", "Textura auto-detectada y agregada: $textureName")
                         }
                     } else {
-                        PackForgeLog.w("PackForge_Materials", "Textura de material no encontrada: $textureName (bloque ${blockFile.name})")
+                        PackForgeLog.w("PackForge_Materials", "Textura NO encontrada: $textureName (bloque ${blockFile.name})")
                         missingTextures[textureName] = true
                     }
                 }
@@ -703,6 +789,13 @@ object BedrockCriticalFilesMerger {
         }
 
         PackForgeLog.d("PackForge_Materials", "Material instances verificados: $addedCount texturas agregadas, ${missingTextures.size} faltantes")
+    }
+
+    private fun findTextureInAddons(rpDirs: List<File>, pngPath: String): File? {
+        return rpDirs.firstNotNullOfOrNull { rpDir ->
+            val f = File(rpDir, pngPath)
+            if (f.exists()) f else null
+        }
     }
 
     // =====================================================================

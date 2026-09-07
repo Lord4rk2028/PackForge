@@ -1,6 +1,7 @@
 package com.packforge.app.domain.engine
 
 import android.util.Log
+import com.packforge.app.util.PackForgeLog
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -209,6 +210,76 @@ object ManifestGenerator {
         return manifest
     }
 
+    // ⭐ SISTEMA AUTOMÁTICO DE CAPACIDADES EXPERIMENTALES
+    private fun addExperimentalCapabilitiesIfNeeded(
+        bpManifest: JSONObject, 
+        hasScripts: Boolean,
+        dependencies: JSONArray?
+    ): JSONObject {
+        val header = bpManifest.getJSONObject("header")
+        val currentCaps = header.optJSONArray("capabilities")
+        
+        // Si ya hay capabilities, preservarlos y agregar nuevas
+        val capabilitiesBuilder = if (currentCaps != null) {
+            val list = mutableListOf<String>()
+            for (i in 0 until currentCaps.length()) {
+                currentCaps.optString(i)?.let { list.add(it) }
+            }
+            JSONArray(list)
+        } else {
+            JSONArray()
+        }
+        
+        // ⭐ AGREGAR CAPACIDAD ILUMINACIÓN DINÁMICA si hay scripts
+        if (hasScripts) {
+            // Verificar si algún addon trae iluminación dinámica
+            var hasDynamicLight = false
+            var hasCustomUi = false
+            if (dependencies != null) {
+                for (i in 0 until dependencies.length()) {
+                    val dep = dependencies.optJSONObject(i) ?: continue
+                    val depName = dep.optString("name", "") + dep.optString("module_name", "")
+                    val depStr = dep.toString().lowercase()
+                    if (depStr.contains("light") || depStr.contains("dynamic")) {
+                        hasDynamicLight = true
+                    }
+                    if (depStr.contains("ui") || depStr.contains("customui") || depStr.contains("inventory")) {
+                        hasCustomUi = true
+                    }
+                }
+            }
+            // Siempre agregar dynamic_light si hay scripts (mejora compatibilidad)
+            if (!isCapabilityPresent(capabilitiesBuilder, "dynamic_light")) {
+                capabilitiesBuilder.put("dynamic_light")
+                PackForgeLog.d(MANIFEST_TAG, "⭐ Capacidad dynamic_light agregada automáticamente")
+            }
+            
+            // Capacidad UI custom si hay scripts complejos
+            if (hasCustomUi && !isCapabilityPresent(capabilitiesBuilder, "custom_ui")) {
+                capabilitiesBuilder.put("custom_ui")
+                PackForgeLog.d(MANIFEST_TAG, "⭐ Capacidad custom_ui agregada automáticamente")
+            }
+        }
+        
+        // Actualizar header con nuevas capacidades
+        if (capabilitiesBuilder.length() > 0) {
+            header.put("capabilities", capabilitiesBuilder)
+        }
+        
+        return bpManifest
+    }
+
+    // Helper
+    private fun isCapabilityPresent(caps: JSONArray, name: String): Boolean {
+        for (i in 0 until caps.length()) {
+            val cap = caps.optString(i).lowercase()
+            if (cap.contains(name.lowercase()) || cap.contains("minecraft:$name".lowercase())) {
+                return true
+            }
+        }
+        return false
+    }
+
     /**
      * Construye el manifest final del Resource Pack fusionado.
      */
@@ -399,7 +470,7 @@ object ManifestGenerator {
             })
         }
 
-        return JSONObject().apply {
+        val manifest = JSONObject().apply {
             put("format_version", 2)
             put("header", JSONObject().apply {
                 put("name", packName)
@@ -413,6 +484,8 @@ object ManifestGenerator {
             put("modules", modules)
             put("dependencies", dependencies)
         }
+        val finalManifest = addExperimentalCapabilitiesIfNeeded(manifest, hasScripts, dependencies)
+        return finalManifest
     }
 
     /**

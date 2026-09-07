@@ -711,6 +711,15 @@ fun ExportSetupScreen(
                             else -> MaterialTheme.colorScheme.primary
                         }
                     )
+
+                    // Indicador de compatibilidad
+                    val compatScore = viewModel.compatibilityScore.collectAsStateWithLifecycle()
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Text(
+                        text = "Compatibilidad estimada: ${compatScore.value}%",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

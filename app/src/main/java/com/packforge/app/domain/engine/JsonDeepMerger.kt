@@ -1,6 +1,7 @@
 package com.packforge.app.domain.engine
 
 import android.util.Log
+import com.packforge.app.util.PackForgeLog
 import com.packforge.app.domain.model.MergeConflict
 import org.json.JSONArray
 import org.json.JSONObject
@@ -216,6 +217,39 @@ object JsonDeepMerger {
             deepMerge(baseObj, mergeObj).toString(4)
         } catch (e: Exception) {
             baseJson
+        }
+    }
+
+    fun strictJsonValidate(jsonText: String): Boolean {
+        try {
+            val json = JSONObject(jsonText)
+            val text = json.toString()
+            val badPatterns = listOf(", }", ", ]", "}{")
+            for (pattern in badPatterns) {
+                if (text.contains(pattern)) {
+                    PackForgeLog.e("PackForge_JSON", "Patron JSON sospechoso detectado: $pattern")
+                    return false
+                }
+            }
+            val openBraces = text.count { it == '{' }
+            val closeBraces = text.count { it == '}' }
+            if (openBraces != closeBraces) {
+                PackForgeLog.e("PackForge_JSON", "Brackets desbalanceados: $openBraces open, $closeBraces close")
+                return false
+            }
+            val openBrackets = text.count { it == '[' }
+            val closeBrackets = text.count { it == ']' }
+            if (openBrackets != closeBrackets) {
+                PackForgeLog.e("PackForge_JSON", "Corchetes desbalanceados: $openBrackets open, $closeBrackets close")
+                return false
+            }
+            return true
+        } catch (e: org.json.JSONException) {
+            PackForgeLog.e("PackForge_JSON", "Error de sintaxis JSON: ${e.message}")
+            return false
+        } catch (e: Exception) {
+            PackForgeLog.e("PackForge_JSON", "Error inesperado en validacion: ${e.message}")
+            return false
         }
     }
 }

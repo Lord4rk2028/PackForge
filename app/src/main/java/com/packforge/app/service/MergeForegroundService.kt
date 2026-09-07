@@ -487,12 +487,12 @@ class MergeForegroundService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_merge)
             .setContentTitle("PackForge · Fusionando modpack")
-            .setContentText("$text · $percent%")
-            .setProgress(100, percent.coerceIn(0, 100), false)
+            .setContentText(text)
+            .setProgress(100, 0, false)
             .setOngoing(ongoing)
             .setOnlyAlertOnce(true)
             .setColor(accentColor)
-            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
     }
 

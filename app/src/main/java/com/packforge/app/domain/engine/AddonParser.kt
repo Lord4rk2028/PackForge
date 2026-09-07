@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.AddonType
 import com.packforge.app.util.FileUtils
+import com.packforge.app.util.PackForgeLog
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -13,6 +14,7 @@ import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
+import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
 object AddonParser {
@@ -223,5 +225,32 @@ object AddonParser {
         }
         tempDir.deleteRecursively()
         return iconPath
+    }
+
+    fun detectAndFixAddonFormat(actualFile: File): String {
+        val zipEntries = mutableListOf<String>()
+        actualFile.inputStream().use { input ->
+            ZipInputStream(input).use { zis ->
+                var entry: ZipEntry? = zis.nextEntry
+                while (entry != null) {
+                    zipEntries.add(entry.name)
+                    entry = zis.nextEntry
+                }
+            }
+        }
+        val hasRootManifest = zipEntries.any { it == "manifest.json" }
+        val hasSubfolderManifests = zipEntries.any { it.startsWith("BP_") || it.startsWith("RP_") }
+        val jsonCount = zipEntries.count { it.endsWith(".json") && it.contains("manifest") }
+        val detectedFormat = when {
+            hasRootManifest && !hasSubfolderManifests -> "mcpack"
+            hasSubfolderManifests -> "mcaddon"
+            jsonCount >= 2 -> "mcaddon"
+            else -> "mcpack"
+        }
+        if (detectedFormat == "mcpack" && actualFile.name.endsWith(".mcaddon", ignoreCase = true) ||
+            detectedFormat == "mcaddon" && actualFile.name.endsWith(".mcpack", ignoreCase = true)) {
+            PackForgeLog.w("PackForge_Parser", "Formato detectado: $detectedFormat pero filename: ${actualFile.name}")
+        }
+        return detectedFormat
     }
 }

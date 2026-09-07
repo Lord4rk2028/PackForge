@@ -20,6 +20,7 @@ object ConflictEngine {
         conflicts += detectItemConflicts(active)
         conflicts += detectRecipeConflicts(active)
         conflicts += detectFileOverlaps(active)
+        conflicts += detectTextureConflicts(active)
         conflicts += detectVersionMismatches(active)
         conflicts += detectManifestUuidConflicts(active)
 
@@ -364,6 +365,42 @@ object ConflictEngine {
                 )
             )
         }
+        return conflicts
+    }
+
+    // ─── 8. CONFLICTOS DE TEXTURAS ───────────────────────────
+    fun detectTextureConflicts(addons: List<Addon>): List<Conflict> {
+        val conflicts = mutableListOf<Conflict>()
+        val textureMap = mutableMapOf<String, MutableList<Addon>>()
+
+        addons.forEach { addon ->
+            val allFiles = addon.files + addon.behaviorFiles + addon.resourceFiles
+            allFiles.forEach { filepath ->
+                val lower = filepath.lowercase()
+                if (lower.contains("texture") || lower.contains("terrain") || lower.contains("item_texture")) {
+                    textureMap.getOrPut(filepath) { mutableListOf() }.add(addon)
+                }
+            }
+        }
+
+        textureMap.filter { it.value.size > 1 }.forEach { (texturePath, owners) ->
+            val addonNames = owners.map { it.name }
+            conflicts.add(
+                Conflict(
+                    id = "texture_${texturePath.hashCode()}",
+                    type = ConflictType.TEXTURE_ATLAS,
+                    severity = ConflictSeverity.HIGH,
+                    title = "Conflicto de Textura: ${texturePath.substringAfterLast("/")}",
+                    description = "Conflicto de textura: $texturePath - usado por ${addonNames.joinToString(", ")}",
+                    technicalDetail = "Ruta duplicada: $texturePath\nPresente en: ${addonNames.joinToString(", ")}\nEn Minecraft Bedrock las texturas comparten el atlas; la última cargada sobrescribe a las anteriores. La prioridad en la lista determina cuál prevalece.",
+                    affectedAddonIds = owners.map { it.id },
+                    affectedFile = texturePath,
+                    resolution = ConflictResolution.UNRESOLVED,
+                    canBeDismissed = true
+                )
+            )
+        }
+
         return conflicts
     }
 

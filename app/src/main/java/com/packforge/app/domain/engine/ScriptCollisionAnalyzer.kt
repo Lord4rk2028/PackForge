@@ -23,7 +23,7 @@ import java.util.Locale
 object ScriptCollisionAnalyzer {
 
     private val TOP_LEVEL_DECL = Regex(
-        """^\s*(?:export\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)""",
+        """^(?!\s)(?:export\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)""",
         RegexOption.MULTILINE
     )
     private val EVENT_SUBSCRIPTION = Regex(
@@ -52,9 +52,7 @@ object ScriptCollisionAnalyzer {
                 seen[name] = (seen[name] ?: 0) + 1
             }
             seen.filterValues { it > 1 }.forEach { (name, count) ->
-                if (!isLikelyScopedRepeat(name, count, text)) {
-                    findings += "⚠️ Scripts: '$name' declarado $count veces en ${file.relativeTo(scriptsDir).path} — riesgo 'already defined'"
-                }
+                findings += "⚠️ Scripts: '$name' declarado $count veces en ${file.relativeTo(scriptsDir).path} — riesgo 'already defined'"
             }
         }
 
@@ -71,14 +69,5 @@ object ScriptCollisionAnalyzer {
         }
 
         return findings
-    }
-
-    /** Evita falsos positivos de nombres repetidos dentro de funciones anidadas distintas. */
-    private fun isLikelyScopedRepeat(name: String, count: Int, text: String): Boolean {
-        val decls = Regex("""(?:const|let|var|function|class)\s+${Regex.escape(name)}\b""")
-            .findAll(text).toList()
-        if (decls.size < count) return true
-        // Heurística: si alguna declaración está indentada (>0 espacios), es scope local.
-        return decls.any { it.value.startsWith(" ") || it.value.startsWith("\t") }
     }
 }
