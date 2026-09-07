@@ -1,6 +1,8 @@
 package com.packforge.app.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -136,8 +138,15 @@ fun AddonPairCard(
     ElevatedCard(
         modifier = modifier
             .fillMaxWidth()
-            .clickable { onOpen() },
-        shape = RoundedCornerShape(16.dp),
+            .border(
+                BorderStroke(
+                    1.dp,
+                    if (bothEnabled) PurpleFolder.copy(alpha = 0.35f) else Color.Transparent
+                ),
+                RoundedCornerShape(20.dp)
+            )
+            .bounceClick(scaleDown = 0.97f) { onOpen() },
+        shape = RoundedCornerShape(20.dp),
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp),
         colors = CardDefaults.elevatedCardColors(
             containerColor = if (bothEnabled) container else container.copy(alpha = 0.5f)
@@ -159,14 +168,14 @@ fun AddonPairCard(
                         contentDescription = null,
                         modifier = Modifier
                             .fillMaxSize()
-                            .clip(RoundedCornerShape(12.dp)),
+                            .clip(RoundedCornerShape(14.dp)),
                         contentScale = ContentScale.Crop
                     )
                 } else {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(14.dp))
                             .background(PurpleFolder.copy(alpha = 0.18f)),
                         contentAlignment = Alignment.Center
                     ) {
@@ -198,32 +207,57 @@ fun AddonPairCard(
             }
 
             // ── Información ────────────────────────────────────
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
                     text = pair.rp.name,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = titleColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = "RP + BP · Completo",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = labelColor
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = PurpleFolder.copy(alpha = 0.2f)
+                    ) {
+                        Text(
+                            text = "BP + RP",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = labelColor,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Text(
+                        text = "Pack Completo",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = labelColor
+                    )
+                }
                 Text(
                     text = "${pair.bp.name} · ${pair.rp.name}",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
-            // Flechita de apertura
-            Text("📂", style = MaterialTheme.typography.titleMedium)
+            // Flechita o indicador de apertura
+            Surface(
+                shape = CircleShape,
+                color = PurpleFolder.copy(alpha = 0.15f),
+                modifier = Modifier.size(36.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("📂", style = MaterialTheme.typography.bodyLarge)
+                }
+            }
         }
     }
 }

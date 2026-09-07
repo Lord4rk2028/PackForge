@@ -15,7 +15,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.packforge.app.ui.components.CachedAsyncImage
 import com.packforge.app.ui.components.MinecraftProgressBar
+import com.packforge.app.ui.components.bounceClick
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -128,8 +130,6 @@ fun ExportSetupScreen(
     var useCustomPath by remember { mutableStateOf(false) }
     var customUri by remember { mutableStateOf<Uri?>(null) }
     var mcDropdownExpanded by remember { mutableStateOf(false) }
-    var showDebugZip by remember { mutableStateOf(false) }
-
     val activeAddons = addons.filter { it.enabled }
     val unresolvedCritical = conflicts.count {
         it.severity == ConflictSeverity.CRITICAL &&
@@ -257,10 +257,10 @@ fun ExportSetupScreen(
                             .background(MaterialTheme.colorScheme.surfaceVariant)
                             .border(
                                 1.dp,
-                                MaterialTheme.colorScheme.outlineVariant,
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
                                 RoundedCornerShape(20.dp)
                             )
-                            .clickable { coverPickerLauncher.launch("image/*") },
+                            .bounceClick(scaleDown = 0.98f) { coverPickerLauncher.launch("image/*") },
                         contentAlignment = Alignment.Center
                     ) {
                         when {
@@ -806,47 +806,7 @@ fun ExportSetupScreen(
                 )
             }
 
-            // BOTÓN DEBUG VERIFICAR PORTADA
-            var showIconDebug by remember { mutableStateOf(false) }
-            OutlinedButton(
-                onClick = { showIconDebug = true },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Person,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Verificar Portada")
-            }
 
-            if (showIconDebug) {
-                IconDebugDialog(
-                    coverUriString = metadata.coverUriString,
-                    onDismiss = { showIconDebug = false }
-                )
-            }
-
-            // BOTÓN DEBUG ZIP
-            OutlinedButton(
-                onClick = { showDebugZip = true },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Debug ZIP",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
         }
 
         if (exportState is ExportState.Error) {
@@ -877,11 +837,13 @@ fun ExportSetupScreen(
             }
         }
 
-        item { Spacer(modifier = Modifier.height(80.dp)) }
+        item { Spacer(modifier = Modifier.height(100.dp)) }
     }
 
-    // DIÁLOGO DEBUG ZIP
-    if (showDebugZip) {
+    @Suppress("UNUSED_VARIABLE")
+    var showDebugZip by remember { mutableStateOf(false) }
+    // DIÁLOGO DEBUG ZIP — oculto (reactivar con if (showDebugZip) si se necesita)
+    if (false) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showDebugZip = false },
             title = {
@@ -1174,8 +1136,13 @@ fun ModpackPreviewCard(
     selectedTemplateIndex: Int
 ) {
     ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(22.dp)),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
     ) {
         Row(
             modifier = Modifier
@@ -1289,34 +1256,46 @@ fun DestinationOption(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(4.dp),
-        shape = RoundedCornerShape(12.dp),
+            .clip(RoundedCornerShape(16.dp))
+            .bounceClick(scaleDown = 0.98f) { onClick() },
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(
+            if (selected) 1.5.dp else 1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        ),
         color = if (selected)
-            MaterialTheme.colorScheme.primaryContainer
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
         else
-            MaterialTheme.colorScheme.surface
+            MaterialTheme.colorScheme.surfaceContainerLow
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (selected)
-                    MaterialTheme.colorScheme.primary
-                else
-                    MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Column(modifier = Modifier.weight(1f)) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     color = if (selected)
-                        MaterialTheme.colorScheme.primary
+                        MaterialTheme.colorScheme.onPrimaryContainer
                     else
                         MaterialTheme.colorScheme.onSurface
                 )

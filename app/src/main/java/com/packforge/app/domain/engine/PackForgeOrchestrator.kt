@@ -359,21 +359,42 @@ object PackForgeOrchestrator {
             LazyDependencyResolver.resolveAndRepair(mergedRpDir, rpDirs)
 
             // FASE 3: Fusión de archivos críticos específicos (terrain, item, blocks, lang, etc)
-            // Mantiene la lógica existente pero sobre archivos ya copiados rápidamente
+            // OPTIMIZACIÓN: Fusión en paralelo para mejorar rendimiento en multi-core.
             var soundKeyRenames: Map<String, String> = emptyMap()
             var dependencyNotes: List<String> = emptyList()
             if (rpDirs.isNotEmpty() || bpDirs.isNotEmpty()) {
-                progressCallback?.onProgress("Fusionando archivos críticos restantes...")
+                progressCallback?.onProgress("Fusionando archivos críticos (paralelo)...")
                 val rpDirFiles = rpDirs.map { File(it) }
                 val bpDirFiles = bpDirs.map { File(it) }
                 val addonDirFiles = extractedDirs.map { File(it) }
                 val merger = BedrockCriticalFilesMerger
-                // Solo los críticos que SI requieren merge de JSON (no los genéricos)
-                merger.mergeTerrainTexture(rpDirFiles, mergedRpDir)
-                merger.mergeItemTexture(rpDirFiles, mergedRpDir)
-                merger.mergeBlocksJson(rpDirFiles, mergedRpDir)
-                merger.mergeLangFiles(addonDirFiles, mergedRpDir)
-                PackForgeLog.d("PackForge_Export", "✅ Fase 3 completada")
+
+                withContext(Dispatchers.IO) {
+                    // Tareas paralelas de RP
+                    val rpTasks = listOf(
+                        async { merger.mergeTerrainTexture(rpDirFiles, mergedRpDir) },
+                        async { merger.mergeItemTexture(rpDirFiles, mergedRpDir) },
+                        async { merger.mergeBlocksJson(rpDirFiles, mergedRpDir) },
+                        async { merger.mergeLangFiles(addonDirFiles, mergedRpDir) },
+                        async { merger.mergeFlipbookTextures(rpDirFiles, mergedRpDir) },
+                        async { merger.mergeGeometryFiles(rpDirFiles, mergedRpDir) },
+                        async { merger.mergeRenderControllers(rpDirFiles, mergedRpDir) },
+                        async { merger.mergeAnimations(rpDirFiles, mergedRpDir) },
+                        async { merger.mergeSoundsJson(rpDirFiles, mergedRpDir) },
+                        async { merger.mergeEntityDefinitions(rpDirFiles, mergedRpDir) }
+                    )
+                    // Tareas paralelas de BP
+                    val bpTasks = listOf(
+                        async { merger.mergePlayerEntity(bpDirFiles, mergedBpDir) },
+                        async { merger.mergeLootTables(bpDirFiles, mergedBpDir) },
+                        async { merger.mergeRecipes(bpDirFiles, mergedBpDir) }
+                    )
+                    (rpTasks + bpTasks).awaitAll()
+                }
+                
+                // ⚠️ mergeMaterialInstances debe ser síncrono al final, depende de terrainTexture+entity+animations
+                merger.mergeMaterialInstances(bpDirFiles, rpDirFiles, mergedBpDir, mergedRpDir)
+                PackForgeLog.d("PackForge_Export", "✅ Fase 3 (Paralela) completada")
             }
             coroutineContext.ensureActive()
             val tFusionFin = tEagerStart
@@ -398,7 +419,17 @@ object PackForgeOrchestrator {
             // f2) ANÁLISIS DE COLISIONES DE SCRIPTS (no bloqueante)
             progressCallback?.onProgress("Analizando scripts...")
             val scriptFindings = ScriptCollisionAnalyzer.analyze(File(mergedBpDir, "scripts"))
-            scriptFindings.forEach { PackForgeLog.w(TAG, it) }
+            scriptFindings.forEach {
+                PackForgeLog.w(TAG, it)
+                ConflictRegistry.logConflict(
+                    severity = com.packforge.app.domain.model.ConflictSeverity.HIGH,
+                    type = "SCRIPT_COLLISION",
+                    file = "scripts/main.js",
+                    addon1 = it.take(64),
+                    addon2 = "-",
+                    description = it
+                )
+            }
 
             // f) EJECUTAR VALIDADOR DE REFERENCIAS CRUZADAS
             progressCallback?.onProgress("Validando referencias...")
@@ -978,47 +1009,47 @@ object PackForgeOrchestrator {
             packDescription = customDescription
         )
 
-        // Añadir dependencias de librerías detectadas por mergeScripts
+        // Garantizar dependencias de script siempre completas (fix trabe con UI / iluminación dinámica).
+        // Se inyectan @minecraft/server + @minecraft/server-ui si hay cualquier script,
+        // más las librerías reales detectadas en los manifests originales/librerías.
+        // No duplicar entradas ya presentes; conservar versión mayor.
+        val scriptDependencies = bpManifestObj.optJSONArray("dependencies") ?: JSONArray().also { bpManifestObj.put("dependencies", it) }
+        fun ensureModuleDep(name: String, fallbackVersion: String) {
+            val existing = (0 until scriptDependencies.length())
+                .mapNotNull { scriptDependencies.optJSONObject(it) }
+                .firstOrNull { it.optString("module_name", "") == name }
+            if (existing != null) {
+                val current = existing.optString("version", fallbackVersion)
+                if (compareSemver(fallbackVersion, current) > 0) existing.put("version", fallbackVersion)
+                return
+            }
+            // Si ya viene por biblioteca detectada, tomar su versión máxima
+            val libVersion = scriptResult.libraryDeps[name] ?: fallbackVersion
+            scriptDependencies.put(JSONObject().apply {
+                put("module_name", name)
+                put("version", libVersion)
+            })
+        }
         if (scriptResult.addonCount > 0) {
-            val dependencies = bpManifestObj.optJSONArray("dependencies") ?: JSONArray().also { bpManifestObj.put("dependencies", it) }
             scriptResult.libraryDeps.forEach { (name, ver) ->
-                // Solo añadir si no existe ya
-                var exists = false
-                for (i in 0 until dependencies.length()) {
-                    val dep = dependencies.optJSONObject(i)
-                    if (dep != null && dep.optString("module_name", "") == name) {
-                        exists = true
-                        // Actualizar a versión mayor si procede
-                        val existingVer = dep.optString("version", "1.0.0")
-                        if (compareSemver(ver, existingVer) > 0) {
-                            dep.put("version", ver)
-                        }
-                        break
-                    }
+                var existing: JSONObject? = null
+                for (i in 0 until scriptDependencies.length()) {
+                    val dep = scriptDependencies.optJSONObject(i) ?: continue
+                    if (dep.optString("module_name", "") == name) { existing = dep; break }
                 }
-                if (!exists) {
-                    dependencies.put(JSONObject().apply {
-                        put("module_name", name)
-                        put("version", ver)
-                    })
+                if (existing != null) {
+                    if (compareSemver(ver, existing.optString("version", "1.0.0")) > 0) existing.put("version", ver)
+                } else {
+                    scriptDependencies.put(JSONObject().apply { put("module_name", name); put("version", ver) })
                 }
             }
-            // Fallback si no hay @minecraft/server
-            if (!scriptResult.libraryDeps.containsKey("@minecraft/server")) {
-                var hasServer = false
-                for (i in 0 until dependencies.length()) {
-                    if (dependencies.optJSONObject(i)?.optString("module_name", "") == "@minecraft/server") {
-                        hasServer = true
-                        break
-                    }
-                }
-                if (!hasServer) {
-                    dependencies.put(JSONObject().apply {
-                        put("module_name", "@minecraft/server")
-                        put("version", "1.16.0")
-                    })
-                }
-            }
+            ensureModuleDep("@minecraft/server", "1.16.0")
+            ensureModuleDep("@minecraft/server-ui", "1.3.0")
+            val header = bpManifestObj.optJSONObject("header") ?: JSONObject().also { bpManifestObj.put("header", it) }
+            val caps = header.optJSONArray("capabilities") ?: JSONArray().also { header.put("capabilities", it) }
+            var hasDyn = false
+            for (i in 0 until caps.length()) if (caps.optString(i) == "dynamic_light") { hasDyn = true; break }
+            if (!hasDyn) caps.put("dynamic_light")
         }
 
         // ⭐ PASO 3: Añadir módulo de script combinado ⭐
@@ -1033,15 +1064,19 @@ object PackForgeOrchestrator {
         }
         bpManifestObj.put("modules", newModules)
 
-        // Añadir el módulo script combinado si hay scripts
+        // Añadir el módulo script combinado si hay scripts (entry validado en mergeScripts)
         if (scriptResult.addonCount > 0) {
             newModules.put(JSONObject().apply {
                 put("type", "script")
                 put("language", "javascript")
                 put("uuid", UUID.randomUUID().toString())
                 put("version", JSONArray(listOf(1, 0, 0)))
-                put("entry", "scripts/main.js")  // ⭐ SIEMPRE el combinado
+                put("entry", "scripts/main.js")
             })
+            val mainJs = File(mergedBpDir, "scripts/main.js")
+            require(mainJs.exists() && mainJs.length() > 0) {
+                "❌ scripts/main.js no existe o está vacío tras mergeScripts"
+            }
         }
 
         val newBpHeaderUuid = bpManifestObj.optJSONObject("header")?.optString("uuid")

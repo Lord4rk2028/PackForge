@@ -28,6 +28,12 @@ import java.nio.charset.StandardCharsets
  */
 object BedrockCriticalFilesMerger {
 
+    // Helper para limpiar claves JSON
+    private fun String.sanitizeKey(): String {
+        // Elimina espacios, caracteres de control y caracteres Unicode invisibles
+        return this.replace(Regex("[\\p{C}\\p{Z}]"), "").trim()
+    }
+
     // =====================================================================
     // 1. TERRAIN TEXTURE - Mapea bloques a texturas (CRÍTICO)
     // =====================================================================
@@ -45,8 +51,8 @@ object BedrockCriticalFilesMerger {
 
                     json.optJSONObject("texture_data")?.let { data ->
                         data.keys().forEach { blockName ->
-                            val cleanBlockName = blockName.trim()  // ⭐ QUITAR ESPACIOS
-                            val value = data.get(cleanBlockName)
+                            val cleanBlockName = blockName.sanitizeKey()
+                            val value = data.get(blockName)
                             val cleanValue = JsonDeepMerger.cleanJsonValue(value)
                             if (!mergedTextureData.has(cleanBlockName)) {
                                 mergedTextureData.put(cleanBlockName, cleanValue)
@@ -95,8 +101,8 @@ object BedrockCriticalFilesMerger {
                     val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
                     json.optJSONObject("texture_data")?.let { data ->
                         data.keys().forEach { itemName ->
-                            val cleanItemName = itemName.trim()  // ⭐ QUITAR ESPACIOS
-                            val value = data.get(cleanItemName)
+                            val cleanItemName = itemName.sanitizeKey()
+                            val value = data.get(itemName)
                             val cleanValue = JsonDeepMerger.cleanJsonValue(value)
                             if (!mergedTextureData.has(cleanItemName)) {
                                 mergedTextureData.put(cleanItemName, cleanValue)
@@ -139,9 +145,9 @@ object BedrockCriticalFilesMerger {
                 try {
                     val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
                     json.keys().forEach { key ->
-                        val cleanKey = key.trim()  // ⭐ QUITAR ESPACIOS
+                        val cleanKey = key.sanitizeKey()
                         if (cleanKey != "format_version" && !merged.has(cleanKey)) {
-                            merged.put(cleanKey, JsonDeepMerger.cleanJsonValue(json.get(cleanKey)))
+                            merged.put(cleanKey, JsonDeepMerger.cleanJsonValue(json.get(key)))
                         }
                     }
                 } catch (e: Exception) {
@@ -191,7 +197,7 @@ object BedrockCriticalFilesMerger {
 
                             // Fusionar recursivamente las definiciones de entidad
                             merge.keys().forEach { entityKey ->
-                                val cleanKey = entityKey.trim()  // ⭐ QUITAR ESPACIOS
+                                val cleanKey = entityKey.sanitizeKey()
                                 if (base.has(cleanKey)) {
                                     val baseVal = base.get(cleanKey)
                                     val mergeVal = merge.get(cleanKey)
@@ -251,7 +257,7 @@ object BedrockCriticalFilesMerger {
                                 val baseRc = base.optJSONObject("render_controllers")
                                     ?: JSONObject().also { base.put("render_controllers", it) }
                                 rcData.keys().forEach { key ->
-                                    val cleanKey = key.trim()  // ⭐ QUITAR ESPACIOS
+                                    val cleanKey = key.sanitizeKey()
                                     if (baseRc.has(cleanKey)) {
                                         val baseVal = baseRc.get(cleanKey)
                                         val mergeVal = rcData.get(cleanKey)
@@ -316,7 +322,7 @@ object BedrockCriticalFilesMerger {
                                         val baseData = base.optJSONObject(key)
                                             ?: JSONObject().also { base.put(key, it) }
                                         data.keys().forEach { animKey ->
-                                            val cleanAnimKey = animKey.trim()  // ⭐ QUITAR ESPACIOS
+                                            val cleanAnimKey = animKey.sanitizeKey()
                                             if (baseData.has(cleanAnimKey)) {
                                                 val baseVal = baseData.get(cleanAnimKey)
                                                 val mergeVal = data.get(cleanAnimKey)
@@ -414,8 +420,8 @@ object BedrockCriticalFilesMerger {
                                 merged.put("entity_sounds", JSONObject().put("entities", it))
                             }
                         ent.keys().forEach { k ->
-                            val cleanK = k.trim()
-                            if (!mergedEnt.has(cleanK)) mergedEnt.put(cleanK, ent.get(cleanK))
+                            val cleanK = k.sanitizeKey()
+                            if (!mergedEnt.has(cleanK)) mergedEnt.put(cleanK, ent.get(k))
                         }
                     }
 
@@ -424,8 +430,8 @@ object BedrockCriticalFilesMerger {
                         val mergedBlocks = merged.optJSONObject("block_sounds")
                             ?: JSONObject().also { merged.put("block_sounds", it) }
                         blocks.keys().forEach { k ->
-                            val cleanK = k.trim()
-                            if (!mergedBlocks.has(cleanK)) mergedBlocks.put(cleanK, blocks.get(cleanK))
+                            val cleanK = k.sanitizeKey()
+                            if (!mergedBlocks.has(cleanK)) mergedBlocks.put(cleanK, blocks.get(k))
                         }
                     }
 
@@ -434,8 +440,8 @@ object BedrockCriticalFilesMerger {
                         val mergedEvents = merged.optJSONObject("individual_event_sounds")
                             ?: JSONObject().also { merged.put("individual_event_sounds", it) }
                         events.keys().forEach { k ->
-                            val cleanK = k.trim()
-                            if (!mergedEvents.has(cleanK)) mergedEvents.put(cleanK, events.get(cleanK))
+                            val cleanK = k.sanitizeKey()
+                            if (!mergedEvents.has(cleanK)) mergedEvents.put(cleanK, events.get(k))
                         }
                     }
                 } catch (e: Exception) {
@@ -552,7 +558,7 @@ object BedrockCriticalFilesMerger {
                             val entry = entries.optJSONObject(i) ?: continue
                             val key = entry.optString("flipbook_texture")
                                 .ifEmpty { entry.optString("atlas_tile") }
-                                .trim()  // ⭐ QUITAR ESPACIOS
+                                .sanitizeKey()
                             if (key.isEmpty() || seenKeys.add(key)) {
                                 mergedArray.put(JsonDeepMerger.cleanJsonValue(entry))
                             } else {
@@ -640,7 +646,7 @@ object BedrockCriticalFilesMerger {
                 }
 
                 textureNames.forEach { rawTextureName ->
-                    val textureName = rawTextureName.trim()  // ⭐ QUITAR ESPACIOS
+                    val textureName = rawTextureName.sanitizeKey()
                     // Si la textura ya esta mapeada en terrain_texture, ok
                     if (terrainData.has(textureName)) {
                         return@forEach
@@ -1273,13 +1279,17 @@ object BedrockCriticalFilesMerger {
                 // 2) Animaciones referenciadas
                 val animRefs = mutableListOf<String>()
                 val animsObj = desc?.optJSONObject("animations") ?: clientEntity.optJSONObject("animations")
-                animsObj?.keys()?.forEach { animRefs.add(animsObj.optString(it).trim()) }
+                animsObj?.let { obj ->
+                    obj.keys().forEach { animRefs.add(obj.optString(it).trim()) }
+                }
                 // scripts/animate también puede contener referencias
                 val scriptsObj = desc?.optJSONObject("scripts") ?: clientEntity.optJSONObject("scripts")
                 (scriptsObj?.opt("animate") as? JSONArray)?.let { arr ->
                     for (i in 0 until arr.length()) arr.optString(i)?.takeIf { it.isNotBlank() }?.let { animRefs.add(it.trim()) }
                 }
-                (scriptsObj?.opt("animate") as? JSONObject)?.keys()?.forEach { animRefs.add(scriptsObj.optJSONObject("animate").optString(it).trim()) }
+                (scriptsObj?.opt("animate") as? JSONObject)?.let { animateObj ->
+                    animateObj.keys().forEach { animRefs.add(animateObj.optString(it).trim()) }
+                }
 
                 for (animId in animRefs) {
                     if (animId.isBlank() || BedrockIdentifierIndex.isVanilla(animId)) continue

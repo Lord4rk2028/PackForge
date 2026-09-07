@@ -10,8 +10,10 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
@@ -43,7 +45,12 @@ import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.draw.shadow
+import com.packforge.app.ui.components.bounceClick
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Info
@@ -259,7 +266,7 @@ fun ImportScreen(
             }
         }
 
-        item { Spacer(modifier = Modifier.height(80.dp)) }
+        item { Spacer(modifier = Modifier.height(100.dp)) }
         }
 
         // ─── Miniinterfaz flotante de la carpeta RP+BP ──────────
@@ -281,7 +288,7 @@ fun ImportDropZone(
     onImportClick: () -> Unit
 ) {
     val alpha by animateFloatAsState(
-        targetValue = if (isImporting) 0.6f else 1f,
+        targetValue = if (isImporting) 0.75f else 1f,
         animationSpec = tween(300, easing = FastOutSlowInEasing),
         label = "alpha"
     )
@@ -291,12 +298,14 @@ fun ImportDropZone(
             .fillMaxWidth()
             .alpha(alpha)
             .border(
-                width = 2.dp,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
-                shape = RoundedCornerShape(28.dp)
+                width = 1.5.dp,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(24.dp)
             )
-            .clickable(enabled = !isImporting) { onImportClick() },
-        shape = RoundedCornerShape(28.dp),
+            .bounceClick(scaleDown = 0.98f, hapticFeedback = false) {
+                if (!isImporting) onImportClick()
+            },
+        shape = RoundedCornerShape(24.dp),
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
@@ -305,68 +314,99 @@ fun ImportDropZone(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(32.dp),
+                .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             if (isImporting && progress is OperationProgress.Loading) {
-                Box(contentAlignment = Alignment.Center) {
+                val progVal = progress.progress ?: 0f
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(76.dp)
+                ) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(64.dp),
-                        progress = { progress.progress ?: 0f },
+                        progress = { progVal },
+                        modifier = Modifier.fillMaxSize(),
                         strokeCap = StrokeCap.Round,
-                        color = MaterialTheme.colorScheme.primary
+                        strokeWidth = 6.dp,
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
                     )
                     if (progress.progress == null) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(64.dp),
-                            strokeCap = StrokeCap.Round
+                            modifier = Modifier.fillMaxSize(),
+                            strokeCap = StrokeCap.Round,
+                            strokeWidth = 6.dp
                         )
                     } else {
                         Text(
-                            text = "${(progress.progress * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold
+                            text = "${(progVal * 100).toInt()}%",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
+
                 Text(
                     text = progress.message,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+
+                LinearProgressIndicator(
+                    progress = { progVal },
+                    modifier = Modifier
+                        .fillMaxWidth(0.85f)
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(100.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    strokeCap = StrokeCap.Round
                 )
             } else {
                 Box(
                     modifier = Modifier
-                        .size(72.dp)
+                        .size(68.dp)
                         .clip(CircleShape)
-                        .background(
-                            MaterialTheme.colorScheme.primaryContainer
-                        ),
+                        .background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Outlined.FolderOpen,
                         contentDescription = null,
-                        modifier = Modifier.size(36.dp),
+                        modifier = Modifier.size(34.dp),
                         tint = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
-                Text(
-                    text = "Importar Addons",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = "Toca para seleccionar archivos .mcaddon o .mcpack",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Taller de Addons & Packs",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Selecciona o arrastra archivos para comenzar",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 Button(
                     onClick = onImportClick,
-                    shape = RoundedCornerShape(100.dp)
+                    shape = RoundedCornerShape(100.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    ),
+                    modifier = Modifier.bounceClick(scaleDown = 0.94f) { onImportClick() }
                 ) {
                     Icon(
                         imageVector = Icons.Default.Add,
@@ -374,10 +414,36 @@ fun ImportDropZone(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Seleccionar archivos")
+                    Text("Examinar Archivos", fontWeight = FontWeight.SemiBold)
+                }
+
+                // Chips de formatos compatibles
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FormatChip(".mcaddon")
+                    FormatChip(".mcpack")
+                    FormatChip(".zip")
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun FormatChip(format: String) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f)
+    ) {
+        Text(
+            text = format,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        )
     }
 }
 
@@ -391,110 +457,130 @@ fun CompatibilityScoreCard(
 ) {
     val scoreColor by animateColorAsState(
         targetValue = when {
+            criticalCount > 0 -> MaterialTheme.colorScheme.error
             score >= 80 -> MaterialTheme.colorScheme.primary
             score >= 50 -> MaterialTheme.colorScheme.tertiary
             else -> MaterialTheme.colorScheme.error
         },
-        animationSpec = tween(500, easing = FastOutSlowInEasing),
+        animationSpec = tween(400, easing = FastOutSlowInEasing),
         label = "scoreColor"
     )
 
-
     ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                RoundedCornerShape(22.dp)
+            ),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(18.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            // ─── Radial Gauge ──────────────────────────────────
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.size(72.dp)
             ) {
-                Column {
-                    Text(
-                        text = "Compatibilidad",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = "$activeAddons de $totalAddons activos",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                CircularProgressIndicator(
+                    progress = { score / 100f },
+                    modifier = Modifier.fillMaxSize(),
+                    strokeWidth = 7.dp,
+                    strokeCap = StrokeCap.Round,
+                    color = scoreColor,
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                )
                 Text(
                     text = "$score%",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
                     color = scoreColor
                 )
             }
 
-            LinearProgressIndicator(
-                progress = { score / 100f },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(100.dp)),
-                color = scoreColor,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                strokeCap = StrokeCap.Round
-            )
+            // ─── Estadísticas y Badges ────────────────────────
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = "Diagnóstico de Compatibilidad",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "$activeAddons de $totalAddons addons activos en fusión",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
 
-            if (conflictCount > 0) {
+                Spacer(modifier = Modifier.height(2.dp))
+
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = if (criticalCount > 0)
-                            Icons.Default.Warning
-                        else
-                            Icons.Outlined.Info,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = if (criticalCount > 0)
-                            MaterialTheme.colorScheme.error
-                        else
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = if (criticalCount > 0)
-                            "$criticalCount conflicto(s) crítico(s) detectado(s)"
-                        else
-                            "$conflictCount advertencia(s) — revisa la pestaña Conflictos",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (criticalCount > 0)
-                            MaterialTheme.colorScheme.error
-                        else
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CheckCircle,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "Todos los addons son compatibles",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    if (criticalCount > 0) {
+                        DiagnosticBadge(
+                            text = "$criticalCount Crítico(s)",
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    } else {
+                        DiagnosticBadge(
+                            text = "0 Críticos",
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (conflictCount > 0) {
+                        DiagnosticBadge(
+                            text = "$conflictCount Avisos",
+                            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    } else {
+                        DiagnosticBadge(
+                            text = "100% Estable",
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DiagnosticBadge(
+    text: String,
+    containerColor: Color,
+    contentColor: Color
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = containerColor
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = contentColor,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+        )
     }
 }
 
@@ -512,211 +598,255 @@ fun AddonCard(
 ) {
     var expanded by remember { mutableStateOf(false) }
 
-    val elevation by animateDpAsState(
-        targetValue = if (addon.enabled) 3.dp else 1.dp,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label = "elevation"
-    )
-
-    val iconBgColor by animateColorAsState(
-        targetValue = if (addon.enabled)
-            MaterialTheme.colorScheme.primaryContainer
-        else
-            MaterialTheme.colorScheme.surfaceVariant,
-        animationSpec = tween(300, easing = FastOutSlowInEasing),
-        label = "iconBg"
-    )
-
-    val iconColor by animateColorAsState(
-        targetValue = if (addon.enabled)
-            MaterialTheme.colorScheme.onPrimaryContainer
-        else
-            MaterialTheme.colorScheme.onSurfaceVariant,
-        animationSpec = tween(300, easing = FastOutSlowInEasing),
-        label = "iconColor"
-    )
-
     ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = elevation)
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                width = 1.dp,
+                color = if (hasCritical)
+                    MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+                else
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                shape = RoundedCornerShape(20.dp)
+            ),
+        shape = RoundedCornerShape(20.dp),
+        elevation = CardDefaults.elevatedCardElevation(
+            defaultElevation = if (addon.enabled) 3.dp else 1.dp
+        ),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = if (addon.enabled)
+                MaterialTheme.colorScheme.surfaceContainerLow
+            else
+                MaterialTheme.colorScheme.surfaceContainerLowest
+        )
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                // Icono con soporte de imagen o glifo estilizado
                 AddonCardIcon(
                     iconPath = addon.iconPath,
                     addonName = addon.name,
                     type = addon.type,
-                    enabled = addon.enabled,
-                    iconBgColor = iconBgColor,
-                    iconColor = iconColor
+                    enabled = addon.enabled
                 )
 
-                AddonCardInfo(
-                    addon = addon,
-                    conflictCount = conflictCount,
-                    hasCritical = hasCritical
-                )
+                // Info principal
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    Text(
+                        text = addon.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = if (addon.enabled)
+                            MaterialTheme.colorScheme.onSurface
+                        else
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
 
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AddonTypeBadge(addon.type)
+
+                        Text(
+                            text = "v${addon.version} · ${"%.1f".format(addon.sizeBytes / 1024.0 / 1024.0)} MB",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // Switch de activación
                 Switch(
                     checked = addon.enabled,
                     onCheckedChange = { onToggle() }
                 )
             }
 
-            // ─── CONTROLES ───────────────────────────────────
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            // ─── BARRA DE ACCIONES INFERIOR ────────────────────
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f)
             ) {
-                // Prioridad
-                Surface(
-                    shape = RoundedCornerShape(100.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    modifier = Modifier.padding(start = 8.dp)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "#${index + 1}",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        modifier = Modifier.padding(
-                            horizontal = 8.dp, vertical = 4.dp
+                    // Badge de Prioridad
+                    Surface(
+                        shape = RoundedCornerShape(100.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer
+                    ) {
+                        Text(
+                            text = "#${index + 1}",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                         )
-                    )
-                }
+                    }
 
-                Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
 
-                // Botones mover
-                FilledTonalIconButton(
-                    onClick = onMoveUp,
-                    enabled = index > 0,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowUp,
-                        contentDescription = "Subir prioridad",
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-                FilledTonalIconButton(
-                    onClick = onMoveDown,
-                    enabled = index < total - 1,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Bajar prioridad",
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
+                    // Botones de reordenamiento con microinteracción de rebote
+                    FilledTonalIconButton(
+                        onClick = onMoveUp,
+                        enabled = index > 0,
+                        modifier = Modifier
+                            .size(30.dp)
+                            .bounceClick(scaleDown = 0.9f) { onMoveUp() }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowUp,
+                            contentDescription = "Subir prioridad",
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
 
-                Spacer(modifier = Modifier.weight(1f))
-
-                // Ver archivos
-                TextButton(
-                    onClick = { expanded = !expanded }
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Info,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = if (expanded) "Ocultar" else "Detalles",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
 
-                // Quitar
-                IconButton(onClick = onRemove) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Quitar addon",
-                        tint = MaterialTheme.colorScheme.error
-                    )
+                    FilledTonalIconButton(
+                        onClick = onMoveDown,
+                        enabled = index < total - 1,
+                        modifier = Modifier
+                            .size(30.dp)
+                            .bounceClick(scaleDown = 0.9f) { onMoveDown() }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = "Bajar prioridad",
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    // Botón de detalles con flecha expandible
+                    TextButton(
+                        onClick = { expanded = !expanded },
+                        modifier = Modifier.bounceClick(scaleDown = 0.94f) { expanded = !expanded }
+                    ) {
+                        Icon(
+                            imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (expanded) "Ocultar" else "Detalles",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    // Botón de eliminar con confirmación táctil
+                    IconButton(
+                        onClick = onRemove,
+                        modifier = Modifier
+                            .size(32.dp)
+                            .bounceClick(scaleDown = 0.88f) { onRemove() }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Quitar addon",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 
-            // ─── DETALLES EXPANDIDOS ─────────────────────────
+            // ─── DETALLES EXPANDIDOS CON CHIPS ─────────────────
             AnimatedVisibility(
                 visible = expanded,
-                enter = fadeIn(animationSpec = tween(300, easing = FastOutSlowInEasing)) +
-                        slideInVertically(animationSpec = tween(300, easing = FastOutSlowInEasing)),
-                exit = fadeOut(animationSpec = tween(200, easing = FastOutSlowInEasing)) +
-                       slideOutVertically(animationSpec = tween(200, easing = FastOutSlowInEasing))
+                enter = fadeIn(animationSpec = tween(250)) + expandVertically(),
+                exit = fadeOut(animationSpec = tween(200)) + shrinkVertically()
             ) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                    if (addon.entityIdentifiers.isNotEmpty()) {
-                        DetailRow(
-                            icon = Icons.Default.Extension,
-                            label = "Entidades",
-                            value = addon.entityIdentifiers
-                                .take(5)
-                                .joinToString(", ")
-                        )
-                    }
-                    if (addon.itemIdentifiers.isNotEmpty()) {
-                        DetailRow(
-                            icon = Icons.Default.Folder,
-                            label = "Ítems",
-                            value = addon.itemIdentifiers
-                                .take(5)
-                                .joinToString(", ")
-                        )
-                    }
-                    if (addon.recipeIdentifiers.isNotEmpty()) {
-                        DetailRow(
-                            icon = Icons.Default.Folder,
-                            label = "Recetas",
-                            value = addon.recipeIdentifiers
-                                .take(5)
-                                .joinToString(", ")
-                        )
-                    }
                     if (addon.hasScripts) {
-                        DetailRow(
-                            icon = Icons.Default.Warning,
-                            label = "Scripts",
-                            value = "Este addon tiene scripts de comportamiento",
-                            valueColor = MaterialTheme.colorScheme.error
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Shield,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "Este addon contiene scripts de comportamiento activos",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    // Fila de estadísticas de contenido
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        StatCard(
+                            label = "Entidades",
+                            value = addon.entityIdentifiers.size.toString(),
+                            modifier = Modifier.weight(1f)
+                        )
+                        StatCard(
+                            label = "Ítems",
+                            value = addon.itemIdentifiers.size.toString(),
+                            modifier = Modifier.weight(1f)
+                        )
+                        StatCard(
+                            label = "Recetas",
+                            value = addon.recipeIdentifiers.size.toString(),
+                            modifier = Modifier.weight(1f)
                         )
                     }
-                    DetailRow(
-                        icon = Icons.Default.Folder,
-                        label = "Behavior",
-                        value = "${addon.behaviorFiles.size} archivos"
-                    )
-                    DetailRow(
-                        icon = Icons.Default.Folder,
-                        label = "Resource",
-                        value = "${addon.resourceFiles.size} archivos"
-                    )
-                    DetailRow(
-                        icon = Icons.Outlined.Info,
-                        label = "Versión MC",
-                        value = addon.minEngineVersion.joinToString(".")
-                    )
+
+                    // Archivos y versión de motor
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Archivos: ${addon.behaviorFiles.size} BP · ${addon.resourceFiles.size} RP",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Min MC: ${addon.minEngineVersion.joinToString(".")}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
             }
@@ -725,25 +855,78 @@ fun AddonCard(
 }
 
 @Composable
+private fun StatCard(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f)
+    ) {
+        Column(
+            modifier = Modifier.padding(vertical = 8.dp, horizontal = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun AddonTypeBadge(type: AddonType) {
+    val (label, containerColor, contentColor) = when (type) {
+        AddonType.BEHAVIOR_ONLY -> Triple("BP", MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.onSecondaryContainer)
+        AddonType.RESOURCE_ONLY -> Triple("RP", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer)
+        AddonType.BEHAVIOR_AND_RESOURCE -> Triple("BP + RP", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
+        AddonType.UNKNOWN -> Triple("GEN", MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+
+    Surface(
+        shape = RoundedCornerShape(6.dp),
+        color = containerColor
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.ExtraBold,
+            color = contentColor,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
+}
+
+@Composable
 private fun AddonCardIcon(
     iconPath: String?,
     addonName: String,
     type: AddonType,
-    enabled: Boolean,
-    iconBgColor: Color,
-    iconColor: Color
+    enabled: Boolean
 ) {
-    // Si el archivo de icono no existe (cache limpiada, etc.), NO pintamos el
-    // fondo de color sólido personalizado: mostramos el glifo placeholder sobre
-    // un fondo neutro. Así la "portada" nunca queda como un bloque de color.
     val hasValidIcon = iconPath != null &&
         runCatching { java.io.File(iconPath).exists() }.getOrDefault(false)
 
     Box(
         modifier = Modifier
-            .size(48.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (hasValidIcon) Color.Transparent else iconBgColor),
+            .size(50.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                if (hasValidIcon)
+                    Color.Transparent
+                else
+                    MaterialTheme.colorScheme.primaryContainer
+            ),
         contentAlignment = Alignment.Center
     ) {
         if (hasValidIcon) {
@@ -762,135 +945,65 @@ private fun AddonCardIcon(
                     AddonType.UNKNOWN -> Icons.Outlined.Extension
                 },
                 contentDescription = type.displayName,
-                modifier = Modifier.size(24.dp),
-                tint = iconColor
+                modifier = Modifier.size(26.dp),
+                tint = MaterialTheme.colorScheme.onPrimaryContainer
             )
         }
-    }
-}
-
-@Composable
-private fun RowScope.AddonCardInfo(
-    addon: Addon,
-    conflictCount: Int,
-    hasCritical: Boolean
-) {
-    Column(modifier = Modifier.weight(1f)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Text(
-                text = addon.name,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false)
-            )
-            if (conflictCount > 0) {
-                Badge(
-                    containerColor = if (hasCritical)
-                        MaterialTheme.colorScheme.error
-                    else
-                        MaterialTheme.colorScheme.errorContainer
-                ) {
-                    Text(
-                        text = conflictCount.toString(),
-                        color = if (hasCritical)
-                            MaterialTheme.colorScheme.onError
-                        else
-                            MaterialTheme.colorScheme.onErrorContainer
-                    )
-                }
-            }
-        }
-        Text(
-            text = when (addon.type) {
-                AddonType.BEHAVIOR_ONLY -> "🔵 Behavior"
-                AddonType.RESOURCE_ONLY -> "🟢 Resource"
-                AddonType.BEHAVIOR_AND_RESOURCE -> "🟣 Completo"
-                AddonType.UNKNOWN -> "⚪ Desconocido"
-            },
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.SemiBold,
-            color = when (addon.type) {
-                AddonType.BEHAVIOR_ONLY -> MaterialTheme.colorScheme.secondary
-                AddonType.RESOURCE_ONLY -> MaterialTheme.colorScheme.primary
-                AddonType.BEHAVIOR_AND_RESOURCE -> MaterialTheme.colorScheme.tertiary
-                AddonType.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
-            }
-        )
-        Text(
-            text = "v${addon.version} · ${
-                "%.1f".format(addon.sizeBytes / 1024.0 / 1024.0)
-            } MB · ${addon.files.size} archivos",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-fun DetailRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    value: String,
-    valueColor: Color = Color.Unspecified
-) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.Top
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(14.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            text = "$label: ",
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (valueColor == Color.Unspecified)
-                MaterialTheme.colorScheme.onSurfaceVariant
-            else valueColor,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 
 @Composable
 fun EmptyState() {
-    Column(
+    ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(vertical = 24.dp)
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+                RoundedCornerShape(24.dp)
+            ),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
     ) {
-        Icon(
-            imageVector = Icons.Outlined.Extension,
-            contentDescription = null,
-            modifier = Modifier.size(64.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-        )
-        Text(
-            text = "Sin addons importados",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-        )
-        Text(
-            text = "Toca el botón de arriba para agregar\narchivos .mcaddon o .mcpack",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Extension,
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Text(
+                text = "Tu taller está listo",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+
+            Text(
+                text = "Comienza importando tus addons Bedrock (.mcaddon o .mcpack) para analizar compatibilidad y fusionarlos en un único modpack.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+        }
     }
 }
+

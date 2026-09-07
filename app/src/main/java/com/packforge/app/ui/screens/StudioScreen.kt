@@ -5,7 +5,9 @@ import android.net.Uri
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import com.packforge.app.ui.components.bounceClick
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -301,18 +303,50 @@ fun StudioCard(
     accent: Color,
     onClick: () -> Unit
 ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth().clickable { onClick() }, shape = RoundedCornerShape(16.dp)) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)).background(accent.copy(alpha = 0.15f)), contentAlignment = Alignment.Center) {
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
+            .bounceClick(scaleDown = 0.97f) { onClick() },
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
+    ) {
+        Row(
+            Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(accent.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(icon, null, tint = accent, modifier = Modifier.size(26.dp))
             }
-            Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                    if (badge != null) Badge { Text(badge) }
+                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    if (badge != null) {
+                        Badge(containerColor = accent) { Text(badge) }
+                    }
                 }
-                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            )
         }
     }
 }
@@ -380,7 +414,7 @@ fun MyModpacksScreen(
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    Spacer(modifier = Modifier.height(80.dp))
+                    Spacer(modifier = Modifier.height(100.dp))
                 }
             }
         }
@@ -539,18 +573,22 @@ fun ModpackLibraryCard(
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onLoad() },
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 4.dp)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
+            .bounceClick(scaleDown = 0.98f) { onLoad() },
+        shape = RoundedCornerShape(20.dp),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-                    // ── Portada 16:9 ─────────────────────────────────
+            // ── Portada 16:9 ─────────────────────────────────
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant), // Cambiado de primaryContainer a surfaceVariant
+                    .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
                 when {
@@ -633,26 +671,26 @@ fun ModpackLibraryCard(
             ) {
                 FilledTonalIconButton(
                     onClick = onLoad,
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    modifier = Modifier.weight(1f).height(38.dp).bounceClick(scaleDown = 0.88f) { onLoad() }
                 ) {
                     Icon(Icons.Default.Edit, contentDescription = "Editar", modifier = Modifier.size(17.dp))
                 }
                 FilledTonalIconButton(
                     onClick = onShare,
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    modifier = Modifier.weight(1f).height(38.dp).bounceClick(scaleDown = 0.88f) { onShare() }
                 ) {
                     Icon(Icons.Default.Share, contentDescription = "Compartir", modifier = Modifier.size(17.dp))
                 }
                 // Re-fusionar con el motor actual (anti-obsolescencia)
                 FilledTonalIconButton(
                     onClick = onRegenerate,
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    modifier = Modifier.weight(1f).height(38.dp).bounceClick(scaleDown = 0.88f) { onRegenerate() }
                 ) {
                     Icon(Icons.Default.Refresh, contentDescription = "Regenerar con el motor actual", modifier = Modifier.size(17.dp))
                 }
                 IconButton(
                     onClick = onDelete,
-                    modifier = Modifier.weight(1f).height(38.dp)
+                    modifier = Modifier.weight(1f).height(38.dp).bounceClick(scaleDown = 0.88f) { onDelete() }
                 ) {
                     Icon(
                         imageVector = Icons.Default.Delete,

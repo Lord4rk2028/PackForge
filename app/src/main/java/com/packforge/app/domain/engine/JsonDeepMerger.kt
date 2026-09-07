@@ -54,7 +54,7 @@ object JsonDeepMerger {
         val result = JSONObject(base.toString())
 
         toMerge.keys().forEach { key ->
-            val cleanKey = key.trim()
+            val cleanKey = key.sanitizeKey()
             val baseValue = result.opt(cleanKey)
             val mergeValue = cleanJsonValue(toMerge.get(key))
 
@@ -152,9 +152,13 @@ object JsonDeepMerger {
         return result
     }
 
+    // Limpieza estricta: elimina invisibles Unicode (ZWSP \u200B, BOM, etc.) + control + espacios
+    private fun String.sanitize(): String = this.replace(Regex("[\\p{C}\\p{Z}]"), "").trim()
+    private fun String.sanitizeKey(): String = this.replace(Regex("[\\p{C}\\p{Z}]"), "").trim()
+
     fun cleanJsonValue(value: Any?): Any? {
         return when (value) {
-            is String -> value.trim()
+            is String -> value.sanitize()
             is JSONObject -> cleanJsonObject(value)
             is JSONArray -> cleanJsonArray(value)
             else -> value
@@ -164,10 +168,10 @@ object JsonDeepMerger {
     fun cleanJsonObject(obj: JSONObject): JSONObject {
         val cleaned = JSONObject()
         obj.keys().forEach { key ->
-            val cleanKey = key.trim()
+            val cleanKey = key.sanitizeKey()
             val value = obj.get(key)
             val cleanValue = when (value) {
-                is String -> value.trim()
+                is String -> value.sanitize()
                 is JSONObject -> cleanJsonObject(value)
                 is JSONArray -> cleanJsonArray(value)
                 else -> value
@@ -182,7 +186,7 @@ object JsonDeepMerger {
         for (i in 0 until arr.length()) {
             val value = arr.get(i)
             val cleanValue = when (value) {
-                is String -> value.trim()
+                is String -> value.sanitize()
                 is JSONObject -> cleanJsonObject(value)
                 is JSONArray -> cleanJsonArray(value)
                 else -> value

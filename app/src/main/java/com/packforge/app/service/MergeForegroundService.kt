@@ -102,6 +102,7 @@ class MergeForegroundService : Service() {
     /** Trabajo en curso; se cancela de forma explícita desde ACTION_CANCEL. */
     private var activeMergeJob: Job? = null
     private var lastUpdateTime = mutableMapOf<Any?, Long>().withDefault { 0L }
+    private var lastNotifiedPercent = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -116,15 +117,18 @@ class MergeForegroundService : Service() {
             ACTION_CANCEL -> {
                 PackForgeLog.d(TAG, "🛑 Solicitud de cancelación recibida")
                 MergeSession.cancel()
+                lastNotifiedPercent = 0
                 activeMergeJob?.cancel(CancellationException("Merge cancelled by user"))
                 stopSelf()
             }
             ACTION_REGENERATE -> {
+                lastNotifiedPercent = 0
                 val id = intent.getStringExtra(EXTRA_REGENERATE_ID)
                 activeMergeJob?.cancel()
                 activeMergeJob = scope.launch { runRegenerate(id, accentColor) }
             }
             else -> {
+                lastNotifiedPercent = 0
                 activeMergeJob?.cancel()
                 activeMergeJob = scope.launch { runExport(intent, accentColor) }
             }
@@ -299,7 +303,10 @@ class MergeForegroundService : Service() {
             if (now - last < 200L) return
             lastUpdateTime[message] = now
 
-            val percent = percentFor(message)
+            val raw = percentFor(message)
+            val percent = maxOf(raw, lastNotifiedPercent)
+            if (percent == lastNotifiedPercent && raw < lastNotifiedPercent) return
+            lastNotifiedPercent = percent
             MergeSession.update(message, percent)
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.notify(NOTIFICATION_ID, buildNotification(message, percent, true, ThemeAccent.colorBlocking(this@MergeForegroundService)))

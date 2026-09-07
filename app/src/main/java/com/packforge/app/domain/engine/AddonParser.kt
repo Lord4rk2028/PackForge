@@ -107,8 +107,21 @@ object AddonParser {
                     lower.contains("resource") || lower.contains("rp/") || lower.startsWith("textures/") || lower.startsWith("models/") -> resourceFiles.add(entryName)
                 }
 
-                if (SCRIPT_EXTENSIONS.any { lower.endsWith(".$it") } && (lower.startsWith("scripts/") || lower.contains("/scripts/"))) {
+                if (!hasScripts && SCRIPT_EXTENSIONS.any { lower.endsWith(".$it") } && (lower.startsWith("scripts/") || lower.contains("/scripts/"))) {
                     hasScripts = true
+                }
+                // Heurística UI (requiere server-ui en manifest); solo lee .js si aún no se marcó
+                if (!hasScripts && lower.endsWith(".js") && (lower.startsWith("scripts/") || lower.contains("/scripts/"))) {
+                    try {
+                        val text = file.readText(Charsets.UTF_8)
+                        if (text.contains("@minecraft/server-ui") || text.contains("server-ui") ||
+                            text.contains("ActionFormData") || text.contains("ModalFormData") ||
+                            text.contains("MessageFormData") || text.contains("world.afterEvents") ||
+                            text.contains("system.run") || text.contains("minecraft-ui")
+                        ) {
+                            hasScripts = true
+                        }
+                    } catch (_: Exception) {}
                 }
 
                 // Leer manifest y identifiers

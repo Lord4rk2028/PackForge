@@ -452,7 +452,7 @@ object PackForgeValidator {
                         logFile { "🔍 Buscando geometría por identificador: $geometryName" }
                         
                         // Usar el índice de identificadores Bedrock
-                        val geoFile = identifierIndex?.resolve("geometry.$geometryName")
+                        val geoFile = identifierIndex.resolve("geometry.$geometryName")
                         if (geoFile != null) {
                             val destFile = File(modelsEntityDir, "${geoFile.name}")
                             geoFile.copyTo(destFile, overwrite = true)

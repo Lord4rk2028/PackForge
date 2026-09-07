@@ -1,4 +1,4 @@
-﻿package com.packforge.app
+package com.packforge.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -60,6 +60,12 @@ import com.packforge.app.ui.viewmodel.PackForgeEvent
 import com.packforge.app.ui.viewmodel.PackForgeViewModel
 import com.packforge.app.ui.viewmodel.ThemeViewModel
 import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.tween
+import com.packforge.app.ui.components.FloatingBottomBar
 
 class MainActivity : ComponentActivity() {
 
@@ -132,7 +138,7 @@ fun PackForgeApp(
     
 
     Scaffold(
-        modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars),
+        modifier = Modifier.fillMaxSize(),
         topBar = {
             if (activeWebSource == null && !showMyModpacks && !showThemeSettings) {
                 PackForgeTopBar(
@@ -153,50 +159,38 @@ fun PackForgeApp(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             if (activeWebSource == null) {
-                Surface(tonalElevation = 3.dp, shadowElevation = 8.dp, color = MaterialTheme.colorScheme.surfaceContainer) {
-                    NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp) {
-                        val screens = listOf(Screen.Import, Screen.Conflicts, Screen.Export, Screen.Studio)
-                        screens.forEach { screen ->
-                            val selected = currentRoute == screen.route
-                            NavigationBarItem(
-                                selected = selected,
-                                onClick = {
-                                    if (currentRoute != screen.route) {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        navController.navigate(screen.route) {
-                                            popUpTo(navController.graph.startDestinationId) { saveState = true }
-                                            launchSingleTop = true
-                                            restoreState = true
-                                        }
-                                    }
-                                },
-                                icon = {
-                                    if (screen == Screen.Conflicts) {
-                                        BadgedBox(badge = {
-                                            if (criticalCount > 0) {
-                                                Badge(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError) {
-                                                    Text(text = if (criticalCount > 9) "9+" else criticalCount.toString())
-                                                }
-                                            }
-                                        }) {
-                                            Icon(if (selected) screen.iconFilled else screen.iconOutlined, screen.title)
-                                        }
-                                    } else {
-                                        Icon(if (selected) screen.iconFilled else screen.iconOutlined, screen.title)
-                                    }
-                                },
-                                label = {
-                                    Text(text = screen.title, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
-                                }
-                            )
+                FloatingBottomBar(
+                    currentRoute = currentRoute,
+                    criticalConflictsCount = criticalCount,
+                    onNavigate = { screen ->
+                        navController.navigate(screen.route) {
+                            popUpTo(navController.graph.startDestinationId) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
                         }
                     }
-                }
+                )
             }
         }
     ) { paddingValues ->
         Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
-            NavHost(navController = navController, startDestination = Screen.Import.route, modifier = Modifier.fillMaxSize()) {
+            NavHost(
+                navController = navController,
+                startDestination = Screen.Import.route,
+                modifier = Modifier.fillMaxSize(),
+                enterTransition = {
+                    fadeIn(animationSpec = tween(220)) + slideInHorizontally(animationSpec = tween(220)) { it / 6 }
+                },
+                exitTransition = {
+                    fadeOut(animationSpec = tween(180)) + slideOutHorizontally(animationSpec = tween(180)) { -it / 6 }
+                },
+                popEnterTransition = {
+                    fadeIn(animationSpec = tween(220)) + slideInHorizontally(animationSpec = tween(220)) { -it / 6 }
+                },
+                popExitTransition = {
+                    fadeOut(animationSpec = tween(180)) + slideOutHorizontally(animationSpec = tween(180)) { it / 6 }
+                }
+            ) {
                 composable(Screen.Import.route) {
                     ImportScreen(
                         addons = addons, conflicts = conflicts, isImporting = isImporting,

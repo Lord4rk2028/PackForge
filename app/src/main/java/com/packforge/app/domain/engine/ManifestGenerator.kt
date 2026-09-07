@@ -194,6 +194,14 @@ object ManifestGenerator {
         if (capabilities.isNotEmpty()) {
             manifest.getJSONObject("header").put("capabilities", JSONArray(capabilities.toList()))
         }
+        // ⭐ Soporte iluminación dinámica: inyectar capability si hay scripts
+        if (hasScriptsFolder) {
+            val h = manifest.getJSONObject("header")
+            val arr = h.optJSONArray("capabilities") ?: JSONArray().also { h.put("capabilities", it) }
+            var hasDyn = false
+            for (i in 0 until arr.length()) if (arr.optString(i) == "dynamic_light") { hasDyn = true; break }
+            if (!hasDyn) arr.put("dynamic_light")
+        }
 
         // LOG OBLIGATORIO: manifiesto del BP completo
         Log.d(MANIFEST_TAG, "=== BP MANIFEST FINAL ===")
@@ -399,6 +407,8 @@ object ManifestGenerator {
                 put("uuid", bpHeaderUuid)
                 put("version", JSONArray(listOf(1, 0, 0)))
                 put("min_engine_version", minEngine)  // ⭐ OBLIGATORIO
+                // ⭐ Soporte iluminación dinámica (System Dynamic Light)
+                if (hasScripts) put("capabilities", JSONArray().apply { put("dynamic_light") })
             })
             put("modules", modules)
             put("dependencies", dependencies)
