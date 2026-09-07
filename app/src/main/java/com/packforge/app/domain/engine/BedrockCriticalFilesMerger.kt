@@ -1,4 +1,4 @@
-﻿package com.packforge.app.domain.engine
+package com.packforge.app.domain.engine
 
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.util.logFile
@@ -1099,12 +1099,11 @@ object BedrockCriticalFilesMerger {
     }
 
     /** Registra conflictos HIGH cuando ambos lados definen números distintos en la misma hoja. */
-    /** Registra conflictos HIGH cuando ambos lados definen números distintos en la misma hoja. */
     private fun registerNumericConflicts(base: Any, incoming: Any, path: String, owner: String) {
         when {
             base is JSONObject && incoming is JSONObject -> {
                 incoming.keys().forEach { key ->
-                    base.opt(key)?.let { registerNumericConflicts(it, incoming.get(key), ".", owner) }
+                    base.opt(key)?.let { registerNumericConflicts(it, incoming.get(key), "$path.$key", owner) }
                 }
             }
             base is JSONArray && incoming is JSONArray -> Unit // arrays: deepMerge concatena
@@ -1116,7 +1115,7 @@ object BedrockCriticalFilesMerger {
                         file = "player.entity.json",
                         addon1 = "base(mayorVersión)",
                         addon2 = owner,
-                        description = "'':  → . Revisa manualmente si el comportamiento no es el esperado."
+                        description = "'$path': ${base} → ${incoming}. Revisa manualmente si el comportamiento no es el esperado."
                     )
                 }
             }
@@ -1136,10 +1135,10 @@ object BedrockCriticalFilesMerger {
                 components.opt(key)?.let { definedMovement[key] = it }
             }
             if (definedMovement.isNotEmpty()) {
-                PackForgeLog.d("PackForge_Player", "Player tiene movimientos definidos: ")
+                PackForgeLog.d("PackForge_Player", "Player tiene movimientos definidos: ${definedMovement.keys}")
                 // No sobrescribir movement si ya está definido (conservar behavior del addon principal)
             }
-        } catch (e: Exception) { PackForgeLog.e("PackForge_Player", "Error validando player: ") }
+        } catch (e: Exception) { PackForgeLog.e("PackForge_Player", "Error validando player: ${e.message}") }
     }
 
     // =====================================================================
