@@ -381,7 +381,9 @@ object PackForgeOrchestrator {
                         async { merger.mergeRenderControllers(rpDirFiles, mergedRpDir) },
                         async { merger.mergeAnimations(rpDirFiles, mergedRpDir) },
                         async { merger.mergeSoundsJson(rpDirFiles, mergedRpDir) },
-                        async { merger.mergeEntityDefinitions(rpDirFiles, mergedRpDir) }
+                        async { merger.mergeEntityDefinitions(rpDirFiles, mergedRpDir) },
+                        async { merger.mergeEntityTextures(rpDirFiles, mergedRpDir) },
+                        async { merger.mergeAttachables(rpDirFiles, mergedRpDir) }
                     )
                     // Tareas paralelas de BP
                     val bpTasks = listOf(

@@ -1,4 +1,4 @@
-package com.packforge.app.domain.engine
+﻿package com.packforge.app.domain.engine
 
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.util.logFile
@@ -798,6 +798,43 @@ object BedrockCriticalFilesMerger {
         }
     }
 
+    fun mergeEntityTextures(rpDirs: List<File>, mergedRpDir: File) {
+        val entityDir = File(mergedRpDir, "entity")
+        if (!entityDir.isDirectory) return
+        var copied = 0
+        entityDir.listFiles()?.filter { it.name.endsWith(".entity.json") }?.forEach { entityFile ->
+            try {
+                val json = JSONObject(entityFile.readText(Charsets.UTF_8))
+                val desc = json.optJSONObject("minecraft:client_entity")?.optJSONObject("description")
+                    ?: json.optJSONObject("description") ?: return@forEach
+                // Buscar textures en description
+                val textures = desc.optJSONObject("textures") ?: JSONObject()
+                textures.keys().forEach { key ->
+                    val texPath = textures.optString(key).trim()
+                    if (texPath.isBlank() || texPath.startsWith("atlas.") || texPath.contains("/")) {
+                        // Solo copiar si es un path relativo a textures/
+                        val pngFile = File(mergedRpDir, "textures/$texPath.png")
+                        if (!pngFile.exists()) {
+                            val found = rpDirs.firstNotNullOfOrNull { rpDir ->
+                                val f = File(rpDir, "textures/$texPath.png")
+                                if (f.exists()) f else null
+                            }
+                            if (found != null) {
+                                pngFile.parentFile?.mkdirs()
+                                found.copyTo(pngFile, overwrite = true)
+                                copied++
+                                PackForgeLog.d("PackForge_EntityTex", "Copiado: textures/$texPath.png para ${entityFile.name}")
+                            } else {
+                                PackForgeLog.w("PackForge_EntityTex", "Textura entity no encontrada: $texPath (${entityFile.name})")
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) { /* ignorar */ }
+        }
+        if (copied > 0) PackForgeLog.d("PackForge_EntityTex", "✅ $copied texturas de entity copiadas")
+    }
+
     // =====================================================================
     // 12. RECIPES - Fusión semántica de recetas de crafting/hornos/alquimia
     //     Bedrock usa archivos individuales por receta en recipes/
@@ -1062,11 +1099,12 @@ object BedrockCriticalFilesMerger {
     }
 
     /** Registra conflictos HIGH cuando ambos lados definen números distintos en la misma hoja. */
+    /** Registra conflictos HIGH cuando ambos lados definen números distintos en la misma hoja. */
     private fun registerNumericConflicts(base: Any, incoming: Any, path: String, owner: String) {
         when {
             base is JSONObject && incoming is JSONObject -> {
                 incoming.keys().forEach { key ->
-                    base.opt(key)?.let { registerNumericConflicts(it, incoming.get(key), "$path.$key", owner) }
+                    base.opt(key)?.let { registerNumericConflicts(it, incoming.get(key), ".", owner) }
                 }
             }
             base is JSONArray && incoming is JSONArray -> Unit // arrays: deepMerge concatena
@@ -1078,18 +1116,32 @@ object BedrockCriticalFilesMerger {
                         file = "player.entity.json",
                         addon1 = "base(mayorVersión)",
                         addon2 = owner,
-                        description = "'$path': ${base} → ${incoming}. Revisa manualmente si el comportamiento no es el esperado."
+                        description = "'':  → . Revisa manualmente si el comportamiento no es el esperado."
                     )
                 }
             }
         }
     }
 
-    // =====================================================================
-    // 15. SOUND_DEFINITIONS.JSON - Fusiona definiciones de sonido del RP.
-    //     Clave duplicada con contenido distinto → la clave del addon posterior
-    //     se renombra a `<clave>_pf<hex4>` y SE DEVUELVE el mapa de renombres
-    //     para actualizar referencias en sounds.json / entidades (applySoundKeyRenames).
+    fun mergeConservativePlayerEntity(bpDirs: List<File>, mergedBpDir: File) {
+        val destFile = File(mergedBpDir, "player.entity.json")
+        if (!destFile.exists()) return
+        try {
+            val base = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
+            val components = base.optJSONObject("minecraft:entity")?.optJSONObject("components") ?: return
+            // Verificar si componentes de movimiento están definidos
+            val movementKeys = listOf("minecraft:movement", "minecraft:jump_strength", "minecraft:gravity")
+            val definedMovement = mutableMapOf<String, Any>()
+            movementKeys.forEach { key ->
+                components.opt(key)?.let { definedMovement[key] = it }
+            }
+            if (definedMovement.isNotEmpty()) {
+                PackForgeLog.d("PackForge_Player", "Player tiene movimientos definidos: ")
+                // No sobrescribir movement si ya está definido (conservar behavior del addon principal)
+            }
+        } catch (e: Exception) { PackForgeLog.e("PackForge_Player", "Error validando player: ") }
+    }
+
     // =====================================================================
     fun mergeSoundDefinitions(rpDirs: List<File>, destDir: File): Map<String, String> {
         val renames = LinkedHashMap<String, String>()
@@ -1443,5 +1495,47 @@ object BedrockCriticalFilesMerger {
                 }
             }
         } catch (_: Exception) {}
+    }
+
+    // =====================================================================
+    // 18. ATTACHABLES - RP/attachables/*.json declaran minecraft:attachable.
+    //     Fusiona por nombre de archivo deduplicando por clave raíz (ej.
+    //     "minecraft:attachable"). Si el archivo ya existe en destino, se
+    //     fusiona en profundidad; si no, se copia limpio.
+    // =====================================================================
+    fun mergeAttachables(rpDirs: List<File>, destDir: File) {
+        val destAttachDir = File(destDir, "attachables")
+        destAttachDir.mkdirs()
+        rpDirs.forEach { rpDir ->
+            val attachDir = File(rpDir, "attachables")
+            if (!attachDir.isDirectory) return@forEach
+            attachDir.listFiles()?.filter { it.extension.equals("json", true) }?.forEach { file ->
+                val destFile = File(destAttachDir, file.name)
+                if (!destFile.exists()) {
+                    try {
+                        val clean = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+                        OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use { it.write(clean.toString()) }
+                    } catch (_: Exception) { file.copyTo(destFile, overwrite = true) }
+                    PackForgeLog.d("PackForge_Attach", "✅ Copiado: attachables/${file.name}")
+                } else {
+                    try {
+                        val base = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
+                        val incoming = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+                        // Merge por clave raíz (ej. "minecraft:attachable")
+                        incoming.keys().forEach { key ->
+                            val cleanKey = key.sanitizeKey()
+                            if (base.has(cleanKey)) {
+                                val bv = base.get(cleanKey); val iv = incoming.get(key)
+                                if (bv is JSONObject && iv is JSONObject) base.put(cleanKey, JsonDeepMerger.deepMerge(bv, iv))
+                                else base.put(cleanKey, iv)
+                            } else base.put(cleanKey, incoming.get(key))
+                        }
+                        OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use { it.write(base.toString()) }
+                        PackForgeLog.d("PackForge_Attach", "🔀 Fusionado: attachables/${file.name}")
+                    } catch (e: Exception) { PackForgeLog.e("PackForge_Attach", "Error: ${e.message}") }
+                }
+            }
+        }
+        PackForgeLog.d("PackForge_Attach", "✅ attachables fusionados")
     }
 }
