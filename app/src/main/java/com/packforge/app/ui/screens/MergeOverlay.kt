@@ -1,11 +1,12 @@
 package com.packforge.app.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import com.packforge.app.ui.components.FADE_SLOW_SPEC
+import com.packforge.app.ui.components.SLIDE_SLOW_SPEC
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -65,8 +66,8 @@ fun MergeOverlay() {
 
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(220)) + scaleIn(initialScale = 0.94f, animationSpec = tween(220)),
-        exit = fadeOut(tween(260)) + scaleOut(targetScale = 0.96f, animationSpec = tween(260))
+        enter = fadeIn(animationSpec = FADE_SLOW_SPEC) + scaleIn(initialScale = 0.94f, animationSpec = FADE_SLOW_SPEC),
+        exit = fadeOut(animationSpec = FADE_SLOW_SPEC) + scaleOut(targetScale = 0.96f, animationSpec = FADE_SLOW_SPEC)
     ) {
         // Velo opaco que consume todos los toques: bloquea el editor/navegación.
         Box(
@@ -172,7 +173,7 @@ fun MergeOverlay() {
 private fun CrossfadeText(text: String) {
     androidx.compose.animation.Crossfade(
         targetState = text,
-        animationSpec = tween(200),
+        animationSpec = FADE_SLOW_SPEC,
         label = "mergePhase"
     ) { phase ->
         Text(

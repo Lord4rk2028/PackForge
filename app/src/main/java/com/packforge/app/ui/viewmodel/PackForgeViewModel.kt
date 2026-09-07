@@ -22,6 +22,7 @@ import com.google.gson.Gson
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.io.File
+import java.io.FileOutputStream
 import java.util.UUID
 
 sealed class PackForgeEvent {
@@ -589,15 +590,59 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun clearAll() {
-        AddonUriCache.clear()
-        _addons.value = emptyList()
-        _conflicts.value = emptyList()
-        _resolutions.value = emptyMap()
-        _metadata.value = ModpackMetadata()
-        _compatibilityScore.value = 100
-        _criticalConflictsCount.value = 0
-        editingModpackId = null
+    fun importModpackFromFile(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val app = getApplication<Application>()
+                _isImporting.value = true
+                _importProgress.value = OperationProgress.Loading("Importando modpack...", 0f)
+
+                // 1. Validar extensión
+                val fileName = try {
+                    var name = "modpack.mcaddon"
+                    app.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                        if (c.moveToFirst()) {
+                            val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            if (idx >= 0) name = c.getString(idx) ?: name
+                        }
+                    }
+                    name
+                } catch (_: Exception) { "modpack.mcaddon" }
+
+                if (!fileName.endsWith(".mcaddon", ignoreCase = true) &&
+                    !fileName.endsWith(".mcpack", ignoreCase = true) &&
+                    !fileName.endsWith(".zip", ignoreCase = true)) {
+                    _events.emit(PackForgeEvent.ShowSnackbar("Solo se aceptan .mcaddon o .mcpack", true))
+                    _isImporting.value = false
+                    _importProgress.value = OperationProgress.Idle
+                    return@launch
+                }
+
+                // 2. Usar el mismo flujo que AddonParser.parseFromUri (copia interna + extracción)
+                val addon = withContext(Dispatchers.IO) {
+                    AddonParser.parseFromUri(app, uri)
+                }
+
+                if (addon != null) {
+                    val current = _addons.value.toMutableList()
+                    current.add(addon)
+                    _addons.value = current.mapIndexed { i, a -> a.copy(priority = i) }
+                    recalculateConflicts()
+                    _events.emit(PackForgeEvent.ShowSnackbar("Modpack importado: ${addon.name}"))
+                } else {
+                    _events.emit(PackForgeEvent.ShowSnackbar("No se pudo importar el modpack (formato no reconocido)", true))
+                }
+
+                _isImporting.value = false
+                _importProgress.value = OperationProgress.Idle
+
+            } catch (e: Exception) {
+                PackForgeLog.e("PackForge_Import", "Error importando modpack: ${e.message}", e)
+                _events.emit(PackForgeEvent.ShowSnackbar("Error al importar modpack: ${e.message}", true))
+                _isImporting.value = false
+                _importProgress.value = OperationProgress.Idle
+            }
+        }
     }
 
     private suspend fun saveModpackToHistory(context: Context, fileName: String, filePath: String) {
@@ -764,6 +809,17 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 _events.emit(PackForgeEvent.ShowSnackbar("Error al cargar modpack", true))
             }
         }
+    }
+
+    fun clearAll() {
+        AddonUriCache.clear()
+        _addons.value = emptyList()
+        _conflicts.value = emptyList()
+        _resolutions.value = emptyMap()
+        _metadata.value = ModpackMetadata()
+        _compatibilityScore.value = 100
+        _criticalConflictsCount.value = 0
+        editingModpackId = null
     }
 
     fun deleteFromHistory(context: Context, id: String) {

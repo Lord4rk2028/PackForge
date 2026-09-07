@@ -1,6 +1,7 @@
 package com.packforge.app.ui.components
 
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
@@ -24,6 +25,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.IntOffset
+
+// Constantes de animación para transiciones de pantalla consistentes (300ms + easing suave)
+val FADE_SLOW_SPEC = tween<Float>(
+    durationMillis = 300,
+    easing = LinearOutSlowInEasing
+)
+
+val SLIDE_SLOW_SPEC = tween<IntOffset>(
+    durationMillis = 300,
+    easing = LinearOutSlowInEasing
+)
 
 /**
  * Añade un efecto táctil de compresión elástica ("bounce") al presionar cualquier elemento.
@@ -96,4 +109,3 @@ fun Modifier.shimmerLoading(
 
     this.background(brush)
 }
-

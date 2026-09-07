@@ -2,6 +2,8 @@ package com.packforge.app.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -13,7 +15,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -128,6 +131,7 @@ fun StudioScreen(
             onRegenerate = { modpack ->
                 modpackToRegenerate = modpack
             },
+            onImportModpack = { uri -> viewModel.importModpackFromFile(uri) }
         )
         modpackToRegenerate?.let { target ->
             AlertDialog(
@@ -155,6 +159,21 @@ fun StudioScreen(
             )
         }
         return
+    }
+
+    // File picker para importar modpacks desde StudioScreen principal
+    val appContext = LocalContext.current
+    val importFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                appContext.contentResolver.takePersistableUriPermission(
+                    uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+            viewModel.importModpackFromFile(uri)
+        }
     }
 
     val listState = rememberLazyListState()
@@ -203,6 +222,37 @@ fun StudioScreen(
                     accent = MaterialTheme.colorScheme.tertiary
                 ) {
                     viewModel.setShowThemeSettings(true)
+                }
+            }
+
+            item {
+                OutlinedButton(
+                    onClick = {
+                        importFileLauncher.launch(
+                            arrayOf(
+                                "application/zip",
+                                "application/octet-stream",
+                                "application/x-mcaddon",
+                                "application/x-mcpack",
+                                "*/*"
+                            )
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Start,
+                        content = {
+                            Icon(Icons.Default.Upload, contentDescription = "Importar")
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "Importar Modpack",
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                        }
+                    )
                 }
             }
 
@@ -363,11 +413,70 @@ fun MyModpacksScreen(
     onDelete: (String) -> Unit,
     onLoad: (SavedModpack) -> Unit,
     onOpenSources: () -> Unit = {},
-    onRegenerate: (SavedModpack) -> Unit = {}
+    onRegenerate: (SavedModpack) -> Unit = {},
+    onImportModpack: (Uri) -> Unit = {}
 ) {
     val context = LocalContext.current
     val shareScope = rememberCoroutineScope()
     var modpackToDelete by remember { mutableStateOf<SavedModpack?>(null) }
+    var showShareDialog by remember { mutableStateOf(false) }
+
+    // Diálogo de selección de modpack para compartir
+    if (showShareDialog) {
+        AlertDialog(
+            onDismissRequest = { showShareDialog = false },
+            title = { Text("Compartir Modpack", fontWeight = FontWeight.Bold) },
+            text = {
+                if (modpacks.isEmpty()) {
+                    Text("No tienes modpacks guardados aún.\nCrear uno desde la pantalla de Exportación.")
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(modpacks) { modpack: SavedModpack ->
+                            OutlinedButton(
+                                onClick = {
+                                    shareModpack(context, modpack, shareScope)
+                                    showShareDialog = false
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalAlignment = Alignment.Start
+                                ) {
+                                    Text(
+                                        text = modpack.name.ifBlank { "Sin nombre" },
+                                        style = MaterialTheme.typography.titleSmall,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "v${modpack.version} · ${modpack.addonCount} addons",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showShareDialog = false }) { Text("Cancelar") } }
+        )
+    }
+
+    // File picker para importar modpacks
+    val importFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {}
+            onImportModpack(uri)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -400,7 +509,7 @@ fun MyModpacksScreen(
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 contentPadding = PaddingValues(16.dp)
             ) {
-                items(modpacks, key = { it.id }, contentType = { "modpack" }) { modpack ->
+                gridItems(modpacks, key = { it.id }, contentType = { "modpack" }) { modpack ->
                     val onLoadThis = remember(modpack.id) { { onLoad(modpack); onBack() } }
                     val onDeleteThis = remember(modpack.id) { { modpackToDelete = modpack } }
                     val onShareThis = remember(modpack.id) { { shareModpack(context, modpack, shareScope) } }
@@ -420,13 +529,30 @@ fun MyModpacksScreen(
         }
     }
 
-    // FAB EXPRESIVO con morphing
+    // FAB EXPRESIVO con morphing: acciones reales
     Box(modifier = Modifier.fillMaxSize()) {
         MorphingFab(
             items = listOf(
-                MorphingFabItem("Explorar fuentes", Icons.Default.Search, onClick = onOpenSources),
+                MorphingFabItem("Importar Modpack", Icons.Default.Upload) {
+                    importFileLauncher.launch(
+                        arrayOf(
+                            "application/zip",
+                            "application/octet-stream",
+                            "application/x-mcaddon",
+                            "application/x-mcpack",
+                            "*/*"
+                        )
+                    )
+                },
+                MorphingFabItem("Explorar fuentes", Icons.Default.Search) {
+                    onOpenSources()
+                },
                 MorphingFabItem("Compartir uno", Icons.Default.Share) {
-                    modpacks.firstOrNull()?.let { shareModpack(context, it, shareScope) }
+                    if (modpacks.isNotEmpty()) {
+                        showShareDialog = true
+                    } else {
+                        android.widget.Toast.makeText(context, "No hay modpacks para compartir", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 }
             ),
             modifier = Modifier

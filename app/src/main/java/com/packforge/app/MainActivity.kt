@@ -64,7 +64,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.core.tween
+import com.packforge.app.ui.components.FADE_SLOW_SPEC
+import com.packforge.app.ui.components.SLIDE_SLOW_SPEC
 import com.packforge.app.ui.components.FloatingBottomBar
 
 class MainActivity : ComponentActivity() {
@@ -135,7 +136,14 @@ fun PackForgeApp(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val currentScreen = getScreenFromRoute(currentRoute)
-    
+
+    // ── Orden de tabs para transición direction-aware (dock inferior) ──
+    val screenOrder = listOf(
+        Screen.Import.route, Screen.Conflicts.route,
+        Screen.Export.route, Screen.Studio.route
+    )
+    fun routeIndex(route: String?) = screenOrder.indexOf(route).let { if (it == -1) 0 else it }
+
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -179,16 +187,32 @@ fun PackForgeApp(
                 startDestination = Screen.Import.route,
                 modifier = Modifier.fillMaxSize(),
                 enterTransition = {
-                    fadeIn(animationSpec = tween(220)) + slideInHorizontally(animationSpec = tween(220)) { it / 6 }
+                    val target = targetState.destination.route
+                    val initial = initialState.destination.route
+                    val isForward = routeIndex(target) > routeIndex(initial)
+                    val offset = { fullWidth: Int -> if (isForward) fullWidth / 6 else -fullWidth / 6 }
+                    fadeIn(animationSpec = FADE_SLOW_SPEC) + slideInHorizontally(animationSpec = SLIDE_SLOW_SPEC, initialOffsetX = offset)
                 },
                 exitTransition = {
-                    fadeOut(animationSpec = tween(180)) + slideOutHorizontally(animationSpec = tween(180)) { -it / 6 }
+                    val target = targetState.destination.route
+                    val initial = initialState.destination.route
+                    val isForward = routeIndex(target) > routeIndex(initial)
+                    val offset = { fullWidth: Int -> if (isForward) -fullWidth / 6 else fullWidth / 6 }
+                    fadeOut(animationSpec = FADE_SLOW_SPEC) + slideOutHorizontally(animationSpec = SLIDE_SLOW_SPEC, targetOffsetX = offset)
                 },
                 popEnterTransition = {
-                    fadeIn(animationSpec = tween(220)) + slideInHorizontally(animationSpec = tween(220)) { -it / 6 }
+                    val target = targetState.destination.route
+                    val initial = initialState.destination.route
+                    val isForward = routeIndex(target) > routeIndex(initial)
+                    val offset = { fullWidth: Int -> if (isForward) fullWidth / 6 else -fullWidth / 6 }
+                    fadeIn(animationSpec = FADE_SLOW_SPEC) + slideInHorizontally(animationSpec = SLIDE_SLOW_SPEC, initialOffsetX = offset)
                 },
                 popExitTransition = {
-                    fadeOut(animationSpec = tween(180)) + slideOutHorizontally(animationSpec = tween(180)) { it / 6 }
+                    val target = targetState.destination.route
+                    val initial = initialState.destination.route
+                    val isForward = routeIndex(target) > routeIndex(initial)
+                    val offset = { fullWidth: Int -> if (isForward) -fullWidth / 6 else fullWidth / 6 }
+                    fadeOut(animationSpec = FADE_SLOW_SPEC) + slideOutHorizontally(animationSpec = SLIDE_SLOW_SPEC, targetOffsetX = offset)
                 }
             ) {
                 composable(Screen.Import.route) {
