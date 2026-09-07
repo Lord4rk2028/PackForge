@@ -5,6 +5,11 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import com.packforge.app.ui.components.EXPAND_SLOW_SPEC
+import com.packforge.app.ui.components.FADE_SLOW_SPEC
+import com.packforge.app.ui.components.SLIDE_SLOW_SPEC
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -265,7 +270,11 @@ fun ConflictCard(conflict: Conflict, addons: List<Addon>, resolution: String?, o
                 Icon(if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
             }
 
-            AnimatedVisibility(visible = expanded) {
+            AnimatedVisibility(
+                visible = expanded,
+                enter = fadeIn(FADE_SLOW_SPEC) + expandVertically(animationSpec = EXPAND_SLOW_SPEC),
+                exit = fadeOut(FADE_SLOW_SPEC) + shrinkVertically(animationSpec = EXPAND_SLOW_SPEC)
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(0.4f)

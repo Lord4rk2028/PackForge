@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 
 // Constantes de animación para transiciones de pantalla consistentes (300ms + easing suave)
 val FADE_SLOW_SPEC = tween<Float>(
@@ -34,6 +35,11 @@ val FADE_SLOW_SPEC = tween<Float>(
 )
 
 val SLIDE_SLOW_SPEC = tween<IntOffset>(
+    durationMillis = 300,
+    easing = LinearOutSlowInEasing
+)
+
+val EXPAND_SLOW_SPEC = tween<IntSize>(
     durationMillis = 300,
     easing = LinearOutSlowInEasing
 )

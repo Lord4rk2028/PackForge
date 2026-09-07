@@ -4,7 +4,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
+import com.packforge.app.ui.components.EXPAND_SLOW_SPEC
+import com.packforge.app.ui.components.FADE_SLOW_SPEC
+import com.packforge.app.ui.components.SLIDE_SLOW_SPEC
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -289,7 +292,7 @@ fun ImportDropZone(
 ) {
     val alpha by animateFloatAsState(
         targetValue = if (isImporting) 0.75f else 1f,
-        animationSpec = tween(300, easing = FastOutSlowInEasing),
+        animationSpec = FADE_SLOW_SPEC,
         label = "alpha"
     )
 
@@ -462,7 +465,7 @@ fun CompatibilityScoreCard(
             score >= 50 -> MaterialTheme.colorScheme.tertiary
             else -> MaterialTheme.colorScheme.error
         },
-        animationSpec = tween(400, easing = FastOutSlowInEasing),
+        animationSpec = tween(400, easing = LinearOutSlowInEasing),
         label = "scoreColor"
     )
 
@@ -772,8 +775,8 @@ fun AddonCard(
             // ─── DETALLES EXPANDIDOS CON CHIPS ─────────────────
             AnimatedVisibility(
                 visible = expanded,
-                enter = fadeIn(animationSpec = tween(250)) + expandVertically(),
-                exit = fadeOut(animationSpec = tween(200)) + shrinkVertically()
+                enter = fadeIn(FADE_SLOW_SPEC) + expandVertically(animationSpec = EXPAND_SLOW_SPEC),
+                exit = fadeOut(FADE_SLOW_SPEC) + shrinkVertically(animationSpec = EXPAND_SLOW_SPEC)
             ) {
                 Column(
                     modifier = Modifier
