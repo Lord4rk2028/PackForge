@@ -22,22 +22,25 @@ object ColorSchemeBuilder {
             s = (s * 1.35f).coerceAtMost(1f)
         }
 
-        val primary = hslToColor(h, s, l)
-        val primaryContainer = hslToColor(h, s * 0.75f, l * 0.75f)
+        val primary = hslToColor(h, s, if (dark) (l * 1.1f).coerceIn(0.55f, 0.85f) else l)
+        val primaryContainerL = if (dark) 0.26f else 0.90f
+        val primaryContainer = hslToColor(h, if (dark) s * 0.6f else s * 0.5f, primaryContainerL)
         val onPrimary = if (l > 0.55f) Color(0xFF000000) else Color(0xFFFFFFFF)
-        val onPrimaryContainer = onPrimary
+        val onPrimaryContainer = if (dark) hslToColor(h, s * 0.25f, 0.92f) else hslToColor(h, s * 0.85f, 0.12f)
 
         val secondaryH = (h + 35f) % 360f
-        val secondary = hslToColor(secondaryH, s * 0.55f, l * 0.9f)
-        val secondaryContainer = hslToColor(secondaryH, s * 0.4f, l * 0.75f)
-        val onSecondary = if (l > 0.55f) Color(0xFF000000) else Color(0xFFFFFFFF)
-        val onSecondaryContainer = onSecondary
+        val secondary = hslToColor(secondaryH, s * 0.55f, if (dark) 0.75f else 0.45f)
+        val secondaryContainerL = if (dark) 0.24f else 0.91f
+        val secondaryContainer = hslToColor(secondaryH, s * 0.35f, secondaryContainerL)
+        val onSecondary = if (dark) Color(0xFF141414) else Color(0xFFFFFFFF)
+        val onSecondaryContainer = if (dark) hslToColor(secondaryH, s * 0.25f, 0.92f) else hslToColor(secondaryH, s * 0.8f, 0.12f)
 
         val tertiaryH = (h + 150f) % 360f
-        val tertiary = hslToColor(tertiaryH, s * 0.65f, l * 0.85f)
-        val tertiaryContainer = hslToColor(tertiaryH, s * 0.45f, l * 0.7f)
-        val onTertiary = if (l > 0.55f) Color(0xFF000000) else Color(0xFFFFFFFF)
-        val onTertiaryContainer = onTertiary
+        val tertiary = hslToColor(tertiaryH, s * 0.65f, if (dark) 0.75f else 0.45f)
+        val tertiaryContainerL = if (dark) 0.24f else 0.91f
+        val tertiaryContainer = hslToColor(tertiaryH, s * 0.35f, tertiaryContainerL)
+        val onTertiary = if (dark) Color(0xFF141414) else Color(0xFFFFFFFF)
+        val onTertiaryContainer = if (dark) hslToColor(tertiaryH, s * 0.25f, 0.92f) else hslToColor(tertiaryH, s * 0.8f, 0.12f)
 
         val error = Color(0xFFB3261E)
         val onError = Color(0xFFFFFFFF)

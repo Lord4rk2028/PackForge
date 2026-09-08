@@ -506,10 +506,25 @@ object PackForgeOrchestrator {
                 verifyBeforeZip(mergedBpDir, mergedRpDir)
             }
 
+            // Generar metadata de PackForge.ID para identificación exclusiva de modpacks
+            val modpackId = java.util.UUID.randomUUID().toString()
+            val idJson = org.json.JSONObject().apply {
+                put("signature", "PACKFORGE_MODPACK")
+                put("id", modpackId)
+                put("name", customName)
+                put("author", customAuthor)
+                put("version", customVersion)
+                put("description", customDescription)
+                put("addonCount", addonPaths.size)
+                put("exportedAt", System.currentTimeMillis())
+                put("addonNames", org.json.JSONArray(addonNames))
+            }.toString()
+
             createMcAddon(
                 if (bpDirs.isNotEmpty()) mergedBpDir else null,
                 if (rpDirs.isNotEmpty()) mergedRpDir else null,
-                outputFile
+                outputFile,
+                idJson
             )
 
             // ══ VALIDACIÓN POST-FUSIÓN + REPORTE LEGIBLE ══
@@ -1365,7 +1380,7 @@ object PackForgeOrchestrator {
      * - RP_PackForge/
      * CRÍTICO: NO usar behavior_packs/ o resource_packs/
      */
-    private fun createMcAddon(mergedBpDir: File?, mergedRpDir: File?, outputFile: File) {
+    private fun createMcAddon(mergedBpDir: File?, mergedRpDir: File?, outputFile: File, idContent: String? = null) {
         if (mergedBpDir != null) DirIndexCache.invalidate(mergedBpDir)
         if (mergedRpDir != null) DirIndexCache.invalidate(mergedRpDir)
         val bpIdx = mergedBpDir?.let { DirIndexCache.index(it) }
@@ -1375,6 +1390,16 @@ object PackForgeOrchestrator {
             BufferedOutputStream(FileOutputStream(outputFile), 262144) // ⭐ 256KB buffer
         ).use { zos ->
             zos.setLevel(Deflater.BEST_SPEED) // ⭐ Nivel 1: ~5x más rápido, tamaño casi igual
+
+            // Inyectar PackForge.ID al inicio del ZIP para identificación exclusiva de modpack
+            if (!idContent.isNullOrBlank()) {
+                val idEntry = ZipEntry("PackForge.ID")
+                zos.putNextEntry(idEntry)
+                zos.write(idContent.toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+                entryCount++
+                PackForgeLog.d("PackForge_ZIP", "🏷️ PackForge.ID agregado en la raíz del modpack")
+            }
 
             if (mergedBpDir != null && mergedBpDir.exists()) {
                 entryCount += addFolderToZip(zos, mergedBpDir, "BP_PackForge", bpIdx)

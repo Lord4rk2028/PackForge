@@ -127,7 +127,9 @@ fun PackForgeApp(
     LaunchedEffect(Unit) {
         packForgeViewModel.events.collectLatest { event ->
             when (event) {
-                is PackForgeEvent.ShowSnackbar -> snackbarHostState.showSnackbar(event.message)
+                is PackForgeEvent.ShowSnackbar -> {
+                    android.widget.Toast.makeText(appContext, event.message, android.widget.Toast.LENGTH_SHORT).show()
+                }
                 PackForgeEvent.Vibration -> haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             }
         }
@@ -164,9 +166,8 @@ fun PackForgeApp(
                 )
             }
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            if (activeWebSource == null) {
+            if (activeWebSource == null && !showMyModpacks && !showThemeSettings) {
                 FloatingBottomBar(
                     currentRoute = currentRoute,
                     criticalConflictsCount = criticalCount,

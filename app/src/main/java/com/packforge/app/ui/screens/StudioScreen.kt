@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import com.packforge.app.ui.components.bounceClick
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -127,7 +128,10 @@ fun StudioScreen(
             onBack = { viewModel.setShowMyModpacks(false) },
             onDelete = onDeleteModpack,
             onLoad = onLoadModpack,
-            onOpenSources = { viewModel.setShowMyModpacks(false) },
+            onOpenSources = {
+                viewModel.setShowMyModpacks(false)
+                viewModel.setActiveWebSource("MCPEDL")
+            },
             onRegenerate = { modpack ->
                 modpackToRegenerate = modpack
             },
@@ -188,7 +192,7 @@ fun StudioScreen(
             item {
                 Column(modifier = Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = "Biblioteca de Modpacks",
+                        text = "Centro de Modpacks",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
@@ -204,7 +208,7 @@ fun StudioScreen(
             item {
                 StudioCard(
                     icon = Icons.Default.Folder,
-                    title = "My Modpacks",
+                    title = "Mis Modpacks",
                     description = "Edita, comparte o borra tus modpacks guardados",
                     badge = if(savedModpacks.isNotEmpty()) savedModpacks.size.toString() else null,
                     accent = MaterialTheme.colorScheme.primary
@@ -421,47 +425,150 @@ fun MyModpacksScreen(
     var modpackToDelete by remember { mutableStateOf<SavedModpack?>(null) }
     var showShareDialog by remember { mutableStateOf(false) }
 
-    // Diálogo de selección de modpack para compartir
+    // Diálogo con bordes de colores para compartir modpacks
     if (showShareDialog) {
-        AlertDialog(
-            onDismissRequest = { showShareDialog = false },
-            title = { Text("Compartir Modpack", fontWeight = FontWeight.Bold) },
-            text = {
-                if (modpacks.isEmpty()) {
-                    Text("No tienes modpacks guardados aún.\nCrear uno desde la pantalla de Exportación.")
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(modpacks) { modpack: SavedModpack ->
-                            OutlinedButton(
-                                onClick = {
-                                    shareModpack(context, modpack, shareScope)
-                                    showShareDialog = false
-                                },
-                                modifier = Modifier.fillMaxWidth()
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showShareDialog = false }
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(
+                    width = 2.dp,
+                    brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.primary,
+                            MaterialTheme.colorScheme.secondary,
+                            MaterialTheme.colorScheme.tertiary
+                        )
+                    )
+                ),
+                shadowElevation = 10.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer
                             ) {
-                                Column(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalAlignment = Alignment.Start
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(8.dp).size(20.dp)
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "Compartir Modpack",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Selecciona el modpack para exportar o enviar",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    if (modpacks.isEmpty()) {
+                        Text(
+                            text = "No tienes modpacks guardados aún.\nCrea uno desde la pantalla de Exportación.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 12.dp)
+                        )
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.heightIn(max = 340.dp)
+                        ) {
+                            items(modpacks) { modpack: SavedModpack ->
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .bounceClick(scaleDown = 0.97f) {
+                                            shareModpack(context, modpack, shareScope)
+                                            showShareDialog = false
+                                        },
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                                 ) {
-                                    Text(
-                                        text = modpack.name.ifBlank { "Sin nombre" },
-                                        style = MaterialTheme.typography.titleSmall,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "v${modpack.version} · ${modpack.addonCount} addons",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                                            modifier = Modifier.size(44.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    Icons.Default.Folder,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                            }
+                                        }
+
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = modpack.name.ifBlank { "Sin nombre" },
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "v${modpack.version} · ${modpack.addonCount} addons",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+
+                                        Icon(
+                                            imageVector = Icons.Default.Share,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { showShareDialog = false }) {
+                            Text("Cerrar")
+                        }
+                    }
                 }
-            },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { showShareDialog = false }) { Text("Cancelar") } }
-        )
+            }
+        }
     }
 
     // File picker para importar modpacks
@@ -484,6 +591,34 @@ fun MyModpacksScreen(
                 title = "Biblioteca de Modpacks",
                 onBackClick = onBack
             )
+        },
+        floatingActionButton = {
+            MorphingFab(
+                items = listOf(
+                    MorphingFabItem("Importar Modpack", Icons.Default.Upload) {
+                        importFileLauncher.launch(
+                            arrayOf(
+                                "application/zip",
+                                "application/octet-stream",
+                                "application/x-mcaddon",
+                                "application/x-mcpack",
+                                "*/*"
+                            )
+                        )
+                    },
+                    MorphingFabItem("Explorar fuentes", Icons.Default.Search) {
+                        onOpenSources()
+                    },
+                    MorphingFabItem("Compartir uno", Icons.Default.Share) {
+                        if (modpacks.isNotEmpty()) {
+                            showShareDialog = true
+                        } else {
+                            android.widget.Toast.makeText(context, "No hay modpacks para compartir", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ),
+                modifier = Modifier.padding(end = 4.dp, bottom = 8.dp)
+            )
         }
     ) { padding ->
         if (modpacks.isEmpty()) {
@@ -498,6 +633,14 @@ fun MyModpacksScreen(
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 32.dp)
                     )
+                    FilledTonalButton(
+                        onClick = onOpenSources,
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Explorar fuentes")
+                    }
                 }
             }
         } else {
@@ -523,42 +666,10 @@ fun MyModpacksScreen(
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    Spacer(modifier = Modifier.height(100.dp))
+                    Spacer(modifier = Modifier.height(72.dp))
                 }
             }
         }
-    }
-
-    // FAB EXPRESIVO con morphing: acciones reales
-    Box(modifier = Modifier.fillMaxSize()) {
-        MorphingFab(
-            items = listOf(
-                MorphingFabItem("Importar Modpack", Icons.Default.Upload) {
-                    importFileLauncher.launch(
-                        arrayOf(
-                            "application/zip",
-                            "application/octet-stream",
-                            "application/x-mcaddon",
-                            "application/x-mcpack",
-                            "*/*"
-                        )
-                    )
-                },
-                MorphingFabItem("Explorar fuentes", Icons.Default.Search) {
-                    onOpenSources()
-                },
-                MorphingFabItem("Compartir uno", Icons.Default.Share) {
-                    if (modpacks.isNotEmpty()) {
-                        showShareDialog = true
-                    } else {
-                        android.widget.Toast.makeText(context, "No hay modpacks para compartir", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                }
-            ),
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 20.dp, bottom = 24.dp)
-        )
     }
 
     modpackToDelete?.let { m ->

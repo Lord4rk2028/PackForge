@@ -23,7 +23,10 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.io.File
 import java.io.FileOutputStream
+import java.io.BufferedInputStream
+import java.util.zip.ZipInputStream
 import java.util.UUID
+import org.json.JSONObject
 
 sealed class PackForgeEvent {
     data class ShowSnackbar(val message: String, val isError: Boolean = false) : PackForgeEvent()
@@ -126,6 +129,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun resolveMergeConflict(id: String, resolution: String) {
         com.packforge.app.domain.engine.ConflictRegistry.resolveConflict(id, resolution)
+        calculateCompatibilityScore(_addons.value)
     }
 
     // Guardar la última URL visitada de cada fuente para persistencia
@@ -283,21 +287,48 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun calculateCompatibilityScore(addons: List<Addon>): Int {
-        if (addons.isEmpty()) return 100
+        val active = addons.filter { it.enabled }
+        if (active.isEmpty()) {
+            _compatibilityScore.value = 100
+            return 100
+        }
         var score = 100
-        addons.forEach { addon ->
+        // 1. Integridad de manifiestos y versiones de motor
+        active.forEach { addon ->
             if (addon.rawManifest.isBlank()) {
                 score -= 5
             }
             val addonVersion = addon.minEngineVersion
             if (addonVersion.size < 3) {
-                score -= 10
+                score -= 5
             } else {
                 if (addonVersion[0] < 1 || (addonVersion[0] == 1 && addonVersion[1] < 20)) {
-                    score -= 15
+                    score -= 10
                 }
             }
         }
+
+        // 2. Penalizar severamente por conflictos NO resueltos
+        val currentConflicts = _conflicts.value
+        val res = _resolutions.value
+        currentConflicts.forEach { conflict ->
+            val isResolved = res.containsKey(conflict.id) || conflict.resolution != ConflictResolution.UNRESOLVED
+            if (!isResolved) {
+                when (conflict.severity) {
+                    ConflictSeverity.CRITICAL -> score -= 25
+                    ConflictSeverity.HIGH -> score -= 15
+                    ConflictSeverity.MEDIUM -> score -= 8
+                    ConflictSeverity.LOW -> score -= 3
+                    ConflictSeverity.WARNING -> score -= 1
+                }
+            }
+        }
+
+        // 3. Batalla de addons / merge conflicts sin resolver
+        val currentMergeConflicts = mergeConflicts.value
+        val unresolvedMerge = currentMergeConflicts.count { !it.resolved }
+        score -= (unresolvedMerge * 10)
+
         val finalScore = score.coerceIn(0, 100)
         _compatibilityScore.value = finalScore
         return finalScore
@@ -595,7 +626,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 val app = getApplication<Application>()
                 _isImporting.value = true
-                _importProgress.value = OperationProgress.Loading("Importando modpack...", 0f)
+                _importProgress.value = OperationProgress.Loading("Analizando modpack...", 0f)
 
                 // 1. Validar extensión
                 val fileName = try {
@@ -612,27 +643,116 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 if (!fileName.endsWith(".mcaddon", ignoreCase = true) &&
                     !fileName.endsWith(".mcpack", ignoreCase = true) &&
                     !fileName.endsWith(".zip", ignoreCase = true)) {
-                    _events.emit(PackForgeEvent.ShowSnackbar("Solo se aceptan .mcaddon o .mcpack", true))
+                    _events.emit(PackForgeEvent.ShowSnackbar("Solo se aceptan archivos .mcaddon de PackForge", true))
                     _isImporting.value = false
                     _importProgress.value = OperationProgress.Idle
                     return@launch
                 }
 
-                // 2. Usar el mismo flujo que AddonParser.parseFromUri (copia interna + extracción)
-                val addon = withContext(Dispatchers.IO) {
-                    AddonParser.parseFromUri(app, uri)
+                // 2. Buscar archivo PackForge.ID en la raíz del paquete
+                var packForgeIdContent: String? = null
+                var tempIconFile: File? = null
+
+                app.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    ZipInputStream(BufferedInputStream(inputStream)).use { zis ->
+                        var entry = zis.nextEntry
+                        while (entry != null) {
+                            val entryName = entry.name.trimStart('/', '\\')
+                            if (entryName.equals("PackForge.ID", ignoreCase = true)) {
+                                packForgeIdContent = zis.bufferedReader(Charsets.UTF_8).readText()
+                            } else if ((entryName.equals("pack_icon.png", ignoreCase = true) ||
+                                        entryName.endsWith("/pack_icon.png", ignoreCase = true)) && tempIconFile == null) {
+                                val tempIcon = File(app.cacheDir, "temp_modpack_icon_${System.currentTimeMillis()}.png")
+                                tempIcon.outputStream().use { out -> zis.copyTo(out) }
+                                tempIconFile = tempIcon
+                            }
+                            zis.closeEntry()
+                            entry = zis.nextEntry
+                        }
+                    }
                 }
 
-                if (addon != null) {
-                    val current = _addons.value.toMutableList()
-                    current.add(addon)
-                    _addons.value = current.mapIndexed { i, a -> a.copy(priority = i) }
-                    recalculateConflicts()
-                    _events.emit(PackForgeEvent.ShowSnackbar("Modpack importado: ${addon.name}"))
-                } else {
-                    _events.emit(PackForgeEvent.ShowSnackbar("No se pudo importar el modpack (formato no reconocido)", true))
+                // Si NO contiene PackForge.ID -> Rechazar: solo modpacks creados por PackForge
+                if (packForgeIdContent.isNullOrBlank()) {
+                    _events.emit(
+                        PackForgeEvent.ShowSnackbar(
+                            "Solo se aceptan Modpacks creados con PackForge. Para addons individuales usa la pestaña Importar.",
+                            true
+                        )
+                    )
+                    tempIconFile?.delete()
+                    _isImporting.value = false
+                    _importProgress.value = OperationProgress.Idle
+                    return@launch
                 }
 
+                // 3. Parsear metadata de PackForge.ID
+                val json = try {
+                    JSONObject(packForgeIdContent)
+                } catch (_: Exception) {
+                    JSONObject()
+                }
+
+                val signature = json.optString("signature", "")
+                if (signature != "PACKFORGE_MODPACK" && !packForgeIdContent!!.contains("PACKFORGE")) {
+                    _events.emit(PackForgeEvent.ShowSnackbar("Firma de Modpack inválida o dañada", true))
+                    tempIconFile?.delete()
+                    _isImporting.value = false
+                    _importProgress.value = OperationProgress.Idle
+                    return@launch
+                }
+
+                val modpackId = json.optString("id").ifBlank { UUID.randomUUID().toString() }
+                val modpackName = json.optString("name").ifBlank { fileName.substringBeforeLast(".") }
+                val author = json.optString("author", "PackForge")
+                val version = json.optString("version", "1.0.0")
+                val description = json.optString("description", "")
+                val addonCount = json.optInt("addonCount", 1)
+                val addonNamesJson = json.optJSONArray("addonNames")?.toString() ?: "[]"
+                val mcVersion = json.optString("mcVersion", "1.21.0")
+
+                // 4. Copiar el archivo .mcaddon a almacenamiento interno permanente
+                val exportsDir = File(app.filesDir, "modpack_exports")
+                if (!exportsDir.exists()) exportsDir.mkdirs()
+                val destMcaddon = File(exportsDir, "${modpackId}.mcaddon")
+                app.contentResolver.openInputStream(uri)?.use { ins ->
+                    destMcaddon.outputStream().use { outs ->
+                        ins.copyTo(outs)
+                    }
+                }
+
+                // 5. Persistir icono de portada si se extrajo
+                var coverPath: String? = null
+                if (tempIconFile != null && tempIconFile.exists()) {
+                    val iconDir = File(app.filesDir, "modpack_icons")
+                    if (!iconDir.exists()) iconDir.mkdirs()
+                    val permIcon = File(iconDir, "${modpackId}_cover.png")
+                    tempIconFile.copyTo(permIcon, overwrite = true)
+                    tempIconFile.delete()
+                    coverPath = permIcon.absolutePath
+                }
+
+                // 6. Guardar en la base de datos de Modpacks (SavedModpackDao)
+                val db = database ?: PackForgeDatabase.getInstance(app)
+                val saved = SavedModpack(
+                    id = modpackId,
+                    name = modpackName,
+                    author = author,
+                    version = version,
+                    mcVersion = mcVersion,
+                    description = description,
+                    addonNames = addonNamesJson,
+                    addonCount = addonCount,
+                    filePath = destMcaddon.absolutePath,
+                    fileName = destMcaddon.name,
+                    createdAt = System.currentTimeMillis(),
+                    coverUriString = coverPath,
+                    tags = "",
+                    addonsJson = "[]"
+                )
+                db.savedModpackDao().insert(saved)
+
+                _events.emit(PackForgeEvent.ShowSnackbar("Modpack '$modpackName' añadido a la biblioteca"))
                 _isImporting.value = false
                 _importProgress.value = OperationProgress.Idle
 

@@ -40,7 +40,7 @@ sealed class Screen(
     
     object Studio : Screen(
         route = "studio",
-        title = "Studio",
+        title = "Estudio",
         iconFilled = Icons.Filled.AutoAwesome,
         iconOutlined = Icons.Outlined.AutoAwesome
     )

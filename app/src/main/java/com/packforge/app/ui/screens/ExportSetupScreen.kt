@@ -192,6 +192,52 @@ fun ExportSetupScreen(
             .PaddingValues(16.dp)
     ) {
 
+        if (activeAddons.isEmpty()) {
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.error),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onError,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Taller vacío sin addons",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Importa o activa al menos un addon en la pestaña Importar para poder fusionar y exportar tu modpack.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // PREVIEW
         item {
             ModpackPreviewCard(
@@ -529,113 +575,59 @@ fun ExportSetupScreen(
                             )
                         }
                     )
-
-                    // ── CONEXIÓN DIRECTA CON MINECRAFT ──────────
-                    // Ocultar en Android 11+ (SDK 30+) debido a restricciones de SAF
-                    if (android.os.Build.VERSION.SDK_INT < 30) {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                        
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .border(
-                                    1.dp, 
-                                    if (minecraftUri != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                                    RoundedCornerShape(12.dp)
-                                )
-                                .clickable {
-                                    if (minecraftUri == null) {
-                                        mcFolderLauncher.launch(null)
-                                    } else {
-                                        onDisconnectMinecraft()
-                                    }
-                                }
-                                .padding(16.dp),
-                            color = if (minecraftUri != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.05f) 
-                                    else Color.Transparent
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (minecraftUri != null) Icons.Default.CheckCircle 
-                                                 else Icons.Outlined.SportsEsports,
-                                    contentDescription = null,
-                                    tint = if (minecraftUri != null) MaterialTheme.colorScheme.primary 
-                                           else MaterialTheme.colorScheme.primary
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = if (minecraftUri != null) "Instalación Directa Activa" 
-                                               else "Activar Instalación Directa",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = if (minecraftUri != null) "Toca para desconectar" 
-                                               else "Selecciona la carpeta 'com.mojang'",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                if (minecraftUri == null) {
-                                    Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.primary)
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
 
-        // MINECRAFT (SMART IMPORT ADAPTATION)
-        // Ocultar en Android 11+ (SDK 30+) ya que no funciona correctamente
-        if (android.os.Build.VERSION.SDK_INT < 30) {
-            item {
-                val isAndroid11Plus = android.os.Build.VERSION.SDK_INT >= 30
-            
+        // MINECRAFT BEDROCK INTEGRATION
+        item {
+            val isAndroid11Plus = android.os.Build.VERSION.SDK_INT >= 30
+
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp)
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                )
             ) {
-                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(48.dp)
+                                .size(44.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(
-                                    if (isMinecraftInstalled) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                                    else MaterialTheme.colorScheme.errorContainer
+                                    if (isMinecraftInstalled) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceContainerHighest
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (isMinecraftInstalled) Icons.Outlined.SportsEsports 
-                                             else Icons.Default.Warning,
+                                imageVector = Icons.Outlined.SportsEsports,
                                 contentDescription = null,
-                                tint = if (isMinecraftInstalled) MaterialTheme.colorScheme.primary 
-                                       else MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(28.dp)
+                                tint = if (isMinecraftInstalled) MaterialTheme.colorScheme.primary
+                                       else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                modifier = Modifier.size(26.dp)
                             )
-
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (isAndroid11Plus) "Smart Import (Android 11+)" 
-                                       else "Instalación Directa",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
+                                text = "Minecraft Bedrock",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = if (isMinecraftInstalled) "Listo para importar a Minecraft" 
-                                       else "Instala Minecraft para activar",
+                                text = when {
+                                    !isMinecraftInstalled -> "No detectado en este dispositivo"
+                                    minecraftVersion != null -> "Versión: $minecraftVersion"
+                                    else -> "Instalado y disponible"
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -647,24 +639,76 @@ fun ExportSetupScreen(
                             )
                         }
                     }
-                    
-                    if (isAndroid11Plus && isMinecraftInstalled) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = "💡 Debido a las restricciones de Android, PackForge enviará el modpack directamente a Minecraft para que se instale solo.",
-                                style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.padding(12.dp),
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
+
+                    if (isMinecraftInstalled) {
+                        if (!isAndroid11Plus) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .border(
+                                        1.dp,
+                                        if (minecraftUri != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                                        RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable {
+                                        if (minecraftUri == null) {
+                                            mcFolderLauncher.launch(null)
+                                        } else {
+                                            onDisconnectMinecraft()
+                                        }
+                                    }
+                                    .padding(14.dp),
+                                color = if (minecraftUri != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                        else Color.Transparent
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (minecraftUri != null) Icons.Default.CheckCircle
+                                                     else Icons.Default.FolderOpen,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = if (minecraftUri != null) "Carpeta vinculada (com.mojang)"
+                                                   else "Vincular carpeta 'com.mojang'",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = if (minecraftUri != null) "Toca para desvincular"
+                                                   else "Permite instalación directa en el juego",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = if (importToMinecraft)
+                                        "⚡ Smart Import activo: PackForge abrirá Minecraft automáticamente con tu modpack listo para jugar."
+                                    else
+                                        "💡 Activa el interruptor para abrir el modpack en Minecraft automáticamente al exportar.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(12.dp),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
         }
 
         // RESUMEN

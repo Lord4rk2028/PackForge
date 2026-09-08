@@ -87,7 +87,7 @@ fun ConflictsScreen(
     onResolveMergeConflict: (id: String, resolution: String) -> Unit = { _, _ -> }
 ) {
     if (conflicts.isEmpty() && mergeConflicts.isEmpty()) {
-        NoConflictsState()
+        NoConflictsState(hasAddons = addons.isNotEmpty(), addonCount = addons.size)
         return
     }
 
@@ -332,12 +332,67 @@ fun borderStroke(selected: Boolean, color: Color = MaterialTheme.colorScheme.pri
     else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
 
 @Composable
-fun NoConflictsState() {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.Shield, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
-            Text("¡Sin conflictos!", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
-            Text("Todo funcionará perfecto", modifier = Modifier.alpha(0.6f))
+fun NoConflictsState(hasAddons: Boolean = false, addonCount: Int = 0) {
+    Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (hasAddons) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier.size(72.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.Shield,
+                            contentDescription = null,
+                            Modifier.size(40.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                Text(
+                    "¡Sin conflictos detectados!",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    "Tus $addonCount addons son compatibles y están listos para fusionarse sin colisiones.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.size(72.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.Shield,
+                            contentDescription = null,
+                            Modifier.size(36.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                    }
+                }
+                Text(
+                    "Taller sin addons",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    "Importa archivos Bedrock (.mcaddon o .mcpack) para analizar compatibilidad y detectar posibles conflictos entre ellos.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }

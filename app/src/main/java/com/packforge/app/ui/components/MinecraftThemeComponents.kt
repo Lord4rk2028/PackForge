@@ -31,7 +31,7 @@ fun CraftingTableLayout(
     onExport: () -> Unit,
     showResultSlot: Boolean = true
 ) {
-    Column(modifier = Modifier.padding(16.dp)) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)

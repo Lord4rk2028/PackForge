@@ -103,27 +103,24 @@ fun buildAddonDisplayItems(addons: List<Addon>): List<AddonDisplayItem> {
     return items
 }
 
-// ── COLORES DE LA "CARPETA MORADA" ──────────────────────────────
-private val PurpleFolder = Color(0xFF7B1FA2)
-private val PurpleFolderDark = Color(0xFF4A148C)
-private val PurpleContainerLight = Color(0xFFF3E5F5)
-private val PurpleContainerDark = Color(0xFF3A2A52)
-private val PurpleTextDark = Color(0xFFE1BEE7)
-private val PurpleLabelDark = Color(0xFFCE93D8)
-
+// ── COLORES DE LA "CARPETA DE PAREJA" ──────────────────────────────
 @Composable
 private fun folderContainerColor(): Color =
-    if (isSystemInDarkTheme()) PurpleContainerDark else PurpleContainerLight
+    MaterialTheme.colorScheme.surfaceContainerHigh
 
 @Composable
 private fun folderTitleColor(): Color =
-    if (isSystemInDarkTheme()) PurpleTextDark else PurpleFolderDark
+    MaterialTheme.colorScheme.onSurface
 
 @Composable
 private fun folderLabelColor(): Color =
-    if (isSystemInDarkTheme()) PurpleLabelDark else PurpleFolder
+    MaterialTheme.colorScheme.primary
 
-/** Tarjeta "carpeta" morada que representa la pareja BP+RP en la lista. */
+@Composable
+private fun folderAccentColor(): Color =
+    MaterialTheme.colorScheme.primary
+
+/** Tarjeta "carpeta" que representa la pareja BP+RP en la lista. */
 @Composable
 fun AddonPairCard(
     pair: AddonDisplayItem.Pair,
@@ -134,6 +131,7 @@ fun AddonPairCard(
     val container = folderContainerColor()
     val titleColor = folderTitleColor()
     val labelColor = folderLabelColor()
+    val accent = folderAccentColor()
 
     ElevatedCard(
         modifier = modifier
@@ -141,7 +139,7 @@ fun AddonPairCard(
             .border(
                 BorderStroke(
                     1.dp,
-                    if (bothEnabled) PurpleFolder.copy(alpha = 0.35f) else Color.Transparent
+                    if (bothEnabled) accent.copy(alpha = 0.35f) else Color.Transparent
                 ),
                 RoundedCornerShape(20.dp)
             )
@@ -159,7 +157,7 @@ fun AddonPairCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ── Icono combinado con minicarpeta morada en la esquina ──
+            // ── Icono combinado con minicarpeta en la esquina ──
             Box(modifier = Modifier.size(52.dp)) {
                 val icon = pair.rp.iconPath ?: pair.bp.iconPath
                 if (icon != null) {
@@ -176,31 +174,31 @@ fun AddonPairCard(
                         modifier = Modifier
                             .fillMaxSize()
                             .clip(RoundedCornerShape(14.dp))
-                            .background(PurpleFolder.copy(alpha = 0.18f)),
+                            .background(accent.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Extension,
                             contentDescription = null,
-                            tint = PurpleFolder,
+                            tint = accent,
                             modifier = Modifier.size(26.dp)
                         )
                     }
                 }
-                // Minicarpeta morada en la esquina del icono
+                // Minicarpeta en la esquina del icono
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(2.dp)
                         .size(20.dp)
                         .clip(CircleShape)
-                        .background(PurpleFolder),
+                        .background(accent),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Default.Folder,
                         contentDescription = "Carpeta RP+BP",
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(12.dp)
                     )
                 }
@@ -222,7 +220,7 @@ fun AddonPairCard(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
-                        color = PurpleFolder.copy(alpha = 0.2f)
+                        color = accent.copy(alpha = 0.15f)
                     ) {
                         Text(
                             text = "BP + RP",
@@ -251,7 +249,7 @@ fun AddonPairCard(
             // Flechita o indicador de apertura
             Surface(
                 shape = CircleShape,
-                color = PurpleFolder.copy(alpha = 0.15f),
+                color = accent.copy(alpha = 0.12f),
                 modifier = Modifier.size(36.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -392,13 +390,13 @@ private fun AddonPairRow(
                         modifier = Modifier
                             .fillMaxSize()
                             .clip(RoundedCornerShape(10.dp))
-                            .background(PurpleFolder.copy(alpha = 0.15f)),
+                            .background(folderAccentColor().copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Extension,
                             contentDescription = null,
-                            tint = PurpleFolder,
+                            tint = folderAccentColor(),
                             modifier = Modifier.size(20.dp)
                         )
                     }
