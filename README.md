@@ -1,6 +1,6 @@
 # ⚒️ PackForge
 
-**PackForge** es una app para Android que fusiona múltiples addons de Minecraft Bedrock Edition en **un solo modpack funcional**, listo para importar y jugar. Si alguna vez intentaste juntar dos o más addons a mano y terminaste con texturas rotas, bloques que desaparecen o el juego crasheando al cargar el mundo… para eso existe PackForge.
+**PackForge** es una app para Android que fusiona múltiples addons de Minecraft Bedrock Edition en **un solo modpack funcional**, listo para importar y jugar. Si alguna vez intentaste juntar dos o más addons manualmente, sabes el dolor. PackForge automatiza todo ese proceso.
 
 <p align="center">
   <img src="https://img.shields.io/badge/Kotlin-2.3.21-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Kotlin 2.3.21"/>
@@ -12,19 +12,37 @@
 
 ---
 
-## 📱 Capturas
+## 📱 Galería de Pantallas
 
-<p align="center">
-  <img src="https://www.genspark.ai/api/files/s/XcA2A8fJ" width="280" alt="Pantalla Importar"/>
-  &nbsp;&nbsp;&nbsp;
-  <img src="https://www.genspark.ai/api/files/s/QcmfA8zG" width="280" alt="Pantalla Exportar"/>
-  &nbsp;&nbsp;&nbsp;
-  <img src="https://www.genspark.ai/api/files/s/X6JyUYPZ" width="280" alt="Pantalla Studio"/>
-</p>
+### 🎮 Flujo Principal
 
-<p align="center"><i>Izquierda a derecha: Selector de addons (Importar), Detalles del modpack (Exportar) y Gestión de fuentes Bedrock (Studio).</i></p>
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <b>📥 Pantalla Importar</b><br>
+      <img src="https://www.genspark.ai/api/files/s/XcA2A8fJ" width="220" alt="Importar addons"/>
+      <br><i>Selecciona y carga tus addons</i>
+    </td>
+    <td align="center" width="33%">
+      <b>⚠️ Pantalla Conflictos</b><br>
+      <img src="https://www.genspark.ai/api/files/s/QcmfA8zG" width="220" alt="Resolución de conflictos"/>
+      <br><i>Revisa conflictos resueltos</i>
+    </td>
+    <td align="center" width="33%">
+      <b>⚙️ Pantalla Studio</b><br>
+      <img src="https://www.genspark.ai/api/files/s/X6JyUYPZ" width="220" alt="Gestión Studio"/>
+      <br><i>Gestiona tus modpacks</i>
+    </td>
+  </tr>
+</table>
 
-> 📌 **Nota sobre las capturas:** si las imágenes no se renderizan en GitHub, súbelas a `/screenshots/` dentro del repositorio y reemplaza las URLs por rutas locales (ej. `screenshots/import.png`).
+### 🎨 Personalización
+
+<div align="center">
+  <b>🌈 Ajustes de Tema Dinámico</b><br>
+  <img src="https://www.genspark.ai/api/files/s/X6JyUYPZ" width="220" alt="Tema personalizable"/>
+  <br><i>Selector de color, intensidad y paletas Minecraft</i>
+</div>
 
 ---
 
@@ -37,7 +55,7 @@
 
 ## 🎯 ¿Por qué PackForge y no hacerlo a mano?
 
-Fusionar addons manualmente implica editar manifests, resolver IDs duplicados, unir archivos JSON sin romper la sintaxis y vincular correctamente el behavior pack con el resource pack. Un solo error en cualquiera de esos pasos hace que Minecraft rechace el paquete o cargue el mundo con errores. **PackForge automatiza todo el proceso.**
+Fusionar addons manualmente implica editar manifests, resolver IDs duplicados, unir archivos JSON sin romper la sintaxis y vincular correctamente el behavior pack con el resource pack. Un solo error y todo falla. PackForge automatiza esto completamente.
 
 ---
 
@@ -184,7 +202,7 @@ En resumen: puedes usar, modificar y distribuir el código libremente, incluso c
 ## ⚠️ Notas
 
 - PackForge **no modifica el contenido creativo** de los addons originales: solo los combina.
-- Si dos addons son fundamentalmente incompatibles (por ejemplo, requieren versiones de Minecraft distintas), la fusión puede generar advertencias — **revisa siempre el reporte de conflictos antes de jugar**.
+- Si dos addons son fundamentalmente incompatibles (por ejemplo, requieren versiones de Minecraft distintas), la fusión puede generar advertencias — **revisa siempre el reporte de conflictos antes de exportar**.
 - Proyecto personal en **desarrollo activo**; puede tener errores o casos de addons aún no soportados.
 
 ---
