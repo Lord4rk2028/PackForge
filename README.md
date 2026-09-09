@@ -15,13 +15,13 @@
 ## 📱 Capturas
 
 <p align="center">
-  <img src="screenshots/01-import.png" width="220" alt="Pantalla Importar"/>
+  <img src="screenshots/01-import.jpg" width="220" alt="Pantalla Importar"/>
   &nbsp;&nbsp;&nbsp;
-  <img src="screenshots/02-conflicts.png" width="220" alt="Pantalla Conflictos"/>
+  <img src="screenshots/02-conflicts.jpg" width="220" alt="Pantalla Conflictos"/>
   &nbsp;&nbsp;&nbsp;
-  <img src="screenshots/03-studio.png" width="220" alt="Pantalla Studio"/>
+  <img src="screenshots/03-studio.jpg" width="220" alt="Pantalla Studio"/>
   &nbsp;&nbsp;&nbsp;
-  <img src="screenshots/04-theme.png" width="220" alt="Pantalla Tema"/>
+  <img src="screenshots/04-theme.jpg" width="220" alt="Pantalla Tema"/>
 </p>
 
 <p align="center"><i>Izquierda a derecha: Selector de addons (Importar), Reporte de conflictos, Gestión de fuentes Bedrock (Studio) y Configuración de tema.</i></p>
