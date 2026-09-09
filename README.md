@@ -20,17 +20,17 @@
   <tr>
     <td align="center" width="33%">
       <b>📥 Pantalla Importar</b><br>
-      <img src="screenshots/01-import.png" width="220" alt="Importar addons"/>
+      <img src="https://raw.githubusercontent.com/Lord4rk2028/PackForge/main/screenshots/01-import.png" width="220" alt="Importar addons"/>
       <br><i>Selecciona y carga tus addons</i>
     </td>
     <td align="center" width="33%">
       <b>⚠️ Pantalla Conflictos</b><br>
-      <img src="screenshots/02-conflicts.png" width="220" alt="Resolución de conflictos"/>
+      <img src="https://raw.githubusercontent.com/Lord4rk2028/PackForge/main/screenshots/02-conflicts.png" width="220" alt="Resolución de conflictos"/>
       <br><i>Revisa conflictos resueltos</i>
     </td>
     <td align="center" width="33%">
       <b>⚙️ Pantalla Studio</b><br>
-      <img src="screenshots/03-studio.png" width="220" alt="Gestión Studio"/>
+      <img src="https://raw.githubusercontent.com/Lord4rk2028/PackForge/main/screenshots/03-studio.png" width="220" alt="Gestión Studio"/>
       <br><i>Gestiona tus modpacks</i>
     </td>
   </tr>
@@ -40,7 +40,7 @@
 
 <div align="center">
   <b>🌈 Ajustes de Tema Dinámico</b><br>
-  <img src="screenshots/04-theme.png" width="220" alt="Tema personalizable"/>
+  <img src="https://raw.githubusercontent.com/Lord4rk2028/PackForge/main/screenshots/04-theme.png" width="220" alt="Tema personalizable"/>
   <br><i>Selector de color, intensidad y paletas Minecraft</i>
 </div>
 
