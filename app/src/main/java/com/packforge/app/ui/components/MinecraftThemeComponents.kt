@@ -9,12 +9,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -36,7 +39,14 @@ fun CraftingTableLayout(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text("🧱 Mesa de Crafteo", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Icon(
+                imageVector = Icons.Filled.Extension,
+                contentDescription = "Mesa de Crafteo",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Mesa de Crafteo", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             if (addons.isNotEmpty()) {
                 Surface(
                     shape = RoundedCornerShape(50),
@@ -133,7 +143,12 @@ fun AddonSlot(addon: Addon) {
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
             )
-            Text("⛔", style = MaterialTheme.typography.titleMedium)
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = "Addon deshabilitado",
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(24.dp)
+            )
         }
     }
 }
@@ -224,15 +239,27 @@ fun ResultSlot(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text(
-                if (canCraft) "⚡ Craftear Modpack" else "Añade addons para craftear",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = if (canCraft)
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                else
-                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Warning,
+                    contentDescription = "Craftear",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    if (canCraft) "Craftear Modpack" else "Añade addons para craftear",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (canCraft)
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
+            }
             if (canCraft) {
                 Text(
                     text = "$addonCount addon(s) en la mesa",
@@ -247,25 +274,63 @@ fun ResultSlot(
 @Composable
 fun MinecraftProgressBar(progress: Float, message: String) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // ── Barra de progreso Material You Expresiva (Olas gruesas) ──
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(16.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(Color(0xFF1A2B20))
-                .border(1.dp, Color(0xFF4CAF50), RoundedCornerShape(4.dp))
+                .height(20.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                .border(
+                    1.5.dp,
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                    RoundedCornerShape(10.dp)
+                )
         ) {
+            val progressValue = progress.coerceIn(0f, 1f)
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .fillMaxWidth(progress.coerceIn(0f, 1f))
+                    .fillMaxWidth(progressValue)
+                    .clip(RoundedCornerShape(9.dp))
                     .background(
                         Brush.horizontalGradient(
-                            listOf(Color(0xFF7FE043), Color(0xFF2ECC71))
+                            listOf(
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
+                                MaterialTheme.colorScheme.primary,
+                                MaterialTheme.colorScheme.primaryContainer
+                            )
                         )
                     )
             )
+            
+            // Efecto de olas (patrón dinámico)
+            if (progressValue > 0 && progressValue < 1f) {
+                val infiniteTransition = rememberInfiniteTransition(label = "waveAnimation")
+                val waveOffset by infiniteTransition.animateFloat(
+                    initialValue = 0f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(1500, easing = LinearEasing),
+                        repeatMode = RepeatMode.Restart
+                    ),
+                    label = "waveOffset"
+                )
+                
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val waveWidth = 8.dp.toPx()
+                    val waveAmplitude = 2.dp.toPx()
+                    val startX = (progressValue * size.width - waveWidth + (waveOffset * waveWidth * 2)) % (waveWidth * 2)
+                    
+                    drawRect(
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                        topLeft = androidx.compose.ui.geometry.Offset(startX, 0f),
+                        size = androidx.compose.ui.geometry.Size(waveWidth, size.height)
+                    )
+                }
+            }
         }
+        
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -274,7 +339,7 @@ fun MinecraftProgressBar(progress: Float, message: String) {
             Text(
                 text = message,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f, fill = false)
             )
             Text(

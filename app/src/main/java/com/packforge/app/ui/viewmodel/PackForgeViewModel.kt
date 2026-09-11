@@ -594,31 +594,9 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             viewModelScope.launch { _events.emit(PackForgeEvent.ShowSnackbar("Ya hay una fusión en curso")) }
             return
         }
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                MergeSession.reset(origin = "library")
-                MergeForegroundService.startRegenerate(app, modpackId)
-                var s = MergeSession.state.value
-                while (!s.done) {
-                    withContext(Dispatchers.Main) {
-                        _regenStatus.value = RegenStatus(modpackId, s.phase, false, false)
-                    }
-                    kotlinx.coroutines.delay(200)
-                    s = MergeSession.state.value
-                }
-                withContext(Dispatchers.Main) {
-                    _regenStatus.value = RegenStatus(modpackId, "done", true, s.success)
-                    _events.emit(PackForgeEvent.ShowSnackbar(
-                        if (s.success) s.message else "Fallo al regenerar: ${s.message}"
-                    ))
-                }
-            } catch (e: Exception) {
-                PackForgeLog.e("PackForge_Regen", "Error regenerando $modpackId", e)
-                withContext(Dispatchers.Main) {
-                    _events.emit(PackForgeEvent.ShowSnackbar("Fallo al regenerar: ${e.message}"))
-                }
-            }
-        }
+        // Resetear el estado ANTES de iniciar el servicio para evitar race condition
+        MergeSession.reset(origin = "library")
+        MergeForegroundService.startRegenerate(app, modpackId)
     }
 
     fun importModpackFromFile(uri: Uri) {
@@ -694,7 +672,8 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 val signature = json.optString("signature", "")
-                if (signature != "PACKFORGE_MODPACK" && !packForgeIdContent!!.contains("PACKFORGE")) {
+                val hasPackForge = packForgeIdContent.contains("PACKFORGE")
+                if (signature != "PACKFORGE_MODPACK" && !hasPackForge) {
                     _events.emit(PackForgeEvent.ShowSnackbar("Firma de Modpack inválida o dañada", true))
                     tempIconFile?.delete()
                     _isImporting.value = false

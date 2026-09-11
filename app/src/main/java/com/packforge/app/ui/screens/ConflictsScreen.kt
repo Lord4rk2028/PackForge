@@ -73,6 +73,7 @@ import com.packforge.app.domain.model.ConflictSeverity
 import com.packforge.app.domain.model.ConflictStrategy
 import com.packforge.app.domain.model.ConflictType
 import com.packforge.app.domain.model.MergeConflict
+import com.packforge.app.ui.components.ErrorState
 
 @Composable
 fun ConflictsScreen(
@@ -227,9 +228,31 @@ fun ConflictSummaryCard(total: Int, resolved: Int, conflicts: List<Conflict>) {
             }
 
             if (criticalUnresolved > 0) {
-                Text("⚠️ $criticalUnresolved conflictos críticos pendientes", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = "Advertencia",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text("$criticalUnresolved conflictos críticos pendientes", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
             } else {
-                Text("✅ Listo para exportar", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = "Éxito",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text("Listo para exportar", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }
@@ -417,11 +440,22 @@ fun MergeConflictsSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text(
-                    "⚔️ Batalla de Addons",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.MergeType,
+                        contentDescription = "Batalla",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        "Batalla de Addons",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 Text(
                     "Conflictos detectados durante la fusión de archivos JSON",
                     style = MaterialTheme.typography.bodySmall,
@@ -542,7 +576,12 @@ fun ConflictBattleCard(
                     enabled = !isResolved
                 )
 
-                Text("⚔️", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 4.dp))
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.MergeType,
+                    contentDescription = "VS",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
 
                 BattleSide(
                     name = conflict.targetAddon,
@@ -629,9 +668,11 @@ fun BattleSide(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Text(
-                text = if (selected) "🏆" else "🛡️",
-                style = MaterialTheme.typography.titleMedium
+            Icon(
+                imageVector = if (selected) Icons.Default.CheckCircle else Icons.Default.Shield,
+                contentDescription = if (selected) "Ganador" else "Elegir",
+                tint = if (selected) color else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp)
             )
             Text(
                 text = name,

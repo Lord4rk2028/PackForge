@@ -7,10 +7,14 @@ import androidx.compose.animation.animateColorAsState
 import com.packforge.app.ui.components.EXPAND_SLOW_SPEC
 import com.packforge.app.ui.components.FADE_SLOW_SPEC
 import com.packforge.app.ui.components.SLIDE_SLOW_SPEC
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -31,6 +35,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -95,6 +100,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.packforge.app.ui.components.CachedAsyncImage
+import com.packforge.app.ui.components.ImportScreenSkeleton
 import com.packforge.app.ui.components.CraftingTableLayout
 import com.packforge.app.ui.components.AddonDisplayItem
 import com.packforge.app.ui.components.AddonPairCard
@@ -259,6 +265,13 @@ fun ImportScreen(
                         onOpen = { openPairKey = item.pairKey }
                     )
                 }
+            }
+        }
+
+        // ─── ESTADO DE CARGA ────────────────────────────────
+        if (isImporting) {
+            item {
+                ImportScreenSkeleton()
             }
         }
 
@@ -957,6 +970,19 @@ private fun AddonCardIcon(
 
 @Composable
 fun EmptyState() {
+    var floatTarget by remember { mutableStateOf(-8f) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1500)
+            floatTarget = if (floatTarget < 0f) 8f else -8f
+        }
+    }
+    val float by animateFloatAsState(
+        targetValue = floatTarget,
+        animationSpec = tween(1500),
+        label = "float"
+    )
+
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
@@ -982,7 +1008,8 @@ fun EmptyState() {
                 modifier = Modifier
                     .size(80.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+                    .offset(y = float.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(

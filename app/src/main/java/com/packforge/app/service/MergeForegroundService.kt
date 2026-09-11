@@ -488,7 +488,7 @@ class MergeForegroundService : Service() {
             .setSmallIcon(R.drawable.ic_stat_merge)
             .setContentTitle("PackForge · Fusionando modpack")
             .setContentText(text)
-            .setProgress(100, 0, false)
+            .setProgress(100, percent, false)
             .setOngoing(ongoing)
             .setOnlyAlertOnce(true)
             .setColor(accentColor)

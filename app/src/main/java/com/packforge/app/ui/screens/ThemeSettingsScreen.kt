@@ -438,11 +438,9 @@ fun InteractiveColorPicker(
     var hue by remember(selectedHex) { mutableFloatStateOf(initialHsv[0]) }
     var sat by remember(selectedHex) { mutableFloatStateOf(initialHsv[1]) }
     var value by remember(selectedHex) { mutableFloatStateOf(initialHsv[2]) }
-    var transparency by remember { mutableFloatStateOf(1.0f) }
 
-    fun emitColor(h: Float, s: Float, v: Float, alpha: Float) {
-        val effectiveV = (v * alpha).coerceIn(0.15f, 1f)
-        val argb = android.graphics.Color.HSVToColor(floatArrayOf(h, s, effectiveV))
+    fun emitColor(h: Float, s: Float, v: Float) {
+        val argb = android.graphics.Color.HSVToColor(floatArrayOf(h, s, v))
         val hex = String.format("#%06X", 0xFFFFFF and argb)
         onColorChanged(hex)
     }
@@ -452,6 +450,7 @@ fun InteractiveColorPicker(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         // ── 1. Cuadro de Saturación y Brillo (Lienzo 2D) ──
+        // ⚠️ IMPORTANTE: Usar pointerInput CON nestedScroll para evitar conflicto con scroll externo
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -466,48 +465,41 @@ fun InteractiveColorPicker(
                     detectTapGestures { offset ->
                         sat = (offset.x / size.width).coerceIn(0f, 1f)
                         value = (1f - offset.y / size.height).coerceIn(0f, 1f)
-                        emitColor(hue, sat, value, transparency)
+                        emitColor(hue, sat, value)
                     }
                 }
                 .pointerInput(hue) {
-                    detectDragGestures { change, _ ->
+                    detectDragGestures(onDrag = { change, _ ->
                         change.consume()
                         sat = (change.position.x / size.width).coerceIn(0f, 1f)
                         value = (1f - change.position.y / size.height).coerceIn(0f, 1f)
-                        emitColor(hue, sat, value, transparency)
-                    }
+                        emitColor(hue, sat, value)
+                    })
                 }
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val pureHueColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 1f, 1f)))
-                // Degradado horizontal blanco -> color puro
-                drawRect(
-                    brush = Brush.horizontalGradient(listOf(Color.White, pureHueColor))
-                )
-                // Degradado vertical transparente -> negro
-                drawRect(
-                    brush = Brush.verticalGradient(listOf(Color.Transparent, Color.Black))
-                )
+                drawRect(brush = Brush.horizontalGradient(listOf(Color.White, pureHueColor)))
+                drawRect(brush = Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
 
-                // Selector circular con sombra
                 val selX = sat * size.width
                 val selY = (1f - value) * size.height
                 drawCircle(
                     color = Color.Black.copy(alpha = 0.5f),
                     radius = 11.dp.toPx(),
                     center = Offset(selX, selY),
-                    style = Stroke(width = 2.dp.toPx())
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
                 )
                 drawCircle(
                     color = Color.White,
                     radius = 9.dp.toPx(),
                     center = Offset(selX, selY),
-                    style = Stroke(width = 3.dp.toPx())
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx())
                 )
             }
         }
 
-        // ── 2. Barra Arcoíris de Tono (Hue continuo 0° - 360°) ──
+        // ── 2. Barra Arcoíris de Tono ──
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
                 text = "Tono Arcoíris",
@@ -515,34 +507,27 @@ fun InteractiveColorPicker(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             val rainbowColors = remember {
-                listOf(
-                    Color.Red, Color.Yellow, Color.Green,
-                    Color.Cyan, Color.Blue, Color.Magenta, Color.Red
-                )
+                listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red)
             }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(32.dp)
                     .clip(RoundedCornerShape(100.dp))
-                    .border(
-                        1.dp,
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                        RoundedCornerShape(100.dp)
-                    )
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(100.dp))
                     .background(Brush.horizontalGradient(rainbowColors))
                     .pointerInput(Unit) {
                         detectTapGestures { offset ->
                             hue = ((offset.x / size.width) * 360f).coerceIn(0f, 360f)
-                            emitColor(hue, sat, value, transparency)
+                            emitColor(hue, sat, value)
                         }
                     }
                     .pointerInput(Unit) {
-                        detectDragGestures { change, _ ->
+                        detectDragGestures(onDrag = { change, _ ->
                             change.consume()
                             hue = ((change.position.x / size.width) * 360f).coerceIn(0f, 360f)
-                            emitColor(hue, sat, value, transparency)
-                        }
+                            emitColor(hue, sat, value)
+                        })
                     }
             ) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
@@ -551,46 +536,16 @@ fun InteractiveColorPicker(
                         color = Color.Black.copy(alpha = 0.4f),
                         radius = 12.dp.toPx(),
                         center = Offset(thumbX, size.height / 2),
-                        style = Stroke(width = 1.5.dp.toPx())
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
                     )
                     drawCircle(
                         color = Color.White,
                         radius = 10.dp.toPx(),
                         center = Offset(thumbX, size.height / 2),
-                        style = Stroke(width = 3.dp.toPx())
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx())
                     )
                 }
             }
-        }
-
-        // ── 3. Barra Dinámica de Transparencia / Intensidad ──
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Intensidad / Transparencia",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "${(transparency * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            Slider(
-                value = transparency,
-                onValueChange = {
-                    transparency = it
-                    emitColor(hue, sat, value, transparency)
-                },
-                valueRange = 0.35f..1.0f,
-                modifier = Modifier.fillMaxWidth()
-            )
         }
     }
 }

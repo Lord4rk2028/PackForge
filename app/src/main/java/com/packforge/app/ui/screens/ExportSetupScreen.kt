@@ -39,8 +39,12 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MergeType
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FolderOpen
@@ -174,12 +178,20 @@ fun ExportSetupScreen(
 
     // ── PANTALLA DE ÉXITO ────────────────────────────────────
     if (exportState is ExportState.Success) {
+        val navController = rememberNavController()
         ExportSuccessScreen(
             result = exportState,
             isMinecraftInstalled = isMinecraftInstalled,
             conflicts = mergeResult?.conflicts ?: emptyList(),
             validationResult = mergeResult?.validationResult,
-            onReset = onResetExport
+            onReset = {
+                onResetExport()
+                navController.navigate(Screen.Import.route) {
+                    popUpTo(Screen.Export.route) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            }
         )
         return
     }
@@ -695,15 +707,26 @@ fun ExportSetupScreen(
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(
-                                    text = if (importToMinecraft)
-                                        "⚡ Smart Import activo: PackForge abrirá Minecraft automáticamente con tu modpack listo para jugar."
-                                    else
-                                        "💡 Activa el interruptor para abrir el modpack en Minecraft automáticamente al exportar.",
-                                    style = MaterialTheme.typography.bodySmall,
+                                Row(
                                     modifier = Modifier.padding(12.dp),
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (importToMinecraft) Icons.Filled.CheckCircle else Icons.Filled.Lightbulb,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = if (importToMinecraft)
+                                            "Smart Import activo: PackForge abrirá Minecraft automáticamente con tu modpack listo para jugar."
+                                        else
+                                            "Activa el interruptor para abrir el modpack en Minecraft automáticamente al exportar.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                             }
                         }
                     }
@@ -777,6 +800,7 @@ fun ExportSetupScreen(
             val isExporting = exportState is ExportState.Loading || exportState is ExportState.Progress
 
             if (exportState is ExportState.Progress) {
+                val context = androidx.compose.ui.platform.LocalContext.current
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                     shape = RoundedCornerShape(16.dp),
@@ -793,6 +817,22 @@ fun ExportSetupScreen(
                             progress = exportState.percent / 100f,
                             message = thematicExportMessage(exportState.message)
                         )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = {
+                                com.packforge.app.service.MergeForegroundService.stop(context)
+                                onResetExport()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancel", modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Cancel export", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -1558,7 +1598,15 @@ fun ExportSuccessScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("✅ VALIDACIÓN COMPLETADA", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text("VALIDACIÓN COMPLETADA", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                    }
                     Text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", style = MaterialTheme.typography.bodySmall)
                     
                     Text("Texturas faltantes reparadas: ${validationResult.fixedReferences}", style = MaterialTheme.typography.bodySmall)
@@ -1570,12 +1618,28 @@ fun ExportSuccessScreen(
                         }
                     }
                     
-                    Text("Sonidos fusionados: ${if (validationResult.soundsFixed) "✅" else "❌"}", style = MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(
+                            imageVector = if (validationResult.soundsFixed) Icons.Default.CheckCircle else Icons.Default.Close,
+                            contentDescription = null,
+                            tint = if (validationResult.soundsFixed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text("Sonidos fusionados", style = MaterialTheme.typography.bodySmall)
+                    }
                     Text("Referencias rotas reparadas: ${validationResult.fixedReferences}", style = MaterialTheme.typography.bodySmall)
                     
                     if (validationResult.warnings.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text("⚠️ ADVERTENCIAS (no críticas):", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text("ADVERTENCIAS (no críticas):", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        }
                         validationResult.warnings.take(3).forEach { warning ->
                             Text("• $warning", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }

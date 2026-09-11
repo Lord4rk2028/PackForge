@@ -2,6 +2,7 @@ package com.packforge.app.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -80,6 +81,12 @@ fun StudioScreen(
     val showMyModpacks by viewModel.showMyModpacks.collectAsStateWithLifecycle()
     val showThemeSettings by viewModel.showThemeSettings.collectAsStateWithLifecycle()
     val webImportSuccess by viewModel.webImportSuccess.collectAsStateWithLifecycle()
+
+    // Interceptar gesto de atrás para cerrar sub-pantallas y evitar que NavHost retroceda a ImportScreen
+    BackHandler(enabled = showMyModpacks || showThemeSettings) {
+        if (showMyModpacks) viewModel.setShowMyModpacks(false)
+        if (showThemeSettings) viewModel.setShowThemeSettings(false)
+    }
 
     // Confirmation dialog for modpack regeneration
     var modpackToRegenerate by remember { mutableStateOf<SavedModpack?>(null) }
@@ -316,7 +323,12 @@ fun StudioScreen(
                                 .background(MaterialTheme.colorScheme.primaryContainer),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("💡", fontSize = 18.sp)
+                            Icon(
+                                imageVector = Icons.Default.Lightbulb,
+                                contentDescription = "Información",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                         Text(
                             text = "Navega y pulsa 'Descargar' en cualquier fuente. PackForge detectará el archivo automáticamente y te avisará al finalizar.",

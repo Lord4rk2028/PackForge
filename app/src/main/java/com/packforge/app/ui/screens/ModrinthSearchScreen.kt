@@ -58,6 +58,7 @@ import coil.compose.AsyncImage
 import com.packforge.app.domain.model.ModrinthMod
 import com.packforge.app.domain.model.ModrinthSearchState
 import com.packforge.app.domain.model.OperationProgress
+import com.packforge.app.ui.components.SearchScreenSkeleton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -225,13 +226,7 @@ fun ModrinthSearchSection(
             when (searchState) {
                 ModrinthSearchState.Idle -> Unit
                 ModrinthSearchState.Loading -> {
-                    LinearProgressIndicator(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(100.dp)),
-                        strokeCap = StrokeCap.Round
-                    )
+                    SearchScreenSkeleton()
                 }
                 is ModrinthSearchState.Error -> {
                     Text(

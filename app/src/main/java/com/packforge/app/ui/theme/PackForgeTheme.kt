@@ -8,6 +8,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.packforge.app.data.ThemePreferences
 import com.packforge.app.ui.theme.ColorSchemeBuilder.buildColorScheme
+import com.packforge.app.ui.theme.Spacing
 
 @Composable
 fun PackForgeTheme(
@@ -25,11 +26,11 @@ fun PackForgeTheme(
         colorScheme = colorScheme,
         typography = PackForgeTypography,
         shapes = Shapes(
-            extraSmall = RoundedCornerShape(8.dp),
-            small = RoundedCornerShape(12.dp),
-            medium = RoundedCornerShape(16.dp),
-            large = RoundedCornerShape(24.dp),
-            extraLarge = RoundedCornerShape(32.dp)
+            extraSmall = RoundedCornerShape(Spacing.xSmall),
+            small = RoundedCornerShape(Spacing.small),
+            medium = RoundedCornerShape(Spacing.medium),
+            large = RoundedCornerShape(Spacing.large),
+            extraLarge = RoundedCornerShape(Spacing.xLarge)
         ),
         content = content
     )
