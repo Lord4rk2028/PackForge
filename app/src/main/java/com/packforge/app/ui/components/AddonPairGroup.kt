@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -246,14 +247,18 @@ fun AddonPairCard(
                 )
             }
 
-            // Flechita o indicador de apertura
             Surface(
                 shape = CircleShape,
                 color = accent.copy(alpha = 0.12f),
                 modifier = Modifier.size(36.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text("📂", style = MaterialTheme.typography.bodyLarge)
+                    Icon(
+                        imageVector = Icons.Filled.FolderOpen,
+                        contentDescription = null,
+                        tint = accent,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }
@@ -321,7 +326,8 @@ fun AddonPairDialog(
                 // ── Los dos addons de la pareja ───────────────
                 AddonPairRow(
                     addon = pair.bp,
-                    label = "🔵 Behavior",
+                    label = "Behavior",
+                    leadingIcon = Icons.Filled.Extension,
                     checked = pair.bp.enabled,
                     onToggle = {
                         // Deseleccionar uno deselecciona el otro.
@@ -332,7 +338,8 @@ fun AddonPairDialog(
                 )
                 AddonPairRow(
                     addon = pair.rp,
-                    label = "🟢 Resource",
+                    label = "Resource",
+                    leadingIcon = Icons.Filled.Extension,
                     checked = pair.rp.enabled,
                     onToggle = {
                         onToggleAddon(pair.bp.id)
@@ -357,6 +364,7 @@ fun AddonPairDialog(
 private fun AddonPairRow(
     addon: Addon,
     label: String,
+    leadingIcon: androidx.compose.ui.graphics.vector.ImageVector,
     checked: Boolean,
     onToggle: () -> Unit,
     onDelete: () -> Unit
@@ -410,11 +418,22 @@ private fun AddonPairRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = labelColor
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = leadingIcon,
+                        contentDescription = null,
+                        tint = labelColor,
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = labelColor
+                    )
+                }
             }
             Switch(checked = checked, onCheckedChange = { onToggle() })
             IconButton(onClick = onDelete) {

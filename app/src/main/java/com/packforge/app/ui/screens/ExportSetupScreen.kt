@@ -41,9 +41,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MergeType
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Healing
 import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.LocalFireDepartment
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Error
@@ -107,6 +113,8 @@ import com.packforge.app.domain.model.Conflict
 import com.packforge.app.domain.model.ConflictSeverity
 import com.packforge.app.domain.model.ExportState
 import com.packforge.app.domain.model.ModpackMetadata
+import androidx.navigation.compose.rememberNavController
+import com.packforge.app.ui.navigation.Screen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -576,7 +584,7 @@ fun ExportSetupScreen(
                         icon = Icons.Default.FolderOpen,
                         title = "Elegir ubicación",
                         subtitle = if (customUri != null)
-                            "Ubicación seleccionada ✓"
+                            "Ubicación seleccionada"
                         else
                             "Elige dónde guardar el archivo",
                         selected = useCustomPath,
@@ -768,7 +776,7 @@ fun ExportSetupScreen(
                                 "$unresolvedCritical críticos"
                             unresolvedTotal > 0 ->
                                 "$unresolvedTotal sin resolver"
-                            else -> "Todos resueltos ✓"
+                            else -> "Todos resueltos"
                         },
                         color = when {
                             unresolvedCritical > 0 ->
@@ -798,9 +806,51 @@ fun ExportSetupScreen(
                 activeAddons.isNotEmpty()
             
             val isExporting = exportState is ExportState.Loading || exportState is ExportState.Progress
+            var showCancelDialog by remember { mutableStateOf(false) }
+
+            // ── DIÁLOGO DE CONFIRMACIÓN DE CANCELACIÓN ──
+            if (showCancelDialog) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { showCancelDialog = false },
+                    title = {
+                        Text(
+                            text = "Cancelar fusión",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.headlineSmall
+                        )
+                    },
+                    text = {
+                        Text(
+                            text = "¿Deseas cancelar la fusión de los addons? Esta acción detendrá el proceso y se borrarán los datos temporales.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                val context = androidx.compose.ui.platform.LocalContext.current
+                                com.packforge.app.service.MergeForegroundService.stop(context)
+                                onResetExport()
+                                showCancelDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Cancelar fusión")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showCancelDialog = false }) {
+                            Text("Seguir fusionando")
+                        }
+                    }
+                )
+            }
 
             if (exportState is ExportState.Progress) {
-                val context = androidx.compose.ui.platform.LocalContext.current
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                     shape = RoundedCornerShape(16.dp),
@@ -813,16 +863,15 @@ fun ExportSetupScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
+                        val thematicMsg = thematicExportMessage(exportState.message)
                         MinecraftProgressBar(
                             progress = exportState.percent / 100f,
-                            message = thematicExportMessage(exportState.message)
+                            message = thematicMsg.text,
+                            messageIcon = thematicMsg.icon
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         OutlinedButton(
-                            onClick = {
-                                com.packforge.app.service.MergeForegroundService.stop(context)
-                                onResetExport()
-                            },
+                            onClick = { showCancelDialog = true },
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.outlinedButtonColors(
@@ -831,7 +880,7 @@ fun ExportSetupScreen(
                         ) {
                             Icon(Icons.Default.Close, contentDescription = "Cancel", modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Cancel export", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                            Text("Cancelar fusión", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -969,7 +1018,7 @@ fun ExportSetupScreen(
                     val zipFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), zipFileName)
                     
                     if (zipFile.exists()) {
-                        // Leer entradas del ZIP
+                        // Leer entradas del ZIP con vectores Material 3 (sin emojis)
                         val zipEntries = try {
                             val entries = mutableListOf<String>()
                             java.io.FileInputStream(zipFile).use { fis ->
@@ -986,11 +1035,14 @@ fun ExportSetupScreen(
                             listOf("Error al leer ZIP: ${e.message}")
                         }
                         
-                        Text(
-                            text = "📦 Entradas en ZIP (${zipEntries.size}):",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleSmall
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Filled.FolderOpen, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                            Text(
+                                text = "Entradas en ZIP (${zipEntries.size}):",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                        }
                         
                         zipEntries.take(20).forEach { entry ->
                             Text(
@@ -1060,11 +1112,14 @@ fun ExportSetupScreen(
                         }
                         
                         if (bpManifestContent != null) {
-                            Text(
-                                text = "📄 BP manifest.json:",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleSmall
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(Icons.Filled.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                Text(
+                                    text = "BP manifest.json:",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                            }
                             Text(
                                 text = bpManifestContent,
                                 style = MaterialTheme.typography.bodySmall,
@@ -1096,11 +1151,14 @@ fun ExportSetupScreen(
                             if (uuidVerificationResult != null) {
                                 val (bpHeaderUuid, bpDepUuid, rpHeaderUuid) = uuidVerificationResult
                                 HorizontalDivider()
-                                Text(
-                                    text = "🔍 Verificación UUIDs:",
-                                    fontWeight = FontWeight.Bold,
-                                    style = MaterialTheme.typography.titleSmall
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Icon(Icons.Filled.Healing, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                    Text(
+                                        text = "Verificación UUIDs:",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleSmall
+                                    )
+                                }
                                 Text(
                                     text = "BP header UUID: $bpHeaderUuid",
                                     style = MaterialTheme.typography.bodySmall
@@ -1117,23 +1175,34 @@ fun ExportSetupScreen(
                                     )
                                     
                                     val uuidsMatch = bpDepUuid == rpHeaderUuid
-                                    Text(
-                                        text = if (uuidsMatch) "✅ UUIDs coinciden" else "❌ UUIDs NO coinciden",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (uuidsMatch) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Icon(
+                                            imageVector = if (uuidsMatch) Icons.Default.CheckCircle else Icons.Default.Error,
+                                            contentDescription = null,
+                                            tint = if (uuidsMatch) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = if (uuidsMatch) "UUIDs coinciden" else "UUIDs NO coinciden",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (uuidsMatch) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
                         }
                         
                         if (rpManifestContent != null) {
                             HorizontalDivider()
-                            Text(
-                                text = "📄 RP manifest.json:",
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.titleSmall
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(Icons.Filled.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                Text(
+                                    text = "RP manifest.json:",
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.titleSmall
+                                )
+                            }
                             Text(
                                 text = rpManifestContent,
                                 style = MaterialTheme.typography.bodySmall,
@@ -1147,11 +1216,14 @@ fun ExportSetupScreen(
                         
                         // Verificar BOM
                         HorizontalDivider()
-                        Text(
-                            text = "🔍 Verificación BOM:",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.titleSmall
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Filled.Healing, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                            Text(
+                                text = "Verificación BOM:",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleSmall
+                            )
+                        }
                         
                         val bpManifestBytes = bpManifestContent?.toByteArray(Charsets.UTF_8)
                         val rpManifestBytes = rpManifestContent?.toByteArray(Charsets.UTF_8)
@@ -1162,11 +1234,19 @@ fun ExportSetupScreen(
                                         bpManifestBytes[0] == 0xEF.toByte() && 
                                         bpManifestBytes[1] == 0xBB.toByte() && 
                                         bpManifestBytes[2] == 0xBF.toByte()
-                            Text(
-                                text = "BP primer byte: $firstByte ${if (hasBom) "(❌ TIENE BOM)" else "(✅ Sin BOM)"}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (hasBom) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(
+                                    imageVector = if (hasBom) Icons.Default.Error else Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = if (hasBom) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = "BP primer byte: $firstByte ${if (hasBom) "(TIENE BOM)" else "(Sin BOM)"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (hasBom) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                         
                         if (rpManifestBytes != null && rpManifestBytes.isNotEmpty()) {
@@ -1175,16 +1255,26 @@ fun ExportSetupScreen(
                                         rpManifestBytes[0] == 0xEF.toByte() && 
                                         rpManifestBytes[1] == 0xBB.toByte() && 
                                         rpManifestBytes[2] == 0xBF.toByte()
-                            Text(
-                                text = "RP primer byte: $firstByte ${if (hasBom) "(❌ TIENE BOM)" else "(✅ Sin BOM)"}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (hasBom) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(
+                                    imageVector = if (hasBom) Icons.Default.Error else Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = if (hasBom) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text(
+                                    text = "RP primer byte: $firstByte ${if (hasBom) "(TIENE BOM)" else "(Sin BOM)"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (hasBom) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                                )
+                            }
                         }
                         
                     } else {
-                        Text(
-                            text = "❌ ZIP no encontrado en Descargas",
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Default.Error, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                            Text(
+                                text = "ZIP no encontrado en Descargas",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.error
                         )
@@ -1207,19 +1297,27 @@ fun ExportSetupScreen(
 
 /**
  * Convierte los mensajes internos del exportador en mensajes
- * temáticos estilo Minecraft (solo UI, no toca la lógica).
+ * temáticos con icono Material 3 (solo UI, no toca la lógica).
  */
-private fun thematicExportMessage(raw: String): String = when {
+private data class ThematicMessage(val icon: androidx.compose.ui.graphics.vector.ImageVector, val text: String)
+
+private fun thematicExportMessage(raw: String): ThematicMessage = when {
     raw.contains("Extrayendo", ignoreCase = true) ||
-        raw.contains("Clasificando", ignoreCase = true) -> "⛏️ Minando addons..."
-    raw.contains("Fusionando", ignoreCase = true) -> "🔥 Fundiendo JSONs en el horno..."
+        raw.contains("Clasificando", ignoreCase = true) ->
+            ThematicMessage(Icons.Filled.Build, "Minando addons...")
+    raw.contains("Fusionando", ignoreCase = true) ->
+            ThematicMessage(Icons.Filled.LocalFireDepartment, "Fundiendo JSONs en el horno...")
     raw.contains("manifiesto", ignoreCase = true) ||
-        raw.contains("Generando", ignoreCase = true) -> "✨ Encantando manifiestos..."
+        raw.contains("Generando", ignoreCase = true) ->
+            ThematicMessage(Icons.Filled.AutoAwesome, "Encantando manifiestos...")
     raw.contains("Empaquetando", ignoreCase = true) ||
-        raw.contains("ZIP", ignoreCase = true) -> "📦 Empaquetando tu modpack..."
-    raw.contains("Validando", ignoreCase = true) -> "🔍 Inspeccionando tesoros..."
-    raw.contains("Limpiando", ignoreCase = true) -> "🧹 Limpiando cofres..."
-    else -> raw
+        raw.contains("ZIP", ignoreCase = true) ->
+            ThematicMessage(Icons.Filled.Storage, "Empaquetando tu modpack...")
+    raw.contains("Validando", ignoreCase = true) ->
+            ThematicMessage(Icons.Filled.Healing, "Inspeccionando tesoros...")
+    raw.contains("Limpiando", ignoreCase = true) ->
+            ThematicMessage(Icons.Filled.Delete, "Limpiando cofres...")
+    else -> ThematicMessage(Icons.Default.Publish, raw)
 }
 
 @Composable
@@ -1733,11 +1831,19 @@ fun ExportSuccessScreen(
                     
                     // Dependency verification
                     Text("VERIFICACIÓN DE DEPENDENCIAS:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
-                    Text(
-                        if (dependencyMatch) "✅ BP depende del RP (UUID coincide)" else "❌ BP NO depende del RP o UUID no coincide",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (dependencyMatch) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(
+                            imageVector = if (dependencyMatch) Icons.Default.CheckCircle else Icons.Default.Error,
+                            contentDescription = null,
+                            tint = if (dependencyMatch) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = if (dependencyMatch) "BP depende del RP (UUID coincide)" else "BP NO depende del RP o UUID no coincide",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (dependencyMatch) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                        )
+                    }
                     
                     HorizontalDivider()
                     
@@ -1813,7 +1919,7 @@ private fun IconDebugDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "🎨 VERIFICACIÓN DE PORTADA",
+                text = "VERIFICACION DE PORTADA",
                 fontWeight = FontWeight.Bold
             )
         },
@@ -1831,31 +1937,42 @@ private fun IconDebugDialog(
                 )
                 
                 if (iconSize != null) {
-                    Text(
-                        text = "Tamaño imagen original: ${iconSize} bytes",
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                        Text(
+                            text = "Tamaño imagen original: ${iconSize} bytes",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 } else if (coverUriString.isNullOrEmpty()) {
-                    Text(
-                        text = "⚠️ No se seleccionó ninguna portada",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                        Text(
+                            text = "No se seleccionó ninguna portada",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 } else {
-                    Text(
-                        text = "❌ No se pudo leer la imagen",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Default.Error, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                        Text(
+                            text = "No se pudo leer la imagen",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
                 
                 HorizontalDivider()
                 
                 if (iconSize != null) {
-                    Text(
-                        text = "✅ La portada está configurada correctamente",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                        Text(
+                            text = "La portada está configurada correctamente",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
                     )
                 }
             }

@@ -616,7 +616,7 @@ fun ConflictBattleCard(
             ) {
                 Icon(Icons.AutoMirrored.Filled.MergeType, null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(if (isResolved && isMerge) "✓ Fusionados" else if (isResolved) "Resuelto: ${resolvedResolution ?: "KEEP_SOURCE"}" else "Fusionar ambos", fontWeight = FontWeight.Bold)
+                Text(if (isResolved && isMerge) "Fusionados" else if (isResolved) "Resuelto: ${resolvedResolution ?: "KEEP_SOURCE"}" else "Fusionar ambos", fontWeight = FontWeight.Bold)
             }
             
             // ── Indicador de resuelto ─────────────────────────

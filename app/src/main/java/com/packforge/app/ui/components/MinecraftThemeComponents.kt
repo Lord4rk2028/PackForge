@@ -19,6 +19,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -272,7 +274,11 @@ fun ResultSlot(
 }
 
 @Composable
-fun MinecraftProgressBar(progress: Float, message: String) {
+fun MinecraftProgressBar(
+    progress: Float,
+    message: String,
+    messageIcon: androidx.compose.ui.graphics.vector.ImageVector? = null
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // ── Barra de progreso Material You Expresiva (Olas gruesas) ──
         Box(
@@ -319,13 +325,12 @@ fun MinecraftProgressBar(progress: Float, message: String) {
                 
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val waveWidth = 8.dp.toPx()
-                    val waveAmplitude = 2.dp.toPx()
                     val startX = (progressValue * size.width - waveWidth + (waveOffset * waveWidth * 2)) % (waveWidth * 2)
                     
                     drawRect(
                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
-                        topLeft = androidx.compose.ui.geometry.Offset(startX, 0f),
-                        size = androidx.compose.ui.geometry.Size(waveWidth, size.height)
+                        topLeft = Offset(startX, 0f),
+                        size = Size(waveWidth, size.height)
                     )
                 }
             }
@@ -336,12 +341,25 @@ fun MinecraftProgressBar(progress: Float, message: String) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f, fill = false)
-            )
+            Row(
+                modifier = Modifier.weight(1f, fill = false),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (messageIcon != null) {
+                    Icon(
+                        imageVector = messageIcon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Text(
                 text = "${(progress.coerceIn(0f, 1f) * 100).toInt()}%",
                 style = MaterialTheme.typography.labelSmall,
@@ -371,10 +389,10 @@ fun AddonCard(addon: Addon) {
                 SuggestionChip(
                     onClick = {},
                     label = { Text(when(addon.type) {
-                        AddonType.BEHAVIOR_AND_RESOURCE -> "🟣 Completo"
-                        AddonType.BEHAVIOR_ONLY -> "🔵 Behavior"
-                        AddonType.RESOURCE_ONLY -> "🟢 Resource"
-                        else -> "⚪ Unknown"
+                        AddonType.BEHAVIOR_AND_RESOURCE -> "Completo"
+                        AddonType.BEHAVIOR_ONLY -> "Behavior"
+                        AddonType.RESOURCE_ONLY -> "Resource"
+                        else -> "Unknown"
                     })}
                 )
             }

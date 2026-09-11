@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
@@ -128,16 +129,29 @@ fun ModrinthSearchScreen(
                         } else {
                             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                 val isSearching = query.trim().isNotEmpty()
-                                Text(
-                                    text = if (isSearching) "Resultados" else "🔥 Tendencias Bedrock",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isSearching) 
-                                        MaterialTheme.colorScheme.onSurface 
-                                    else 
-                                        MaterialTheme.colorScheme.primary,
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     modifier = Modifier.padding(bottom = 4.dp)
-                                )
+                                ) {
+                                    if (!isSearching) {
+                                        Icon(
+                                            imageVector = Icons.Filled.LocalFireDepartment,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    Text(
+                                        text = if (isSearching) "Resultados" else "Tendencias Bedrock",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSearching) 
+                                            MaterialTheme.colorScheme.onSurface 
+                                        else 
+                                            MaterialTheme.colorScheme.primary
+                                    )
+                                }
                                 searchState.mods.forEach { mod ->
                                     key(mod.projectId) {
                                         ModrinthResultCard(

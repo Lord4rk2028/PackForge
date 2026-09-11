@@ -868,7 +868,7 @@ fun ModpackLibraryCard(
                     }
                 }
 
-                // Badge de nº de addons
+                // Badge de nº de addons con vector dinámico
                 Surface(
                     shape = RoundedCornerShape(50),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
@@ -876,13 +876,24 @@ fun ModpackLibraryCard(
                         .align(Alignment.BottomEnd)
                         .padding(8.dp)
                 ) {
-                    Text(
-                        text = "🧩 ${modpack.addonCount}",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Extension,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = "${modpack.addonCount} addons",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
             }
 

@@ -1,1 +1,36 @@
-(empty)
+# ─── Gradle / Android Build ───
+.gradle/
+build/
+app/build/
+*/build/
+.gradle.lock
+*.lock
+*.bin
+*.class
+%PROFILE.txt
+configuration-cache/
+.kotlin/
+captures/
+
+# ─── Android Studio / IntelliJ ───
+.idea/
+*.iml
+*.iws
+*.ipr
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.hprof
+
+# ─── OS / Temp ───
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+*.log
+*.swp
+*~
+
+# ─── Kotlin / Node (kilo) ───
+.kilo/node_modules/

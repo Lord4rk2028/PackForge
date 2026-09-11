@@ -115,7 +115,7 @@ class MergeForegroundService : Service() {
 
         when (intent?.action) {
             ACTION_CANCEL -> {
-                PackForgeLog.d(TAG, "🛑 Solicitud de cancelación recibida")
+                PackForgeLog.d(TAG, "Solicitud de cancelación recibida")
                 MergeSession.cancel()
                 lastNotifiedPercent = 0
                 activeMergeJob?.cancel(CancellationException("Merge cancelled by user"))
@@ -169,7 +169,7 @@ class MergeForegroundService : Service() {
 
             if (paths.isEmpty()) { fail("No hay addons para fusionar", null, null); return }
 
-            PackForgeLog.d(TAG, "🚀 Servicio: iniciando exportación de ${paths.size} addons")
+            PackForgeLog.d(TAG, "Servicio: iniciando exportación de ${paths.size} addons")
 
             val result = PackForgeOrchestrator.mergeAddons(
                 addonPaths = paths,
@@ -204,7 +204,7 @@ class MergeForegroundService : Service() {
             // Limpieza del archivo temporal de paths
             pathsFile?.let { f -> runCatching { File(f).delete() } }
 
-            PackForgeLog.d(TAG, "✅ Servicio: exportación completa → $visiblePath")
+            PackForgeLog.d(TAG, "Servicio: exportación completa -> $visiblePath")
             MergeSession.finish(
                 success = true, message = "¡Modpack fusionado con éxito!",
                 fileName = "$name.mcaddon", outputPath = visiblePath,
@@ -244,7 +244,7 @@ class MergeForegroundService : Service() {
 
             val name = sanitizeName(row.name)
             MergeSession.update("Re-fusionando '${row.name}' con el motor actual…", 5)
-            PackForgeLog.d(TAG, "♻️ Servicio: regenerando '${row.name}' (${usable.size} addons)")
+            PackForgeLog.d(TAG, "Regenerando '${row.name}' (${usable.size} addons)")
 
             val result = PackForgeOrchestrator.mergeAddons(
                 addonPaths = usable.map { it.sourceFilePath },
@@ -274,7 +274,7 @@ class MergeForegroundService : Service() {
                 row.copy(filePath = dest.visiblePath ?: outputFile.absolutePath, createdAt = System.currentTimeMillis())
             )
 
-            PackForgeLog.d(TAG, "✅ Servicio: '${row.name}' regenerado con el motor actual")
+            PackForgeLog.d(TAG, "Servicio: '${row.name}' regenerado con el motor actual")
             MergeSession.finish(
                 success = true, message = "'${row.name}' regenerado con el motor actual",
                 fileName = row.fileName, outputPath = dest.visiblePath,
@@ -375,7 +375,7 @@ class MergeForegroundService : Service() {
             try {
                 val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
                 src.copyTo(File(downloadsDir, "${baseName}_fusion_report.txt"), overwrite = true)
-                PackForgeLog.d(TAG, "📄 Reporte publicado en Descargas")
+                PackForgeLog.d(TAG, "Reporte publicado en Descargas")
             } catch (e: Exception) {
                 PackForgeLog.e(TAG, "No se pudo publicar reporte en Descargas: ${e.message}")
             }
@@ -455,7 +455,7 @@ class MergeForegroundService : Service() {
     }
 
     private suspend fun fail(message: String, fileName: String?, regenerateId: String?) {
-        PackForgeLog.e(TAG, "❌ Servicio: $message")
+        PackForgeLog.e(TAG, "Servicio: $message")
         MergeSession.finish(false, message, fileName, null, null, regenerateId)
         notifyFinal(false, message, ThemeAccent.colorBlocking(this))
     }
@@ -505,7 +505,7 @@ class MergeForegroundService : Service() {
         )
         val n = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_merge)
-            .setContentTitle(if (success) "PackForge · Fusión completada ✅" else "PackForge · Fallo en la fusión ❌")
+            .setContentTitle(if (success) "PackForge - Fusión completada" else "PackForge - Fallo en la fusión")
             .setContentText(message.take(180))
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
             .setOngoing(false)

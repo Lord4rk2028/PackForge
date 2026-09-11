@@ -433,8 +433,8 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 var customIconPath: String? = null
                 val coverUriString = _metadata.value.coverUriString
                 
-                PackForgeLog.d("PackForge_Icon", "📸 URI de portada recibido: $coverUriString")
-                PackForgeLog.d("PackForge_Icon", "📸 URI es null? ${coverUriString.isNullOrEmpty()}")
+                PackForgeLog.d("PackForge_Icon", "URI de portada recibido: $coverUriString")
+                PackForgeLog.d("PackForge_Icon", "URI es null? ${coverUriString.isNullOrEmpty()}")
                 
                 if (!coverUriString.isNullOrEmpty()) {
                     try {
@@ -455,36 +455,36 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                             }
                             if (srcFile.exists()) {
                                 srcFile.copyTo(tempIcon, overwrite = true)
-                                PackForgeLog.d("PackForge_Icon", "📸 Copiado desde archivo: ${srcFile.absolutePath}")
+                                PackForgeLog.d("PackForge_Icon", "Copiado desde archivo: ${srcFile.absolutePath}")
                             } else {
-                                PackForgeLog.e("PackForge_Icon", "❌ Archivo de portada no existe: ${srcFile.absolutePath}")
+                                PackForgeLog.e("PackForge_Icon", "Archivo de portada no existe: ${srcFile.absolutePath}")
                             }
                         } else {
                             val uri = Uri.parse(coverUriString)
-                            PackForgeLog.d("PackForge_Icon", "📸 Intentando abrir InputStream del URI (content://)...")
+                            PackForgeLog.d("PackForge_Icon", "Intentando abrir InputStream del URI (content://)...")
                             context.contentResolver.openInputStream(uri)?.use { input ->
-                                PackForgeLog.d("PackForge_Icon", "📸 InputStream abierto? true")
+                                PackForgeLog.d("PackForge_Icon", "InputStream abierto? true")
                                 tempIcon.outputStream().use { output ->
                                     val bytesCopied = input.copyTo(output)
-                                    PackForgeLog.d("PackForge_Icon", "📸 Bytes copiados a temp: $bytesCopied")
+                                    PackForgeLog.d("PackForge_Icon", "Bytes copiados a temp: $bytesCopied")
                                 }
                             } ?: run {
-                                PackForgeLog.e("PackForge_Icon", "❌ No se pudo abrir InputStream del URI")
+                                PackForgeLog.e("PackForge_Icon", "No se pudo abrir InputStream del URI")
                             }
                         }
 
                         if (tempIcon.exists()) {
                             customIconPath = tempIcon.absolutePath
-                            PackForgeLog.d("PackForge_Icon", "✅ Icono temporal creado: $customIconPath")
+                            PackForgeLog.d("PackForge_Icon", "Icono temporal creado: $customIconPath")
                             PackForgeLog.d("PackForge_Icon", "   Tamaño: ${tempIcon.length()} bytes")
                         } else {
-                            PackForgeLog.e("PackForge_Icon", "❌ Icono temporal NO se creó")
+                            PackForgeLog.e("PackForge_Icon", "Icono temporal NO se creó")
                         }
                     } catch (e: Exception) {
-                        PackForgeLog.e("PackForge_Icon", "❌ Error al procesar el icono: ${e.message}", e)
+                        PackForgeLog.e("PackForge_Icon", "Error al procesar el icono: ${e.message}", e)
                     }
                 } else {
-                    PackForgeLog.w("PackForge_Icon", "⚠️ No se proporcionó URI de portada")
+                    PackForgeLog.w("PackForge_Icon", "No se proporcionó URI de portada")
                 }
 
                 // Sanitizar nombre del archivo
@@ -897,7 +897,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                     version = m.version, 
                     mcVersion = m.mcVersion, 
                     description = m.description, 
-                    iconEmoji = "🎮", 
+                    iconEmoji = "", 
                     tags = m.tags.split(",").filter { it.isNotBlank() }, 
                     coverUriString = persistentCover
                 )
