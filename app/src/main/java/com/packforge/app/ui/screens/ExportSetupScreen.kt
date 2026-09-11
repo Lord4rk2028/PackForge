@@ -105,6 +105,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.net.Uri
 import android.os.Environment
+import androidx.compose.ui.platform.LocalContext
 import java.io.File
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipEntry
@@ -826,9 +827,9 @@ fun ExportSetupScreen(
                         )
                     },
                     confirmButton = {
+                        val context = LocalContext.current
                         Button(
                             onClick = {
-                                val context = androidx.compose.ui.platform.LocalContext.current
                                 com.packforge.app.service.MergeForegroundService.stop(context)
                                 onResetExport()
                                 showCancelDialog = false
@@ -1269,20 +1270,20 @@ fun ExportSetupScreen(
                                 )
                             }
                         }
-                        
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Icon(Icons.Default.Error, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
                             Text(
                                 text = "ZIP no encontrado en Descargas",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        Text(
-                            text = "Exporta el modpack primero para poder debuggearlo",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Text(
+                                text = "Exporta el modpack primero para poder debuggearlo",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             },
@@ -1973,7 +1974,8 @@ private fun IconDebugDialog(
                             text = "La portada está configurada correctamente",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
-                    )
+                        )
+                    }
                 }
             }
         },

@@ -11,6 +11,8 @@ app/build/
 configuration-cache/
 .kotlin/
 captures/
+.cxx/
+.externalNativeBuild/
 
 # ─── Android Studio / IntelliJ ───
 .idea/
@@ -18,10 +20,16 @@ captures/
 *.iws
 *.ipr
 local.properties
-captures/
-.externalNativeBuild/
-.cxx/
-*.hprof
+
+# ─── Herramientas Locales / Editores ───
+.vscode/
+.kilo/
+
+# ─── Seguridad (¡CRÍTICO!) ───
+*.jks
+*.keystore
+secrets.*
+google-services.json
 
 # ─── OS / Temp ───
 .DS_Store
@@ -31,6 +39,4 @@ Thumbs.db
 *.log
 *.swp
 *~
-
-# ─── Kotlin / Node (kilo) ───
-.kilo/node_modules/
+*.hprof

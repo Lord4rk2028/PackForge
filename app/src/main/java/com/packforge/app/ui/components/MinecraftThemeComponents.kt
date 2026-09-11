@@ -17,7 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -323,12 +322,13 @@ fun MinecraftProgressBar(
                     label = "waveOffset"
                 )
                 
+                val waveColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val waveWidth = 8.dp.toPx()
                     val startX = (progressValue * size.width - waveWidth + (waveOffset * waveWidth * 2)) % (waveWidth * 2)
                     
                     drawRect(
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                        color = waveColor,
                         topLeft = Offset(startX, 0f),
                         size = Size(waveWidth, size.height)
                     )
