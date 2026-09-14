@@ -258,7 +258,10 @@ object BedrockCriticalFilesMerger {
     }
 
     // =====================================================================
-    // 4. ENTITY DEFINITIONS - RP/entity/*.entity.json (CRÍTICO para mobs 3D)
+    // 4. ENTITY DEFINITIONS - RP/entity/*.json (CRÍTICO para mobs 3D)
+    //    ⭐ DUCK TYPING: Clasifica por contenido raíz "minecraft:client_entity",
+    //    NO por extensión .entity.json. Esto permite procesar archivos con
+    //    nombres ofuscados (ej: .fT.json, .7I.json) correctamente.
     // =====================================================================
     fun mergeEntityDefinitions(rpDirs: List<File>, destDir: File) {
         val destEntityDir = File(destDir, "entity")
@@ -267,46 +270,52 @@ object BedrockCriticalFilesMerger {
         rpDirs.forEach { rpDir ->
             val entityDir = File(rpDir, "entity")
             if (entityDir.exists()) {
-                entityDir.listFiles()?.filter { it.name.endsWith(".entity.json") }?.forEach { file ->
+                // ⭐ SEMANTIC: Aceptar TODOS los .json en entity/, clasificar por contenido
+                entityDir.listFiles()?.filter { it.extension.equals("json", ignoreCase = true) }?.forEach { file ->
+                    // Zero-Excess I/O: leer UNA vez, clasificar + fusionar del mismo parse
+                    val rawText = try { file.readText(Charsets.UTF_8) } catch (_: Exception) { return@forEach }
+                    val json = try { JsonDeepMerger.cleanJsonObject(JSONObject(rawText)) } catch (_: Exception) { return@forEach }
+
+                    // ⭐ DUCK TYPING: Solo procesar si contiene la clave raíz de entidad
+                    if (!json.has("minecraft:client_entity")) return@forEach
+
                     val destFile = File(destEntityDir, file.name)
 
                     if (!destFile.exists()) {
                         // Copiar LIMPIANDO espacios en claves/valores (evita "desconocido")
                         try {
-                            val clean = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
-                            OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-                                it.write(clean.toString())
+                            OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use { writer ->
+                                writer.write(json.toString())
                             }
                         } catch (e: Exception) {
                             file.copyTo(destFile)
                         }
-                        PackForgeLog.d("PackForge_Entity", "✅ Copiado: entity/${file.name}")
+                        PackForgeLog.d("PackForge_Entity", "✅ Copiado (duck typing): entity/${file.name}")
                     } else {
                         // FUSIONAR inteligentemente
                         try {
                             val base = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
-                            val merge = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
 
                             // Fusionar recursivamente las definiciones de entidad
-                            merge.keys().forEach { entityKey ->
+                            json.keys().forEach { entityKey ->
                                 val cleanKey = entityKey.sanitizeKey()
                                 if (base.has(cleanKey)) {
                                     val baseVal = base.get(cleanKey)
-                                    val mergeVal = merge.get(cleanKey)
+                                    val mergeVal = json.get(cleanKey)
                                     if (baseVal is JSONObject && mergeVal is JSONObject) {
                                         base.put(cleanKey, JsonDeepMerger.deepMerge(baseVal, mergeVal))
                                     } else {
                                         base.put(cleanKey, mergeVal)
                                     }
                                 } else {
-                                    base.put(cleanKey, merge.get(cleanKey))
+                                    base.put(cleanKey, json.get(cleanKey))
                                 }
                             }
 
                             OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
                                 it.write(base.toString())
                             }
-                            PackForgeLog.d("PackForge_Entity", "🔀 Fusionado: entity/${file.name}")
+                            PackForgeLog.d("PackForge_Entity", "🔀 Fusionado (duck typing): entity/${file.name}")
                         } catch (e: Exception) {
                             PackForgeLog.e("PackForge_Entity", "Error fusionando ${file.name}: ${e.message}")
                         }
@@ -551,12 +560,16 @@ object BedrockCriticalFilesMerger {
 
     // =====================================================================
     // 9. GEOMETRY FILES - Geometrías 3D de bloques complejos (CRÍTICO)
-    //     Fusiona models/**/*.geo.json deduplicando por identifier.
+    //     Fusiona archivos con minecraft:geometry deduplicando por identifier.
     //     Los bloques con geometría (enredaderas, vallas, cruces, plantas 3D)
     //     referencian estos archivos via minecraft:geometry en su BP definition.
+    //
+    //     ⭐ DUCK TYPING: Clasifica por contenido raíz "minecraft:geometry",
+    //     NO por extensión .geo.json. Archivos ofuscados (ej: .fT.json) se
+    //     detectan correctamente independientemente de su nombre físico.
     // =====================================================================
     fun mergeGeometryFiles(rpDirs: List<File>, destDir: File) {
-        // Mapa: ruta relativa del .geo.json -> JSONObject fusionado
+        // Mapa: ruta relativa del archivo -> JSONObject fusionado
         val geoFiles = mutableMapOf<String, JSONObject>()
         var processedCount = 0
 
@@ -564,28 +577,31 @@ object BedrockCriticalFilesMerger {
             // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
             val cachedFiles = DirIndexCache.index(rpDir).allFiles
             for (file in cachedFiles) {
-                if (file.name.endsWith(".geo.json", ignoreCase = true)) {
-                    val relativePath = file.relativeTo(rpDir).path
-                    processedCount++
-                    try {
-                        val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
-                        val existing = geoFiles[relativePath]
+                // ⭐ SEMANTIC: Aceptar cualquier .json, clasificar por contenido
+                if (!file.extension.equals("json", ignoreCase = true)) continue
+                val relativePath = file.relativeTo(rpDir).path
+                try {
+                    val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+                    // ⭐ DUCK TYPING: Solo procesar si contiene la clave raíz de geometría
+                    if (!json.has("minecraft:geometry")) continue
 
-                        if (existing == null) {
-                            geoFiles[relativePath] = json
-                            logFile { "Agregada geometria: $relativePath" }
-                        } else {
-                            // Fusionar deduplicando por identifier dentro de minecraft:geometry
-                            mergeGeoJson(existing, json, relativePath)
-                        }
-                    } catch (e: Exception) {
-                        PackForgeLog.e("PackForge_Geometry", "Error procesando $relativePath: ${e.message}")
+                    processedCount++
+                    val existing = geoFiles[relativePath]
+
+                    if (existing == null) {
+                        geoFiles[relativePath] = json
+                        logFile { "Agregada geometria (duck typing): $relativePath" }
+                    } else {
+                        // Fusionar deduplicando por identifier dentro de minecraft:geometry
+                        mergeGeoJson(existing, json, relativePath)
                     }
+                } catch (e: Exception) {
+                    PackForgeLog.e("PackForge_Geometry", "Error procesando $relativePath: ${e.message}")
                 }
             }
         }
 
-        // Escribir todos los .geo.json fusionados
+        // Escribir todos los archivos de geometría fusionados
         geoFiles.forEach { (relativePath, geoJson) ->
             val destFile = File(destDir, relativePath)
             destFile.parentFile?.mkdirs()
@@ -595,7 +611,7 @@ object BedrockCriticalFilesMerger {
             logFile { "geometria guardada: $relativePath" }
         }
 
-        PackForgeLog.d("PackForge_Geometry", "Geometrias fusionadas: ${geoFiles.size} archivos .geo.json")
+        PackForgeLog.d("PackForge_Geometry", "Geometrias fusionadas: ${geoFiles.size} archivos con minecraft:geometry")
     }
 
     /**
@@ -802,9 +818,11 @@ object BedrockCriticalFilesMerger {
         val entityDir = File(mergedRpDir, "entity")
         if (!entityDir.isDirectory) return
         var copied = 0
-        entityDir.listFiles()?.filter { it.name.endsWith(".entity.json") }?.forEach { entityFile ->
+        // ⭐ SEMANTIC: Aceptar TODOS los .json en entity/, clasificar por contenido
+        entityDir.listFiles()?.filter { it.extension.equals("json", ignoreCase = true) }?.forEach { entityFile ->
             try {
                 val json = JSONObject(entityFile.readText(Charsets.UTF_8))
+                // ⭐ DUCK TYPING: Buscar description en ambos formatos (client_entity y directo)
                 val desc = json.optJSONObject("minecraft:client_entity")?.optJSONObject("description")
                     ?: json.optJSONObject("description") ?: return@forEach
                 // Buscar textures en description
@@ -1380,7 +1398,7 @@ object BedrockCriticalFilesMerger {
         var resolved = 0
         var missing = 0
 
-        destEntityDir.listFiles()?.filter { it.name.endsWith(".entity.json") }?.forEach { entityFile ->
+        destEntityDir.listFiles()?.filter { it.extension.equals("json", ignoreCase = true) }?.forEach { entityFile ->
             try {
                 val json = JSONObject(entityFile.readText(Charsets.UTF_8))
                 val clientEntity = json.optJSONObject("minecraft:client_entity") ?: json
@@ -1509,28 +1527,33 @@ object BedrockCriticalFilesMerger {
             val attachDir = File(rpDir, "attachables")
             if (!attachDir.isDirectory) return@forEach
             attachDir.listFiles()?.filter { it.extension.equals("json", true) }?.forEach { file ->
+                // ⭐ SEMANTIC: Leer una vez, clasificar por contenido (duck typing)
+                val rawText = try { file.readText(Charsets.UTF_8) } catch (_: Exception) { return@forEach }
+                val incomingJson = try { JsonDeepMerger.cleanJsonObject(JSONObject(rawText)) } catch (_: Exception) { return@forEach }
+
+                // ⭐ DUCK TYPING: Solo procesar archivos con minecraft:attachable
+                if (!incomingJson.has("minecraft:attachable")) return@forEach
+
                 val destFile = File(destAttachDir, file.name)
                 if (!destFile.exists()) {
                     try {
-                        val clean = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
-                        OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use { it.write(clean.toString()) }
+                        OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use { it.write(incomingJson.toString()) }
                     } catch (_: Exception) { file.copyTo(destFile, overwrite = true) }
-                    PackForgeLog.d("PackForge_Attach", "✅ Copiado: attachables/${file.name}")
+                    PackForgeLog.d("PackForge_Attach", "✅ Copiado (duck typing): attachables/${file.name}")
                 } else {
                     try {
                         val base = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
-                        val incoming = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
                         // Merge por clave raíz (ej. "minecraft:attachable")
-                        incoming.keys().forEach { key ->
+                        incomingJson.keys().forEach { key ->
                             val cleanKey = key.sanitizeKey()
                             if (base.has(cleanKey)) {
-                                val bv = base.get(cleanKey); val iv = incoming.get(key)
+                                val bv = base.get(cleanKey); val iv = incomingJson.get(key)
                                 if (bv is JSONObject && iv is JSONObject) base.put(cleanKey, JsonDeepMerger.deepMerge(bv, iv))
                                 else base.put(cleanKey, iv)
-                            } else base.put(cleanKey, incoming.get(key))
+                            } else base.put(cleanKey, incomingJson.get(key))
                         }
                         OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use { it.write(base.toString()) }
-                        PackForgeLog.d("PackForge_Attach", "🔀 Fusionado: attachables/${file.name}")
+                        PackForgeLog.d("PackForge_Attach", "🔀 Fusionado (duck typing): attachables/${file.name}")
                     } catch (e: Exception) { PackForgeLog.e("PackForge_Attach", "Error: ${e.message}") }
                 }
             }

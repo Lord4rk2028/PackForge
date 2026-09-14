@@ -1,4 +1,4 @@
-﻿package com.packforge.app.ui.screens
+package com.packforge.app.ui.screens
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
@@ -34,8 +34,6 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -65,7 +63,7 @@ fun McpedlSearchScreen(
     isImporting: Boolean,
     importProgress: OperationProgress,
     onBack: () -> Unit,
-    onImportFromUrl: (String) -> Unit,
+    onImportFromUrl: (String, String, String) -> Unit,
     onClearError: () -> Unit
 ) {
     val context = LocalContext.current
@@ -97,22 +95,30 @@ fun McpedlSearchScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        "Buscar en MCPEDL",
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                navigationIcon = {
+            // Barra compacta flotante integrada
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                modifier = Modifier.fillMaxWidth(),
+                shadowElevation = 2.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     IconButton(onClick = onBack) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "AtrÃ¡s"
+                            contentDescription = "Atrás"
                         )
                     }
-                },
-                actions = {
+                    Text(
+                        "Buscar en MCPEDL",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f)
+                    )
                     IconButton(onClick = { webViewRef?.reload() }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Recargar")
                     }
@@ -131,11 +137,8 @@ fun McpedlSearchScreen(
                             contentDescription = "Abrir en navegador"
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            )
+                }
+            }
         }
     ) { padding ->
         Column(
@@ -286,7 +289,7 @@ fun McpedlSearchScreen(
                             ): Boolean {
                                 val url = request?.url?.toString() ?: return false
                                 if (isAddonDownloadUrl(url)) {
-                                    onImportFromUrlState(url)
+                                    onImportFromUrlState(url, webViewRef?.url ?: MCPEDL_HOME, "MCPEDL")
                                     return true
                                 }
                                 return false
@@ -299,7 +302,7 @@ fun McpedlSearchScreen(
                                         isAddonMimeType(mimetype)
                                     )
                             ) {
-                                onImportFromUrlState(url)
+                                onImportFromUrlState(url, webViewRef?.url ?: MCPEDL_HOME, "MCPEDL")
                             }
                         }
 

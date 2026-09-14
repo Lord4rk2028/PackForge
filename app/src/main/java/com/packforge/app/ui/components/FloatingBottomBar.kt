@@ -53,6 +53,7 @@ fun FloatingBottomBar(
     currentRoute: String?,
     criticalConflictsCount: Int,
     onNavigate: (Screen) -> Unit,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
@@ -96,9 +97,10 @@ fun FloatingBottomBar(
                     FloatingNavItem(
                         screen = screen,
                         isSelected = isSelected,
+                        enabled = enabled,
                         badgeCount = if (screen == Screen.Conflicts) criticalConflictsCount else 0,
                         onClick = {
-                            if (!isSelected) {
+                            if (enabled && !isSelected) {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 onNavigate(screen)
                             }
@@ -114,6 +116,7 @@ fun FloatingBottomBar(
 private fun FloatingNavItem(
     screen: Screen,
     isSelected: Boolean,
+    enabled: Boolean,
     badgeCount: Int,
     onClick: () -> Unit
 ) {
@@ -137,10 +140,10 @@ private fun FloatingNavItem(
     )
 
     val contentColor by animateColorAsState(
-        targetValue = if (isSelected) {
-            MaterialTheme.colorScheme.onPrimaryContainer
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+        targetValue = when {
+            !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+            isSelected -> MaterialTheme.colorScheme.onPrimaryContainer
+            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
         },
         animationSpec = tween(250),
         label = "contentColor"

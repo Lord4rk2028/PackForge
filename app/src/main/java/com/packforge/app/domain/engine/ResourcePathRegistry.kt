@@ -1,7 +1,11 @@
 package com.packforge.app.domain.engine
 
 import com.packforge.app.util.PackForgeLog
+import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStreamWriter
+import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.Locale
 
@@ -27,6 +31,15 @@ import java.util.Locale
  * NO se tocan: manifest.json, pack_icon.png, scripts/, texts/ y ningún .json
  * (Bedrock vincula entidades/items/bloques POR RUTA de carpeta; renombrarlos
  * rompería el auto-binding).
+ *
+ * ══ REGISTRO GLOBAL DE MUTACIONES ══
+ * Cuando fastMergeAllSources detecta una colisión y renombra un archivo
+ * binario/recurso, registra el par (original → mutada) en el registro
+ * global. Antes del empaquetado final en ZIP, se recorre recursivamente
+ * el directorio fusionado y se actualizan TODAS las cadenas de texto en
+ * JSONs que coincidan con el mapa de mutación, usando JsonValueRewriter.
+ * Esto garantiza que las referencias internas (terrain_texture, item_texture,
+ * entity textures, etc.) apunten a los nombres efectivos de los archivos.
  */
 class ResourcePathRegistry {
 
@@ -35,6 +48,100 @@ class ResourcePathRegistry {
 
     /** Historial legible para el reporte final. */
     val aliasLog = mutableListOf<String>()
+
+    /**
+     * Registro GLOBAL de mutaciones de rutas durante la sesión de fusión.
+     * Clave: ruta relativa original (ej: "textures/entity/steve.png")
+     * Valor: ruta relativa mutada efectiva (ej: "textures/entity/steve_pf_174000.png")
+     *
+     * Incluye tanto la forma CON extensión como SIN extensión, porque
+     * Bedrock referencia texturas sin extensión en terrain_texture.json,
+     * item_texture.json y en las definiciones de entidad (description.textures).
+     */
+    private val globalMutationRegistry = mutableMapOf<String, String>()
+
+    /**
+     * Registra una mutación de ruta cuando fastMergeAllSources renombra
+     * un archivo para evitar colisión de sobreescritura.
+     *
+     * @param originalRelPath Ruta relativa original (ej: "textures/blocks/dirt.png")
+     * @param mutatedRelPath Ruta efectiva tras el renombre (ej: "textures/blocks/dirt_pf_174000.png")
+     */
+    fun registerMutation(originalRelPath: String, mutatedRelPath: String) {
+        globalMutationRegistry[originalRelPath] = mutatedRelPath
+        // Registrar también la variante sin extensión (referencias de atlas Bedrock)
+        val origDot = originalRelPath.lastIndexOf('.')
+        val mutDot = mutatedRelPath.lastIndexOf('.')
+        if (origDot > 0 && mutDot > 0) {
+            val origNoExt = originalRelPath.substring(0, origDot)
+            val mutNoExt = mutatedRelPath.substring(0, mutDot)
+            if (origNoExt != mutNoExt) {
+                globalMutationRegistry[origNoExt] = mutNoExt
+            }
+        }
+        PackForgeLog.d(TAG, "📝 Mutación registrada: $originalRelPath → $mutatedRelPath")
+    }
+
+    /**
+     * Devuelve el mapa global de mutaciones para uso externo (reportes, etc).
+     */
+    fun getGlobalRewriteMap(): Map<String, String> = globalMutationRegistry.toMap()
+
+    /**
+     * Indica si hay mutaciones registradas.
+     */
+    fun hasGlobalMutations(): Boolean = globalMutationRegistry.isNotEmpty()
+
+    /**
+     * Limpia el registro global de mutaciones (llamar al inicio de cada sesión de fusión).
+     */
+    fun clearGlobalMutations() {
+        globalMutationRegistry.clear()
+    }
+
+    /**
+     * ══ APLICACIÓN DE MUTACIONES GLOBALES A DIRECTORIOS ══
+     *
+     * Recorre recursivamente todos los archivos JSON en [rootDirs] y aplica
+     * el mapa global de mutaciones para actualizar internamente todas las
+     * cadenas de texto correspondientes a rutas de recursos renombradas.
+     *
+     * Política Zero-Excess I/O: cada archivo JSON se lee UNA sola vez en
+     * memoria (String), se analiza y reescribe si hubo reemplazos. No se
+     * realizan múltiples operaciones de disco sobre el mismo archivo.
+     *
+     * @return Número total de archivos JSON reescritos con mutaciones aplicadas.
+     */
+    fun applyGlobalRewrites(rootDirs: List<File>): Int {
+        if (globalMutationRegistry.isEmpty()) return 0
+        val rewriteMap = globalMutationRegistry.toMap()
+        var rewritten = 0
+
+        for (rootDir in rootDirs) {
+            if (!rootDir.isDirectory) continue
+            val cachedFiles = DirIndexCache.index(rootDir).jsonFiles
+            for (file in cachedFiles) {
+                try {
+                    // Zero-Excess I/O: leer UNA vez en memoria, analizar, escribir solo si cambió
+                    val text = file.readText(StandardCharsets.UTF_8)
+                    val json = JSONObject(text)
+                    val changed = JsonValueRewriter.replaceValues(json, rewriteMap)
+                    if (changed) {
+                        OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8).use { writer ->
+                            writer.write(json.toString())
+                        }
+                        rewritten++
+                    }
+                } catch (_: Exception) {
+                    // JSONs malformados o binarios disfrazados de .json se ignoran silenciosamente
+                }
+            }
+        }
+        if (rewritten > 0) {
+            PackForgeLog.d(TAG, "🔄 Global rewrites aplicados: $rewritten archivos actualizados con ${rewriteMap.size} mutaciones")
+        }
+        return rewritten
+    }
 
     /**
      * Pre-planifica una fuente completa contra el registro y COMPROMITE los hashes.

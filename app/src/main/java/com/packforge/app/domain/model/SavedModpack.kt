@@ -21,5 +21,7 @@ data class SavedModpack(
     val createdAt: Long,       // timestamp
     val coverUriString: String? = null,
     val tags: String = "",      // separados por coma
-    val addonsJson: String = "" // JSON completo de los addons para recargar
+    val addonsJson: String = "", // JSON completo de los addons para recargar
+    val resolutionsJson: String = "",  // JSON map de conflictId→winnerId para restaurar resoluciones
+    val conflictStrategy: String = "KEEP_FIRST"  // Estrategia de conflicto seleccionada
 )

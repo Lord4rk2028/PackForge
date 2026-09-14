@@ -47,6 +47,10 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:documentLaunchMode="never"
+            android:alwaysRetainTaskState="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.PackForge"
             android:windowSoftInputMode="adjustResize">
@@ -54,6 +58,20 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            
+            <!-- Recibir un solo archivo compartido desde cualquier app -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+
+            <!-- Recibir múltiples archivos compartidos -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
             </intent-filter>
             
             <!-- Intent filter para abrir archivos .mcaddon y .mcpack -->

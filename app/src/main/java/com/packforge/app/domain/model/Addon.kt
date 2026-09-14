@@ -23,7 +23,9 @@ data class Addon(
     val manifestUuid: String = "",
     val rawManifest: String = "",
     val iconPath: String? = null,
-    val sourceFilePath: String = "" // Ruta al archivo guardado en almacenamiento interno
+    val sourceFilePath: String = "", // Ruta al archivo guardado en almacenamiento interno
+    val sourceUrl: String? = null,   // URL de la página del addon (origen web, si se importó desde WebView interno)
+    val sourceSite: String? = null   // "MCPEDL" | "CurseForge" | "ModBay" (origen)
 )
 
 enum class AddonType(val displayName: String, val description: String) {

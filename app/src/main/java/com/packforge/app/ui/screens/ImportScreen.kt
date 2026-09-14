@@ -8,10 +8,12 @@ import com.packforge.app.ui.components.EXPAND_SLOW_SPEC
 import com.packforge.app.ui.components.FADE_SLOW_SPEC
 import com.packforge.app.ui.components.SLIDE_SLOW_SPEC
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -23,6 +25,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -93,6 +96,8 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -122,7 +127,8 @@ fun ImportScreen(
     onImportUris: (List<android.net.Uri>) -> Unit,
     onRemoveAddon: (String) -> Unit,
     onToggleAddon: (String) -> Unit,
-    onMoveAddon: (String, Int) -> Unit
+    onMoveAddon: (String, Int) -> Unit,
+    onClearAllAddons: () -> Unit
 ) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
@@ -174,9 +180,11 @@ fun ImportScreen(
             ImportDropZone(
                 isImporting = isImporting,
                 progress = importProgress,
+                hasAddons = addons.isNotEmpty(),
                 onImportClick = {
                     launcher.launch(arrayOf("*/*"))
-                }
+                },
+                onClearAll = onClearAllAddons
             )
         }
 
@@ -301,7 +309,9 @@ fun ImportScreen(
 fun ImportDropZone(
     isImporting: Boolean,
     progress: OperationProgress,
-    onImportClick: () -> Unit
+    hasAddons: Boolean,
+    onImportClick: () -> Unit,
+    onClearAll: () -> Unit
 ) {
     val alpha by animateFloatAsState(
         targetValue = if (isImporting) 0.75f else 1f,
@@ -327,61 +337,38 @@ fun ImportDropZone(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         )
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            if (isImporting && progress is OperationProgress.Loading) {
-                val progVal = progress.progress ?: 0f
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(76.dp)
-                ) {
-                    CircularProgressIndicator(
-                        progress = { progVal },
-                        modifier = Modifier.fillMaxSize(),
-                        strokeCap = StrokeCap.Round,
-                        strokeWidth = 6.dp,
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
-                    )
-                    if (progress.progress == null) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.fillMaxSize(),
-                            strokeCap = StrokeCap.Round,
-                            strokeWidth = 6.dp
-                        )
-                    } else {
-                        Text(
-                            text = "${(progVal * 100).toInt()}%",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-
-                Text(
-                    text = progress.message,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
-
-                LinearProgressIndicator(
-                    progress = { progVal },
+        Box(modifier = Modifier.fillMaxWidth()) {
+            // Botón de limpiar en la esquina superior derecha
+            if (hasAddons && !isImporting) {
+                FilledTonalIconButton(
+                    onClick = onClearAll,
                     modifier = Modifier
-                        .fillMaxWidth(0.85f)
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(100.dp)),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                    strokeCap = StrokeCap.Round
-                )
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp)
+                        .size(40.dp)
+                        .bounceClick(scaleDown = 0.88f) { onClearAll() },
+                    colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Limpiar todo el taller",
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+            if (isImporting && progress is OperationProgress.Loading) {
+                AnimatedWaveProgress(progress = progress.progress)
             } else {
                 Box(
                     modifier = Modifier
@@ -444,6 +431,7 @@ fun ImportDropZone(
                 }
             }
         }
+        }
     }
 }
 
@@ -460,6 +448,107 @@ private fun FormatChip(format: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
         )
+    }
+}
+
+/**
+ * Indicador circular con efecto de "Ola" (Wave) estilo Material 3.
+ * - Si progress es null: arco animado rotatorio con pulso de onda (indeterminado).
+ * - Si progress es conocido: arco determinista semitransparente + arco de onda brillante + texto % con pulso sutil.
+ */
+@Composable
+private fun AnimatedWaveProgress(
+    progress: Float?,
+    modifier: Modifier = Modifier
+) {
+    val color = MaterialTheme.colorScheme.primary
+    val trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+    val strokeWidth = 6.dp
+
+    val infiniteTransition = rememberInfiniteTransition(label = "waveProgress")
+
+    // Rotación continua 360° a velocidad constante
+    val rotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "waveRotation"
+    )
+
+    // Pulso de onda: arco crece y se encoge (efecto Ola)
+    val waveArc by infiniteTransition.animateFloat(
+        initialValue = 20f,
+        targetValue = 130f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "waveArc"
+    )
+
+    // Pulso sutil del texto %
+    val textScale by infiniteTransition.animateFloat(
+        initialValue = 0.95f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "textPulse"
+    )
+
+    val determinateProgress = progress ?: 0f
+
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val center = center
+            val radius = (size.minDimension / 2f) - strokeWidth.toPx()
+            val strokePx = strokeWidth.toPx()
+
+            // Pista de fondo
+            drawCircle(
+                color = trackColor,
+                radius = radius,
+                style = Stroke(strokePx)
+            )
+
+            // Arco de progreso determinista (semitransparente, debajo de la onda)
+            if (progress != null) {
+                drawArc(
+                    color = color.copy(alpha = 0.25f),
+                    startAngle = -90f,
+                    sweepAngle = determinateProgress * 360f,
+                    useCenter = false,
+                    style = Stroke(strokePx, cap = StrokeCap.Round)
+                )
+            }
+
+            // Arco de onda (siempre animado, brillante)
+            drawArc(
+                color = color,
+                startAngle = rotation - 90f,
+                sweepAngle = waveArc,
+                useCenter = false,
+                style = Stroke(strokePx, cap = StrokeCap.Round)
+            )
+        }
+
+        // Texto de porcentaje en el centro (solo cuando hay progreso conocido)
+        if (progress != null) {
+            Text(
+                text = "${(determinateProgress * 100).toInt()}%",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.ExtraBold,
+                color = color,
+                modifier = Modifier.graphicsLayer {
+                    scaleX = textScale
+                    scaleY = textScale
+                }
+            )
+        }
     }
 }
 

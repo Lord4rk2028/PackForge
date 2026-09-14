@@ -6,36 +6,61 @@ import com.packforge.app.domain.model.MergeConflict
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.ConcurrentLinkedQueue
 
 object JsonDeepMerger {
     private const val TAG = "PackForge"
     private const val CONFLICT_TAG = "PackForge_Conflict"
     
-    val mergeConflicts = mutableListOf<MergeConflict>()
+    /**
+     * Conflictos detectados durante la fusión.
+     *
+     * IMPORTANTE: el orquestador ejecuta las fases de fusión en PARALELO
+     * (`async` sobre Dispatchers.IO), por lo que varios hilos añaden aquí a la vez.
+     * Debe ser una colección concurrente: con un `mutableListOf` plano el
+     * `add()` concurrente corrompe la lista (ConcurrentModificationException)
+     * o pierde conflictos silenciosamente, y un conflicto perdido implica
+     * dos addons con el mismo ID en el .mcaddon final -> Minecraft crashea.
+     *
+     * ConcurrentLinkedQueue: `add` es lock-free y el iterador es weak-consistent,
+     * así que iterar mientras otro hilo escribe es seguro (a diferencia de
+     * Collections.synchronizedList, que exige sincronizar el forEach a mano).
+     */
+    val mergeConflicts: ConcurrentLinkedQueue<MergeConflict> = ConcurrentLinkedQueue()
     
-    private var currentSourceAddon = ""
-    private var currentTargetAddon = ""
-    private var currentFilePath = ""
+    /**
+     * Contexto de la fusión en curso (qué addon es el origen, cuál el destino y
+     * qué archivo se está fusionando).
+     *
+     * Se guarda en ThreadLocal y NO en campos normales: el orquestador fusiona
+     * varios addons en paralelo, así que dos hilos escribían estos mismos campos
+     * a la vez. El resultado era que un conflicto terminaba atribuido al addon
+     * equivocado (o con el archivo de otro hilo), haciendo inútil el reporte.
+     * Con ThreadLocal cada hilo ve su propio contexto.
+     */
+    private val currentSourceAddon = ThreadLocal.withInitial { "" }
+    private val currentTargetAddon = ThreadLocal.withInitial { "" }
+    private val currentFilePath = ThreadLocal.withInitial { "" }
 
-    private var prioritySourceIndex: Int = Int.MAX_VALUE
-    private var priorityWinnerIndex: Int = Int.MAX_VALUE
-    
+    private val prioritySourceIndex = ThreadLocal.withInitial { Int.MAX_VALUE }
+    private val priorityWinnerIndex = ThreadLocal.withInitial { Int.MAX_VALUE }
+
     fun setMergeContext(sourceAddon: String, targetAddon: String, filePath: String) {
-        currentSourceAddon = sourceAddon
-        currentTargetAddon = targetAddon
-        currentFilePath = filePath
+        currentSourceAddon.set(sourceAddon)
+        currentTargetAddon.set(targetAddon)
+        currentFilePath.set(filePath)
     }
 
     fun setPriorityContext(sourceIndex: Int, winnerIndex: Int) {
-        prioritySourceIndex = sourceIndex
-        priorityWinnerIndex = winnerIndex
+        prioritySourceIndex.set(sourceIndex)
+        priorityWinnerIndex.set(winnerIndex)
     }
 
     fun clearPriorityContext() {
-        prioritySourceIndex = Int.MAX_VALUE
-        priorityWinnerIndex = Int.MAX_VALUE
+        prioritySourceIndex.set(Int.MAX_VALUE)
+        priorityWinnerIndex.set(Int.MAX_VALUE)
     }
-    
+
     fun clearConflicts() {
         mergeConflicts.clear()
         ConflictRegistry.clear()
@@ -77,7 +102,8 @@ object JsonDeepMerger {
                 }
 
                 else -> {
-                    val sourceHasLowerPriority = prioritySourceIndex > priorityWinnerIndex && priorityWinnerIndex != Int.MAX_VALUE
+                    val winnerIdx = priorityWinnerIndex.get()
+                    val sourceHasLowerPriority = prioritySourceIndex.get() > winnerIdx && winnerIdx != Int.MAX_VALUE
                     if (baseValue != null && mergeValue !is JSONObject && mergeValue !is JSONArray) {
                         val conflictType = when {
                             cleanKey.contains("item") -> "ITEM_OVERWRITE"
@@ -89,13 +115,13 @@ object JsonDeepMerger {
 
                         val conflict = MergeConflict(
                             id = java.util.UUID.randomUUID().toString(),
-                            filePath = currentFilePath,
+                            filePath = currentFilePath.get(),
                             conflictType = conflictType,
-                            sourceAddon = currentSourceAddon,
-                            targetAddon = currentTargetAddon,
+                            sourceAddon = currentSourceAddon.get(),
+                            targetAddon = currentTargetAddon.get(),
                             severity = com.packforge.app.domain.model.ConflictSeverity.MEDIUM,
                             description = if (sourceHasLowerPriority)
-                                "Colisión de clave '$cleanKey': ganador (índice $priorityWinnerIndex) prevaleció"
+                                "Colisión de clave '$cleanKey': ganador (índice $winnerIdx) prevaleció"
                             else
                                 "Colisión de clave '$cleanKey': el valor se sobrescribe.",
                             resolved = false,
@@ -202,9 +228,9 @@ object JsonDeepMerger {
             ConflictRegistry.logConflict(
                 severity = com.packforge.app.domain.model.ConflictSeverity.MEDIUM,
                 type = "NAMESPACE_COLLISION",
-                file = currentFilePath,
-                addon1 = currentSourceAddon,
-                addon2 = currentTargetAddon,
+                file = currentFilePath.get(),
+                addon1 = currentSourceAddon.get(),
+                addon2 = currentTargetAddon.get(),
                 description = "Identificador de namespace '$key' sobrescrito por el segundo addon."
             )
         }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.clickable
 import com.packforge.app.ui.components.bounceClick
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -24,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
@@ -50,11 +52,11 @@ import com.packforge.app.ui.components.CachedAsyncImage
 import com.packforge.app.ui.components.AddonSite
 import com.packforge.app.ui.components.MorphingFab
 import com.packforge.app.ui.components.MorphingFabItem
-import com.packforge.app.ui.components.PackForgeTopBar
 import com.packforge.app.ui.components.SiteSelector
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.domain.model.OperationProgress
 import com.packforge.app.domain.model.SavedModpack
+import com.packforge.app.domain.model.Addon
 import com.packforge.app.ui.viewmodel.PackForgeViewModel
 import com.packforge.app.ui.viewmodel.ThemeViewModel
 import java.io.File
@@ -73,7 +75,7 @@ fun StudioScreen(
     webImportError: String?,
     onDeleteModpack: (String) -> Unit,
     onLoadModpack: (SavedModpack) -> Unit,
-    onImportFromUrl: (String) -> Unit,
+    onImportFromUrl: (String, String, String) -> Unit,
     onClearError: () -> Unit
 ) {
     val activeWebSource by viewModel.activeWebSource.collectAsStateWithLifecycle()
@@ -138,6 +140,9 @@ fun StudioScreen(
             onOpenSources = {
                 viewModel.setShowMyModpacks(false)
                 viewModel.setActiveWebSource("MCPEDL")
+            },
+            onOpenSource = { site, url ->
+                viewModel.openAddonSource(site, url)
             },
             onRegenerate = { modpack ->
                 modpackToRegenerate = modpack
@@ -429,6 +434,7 @@ fun MyModpacksScreen(
     onDelete: (String) -> Unit,
     onLoad: (SavedModpack) -> Unit,
     onOpenSources: () -> Unit = {},
+    onOpenSource: (site: String, url: String) -> Unit = { _, _ -> },
     onRegenerate: (SavedModpack) -> Unit = {},
     onImportModpack: (Uri) -> Unit = {}
 ) {
@@ -599,10 +605,33 @@ fun MyModpacksScreen(
 
     Scaffold(
         topBar = {
-            PackForgeTopBar(
-                title = "Biblioteca de Modpacks",
-                onBackClick = onBack
-            )
+            // Barra flotante superior con efecto de vidrio
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                shadowElevation = 2.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Volver"
+                        )
+                    }
+                    Text(
+                        text = "Biblioteca de Modpacks",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
         },
         floatingActionButton = {
             MorphingFab(
@@ -669,12 +698,15 @@ fun MyModpacksScreen(
                     val onDeleteThis = remember(modpack.id) { { modpackToDelete = modpack } }
                     val onShareThis = remember(modpack.id) { { shareModpack(context, modpack, shareScope) } }
                     val onRegenThis = remember(modpack.id) { { onRegenerate(modpack) } }
+                    val source = remember(modpack.id) { extractModpackSource(modpack.addonsJson) }
                     ModpackLibraryCard(
                         modpack = modpack,
+                        modpackSource = source,
                         onLoad = onLoadThis,
                         onDelete = onDeleteThis,
                         onShare = onShareThis,
-                        onRegenerate = onRegenThis
+                        onRegenerate = onRegenThis,
+                        onOpenSource = { source?.let { onOpenSource(it.site, it.url) } }
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -807,7 +839,9 @@ fun ModpackLibraryCard(
     onLoad: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
-    onRegenerate: () -> Unit = {}
+    onRegenerate: () -> Unit = {},
+    modpackSource: ModpackSource? = null,
+    onOpenSource: () -> Unit = {}
 ) {
     val coverPath = modpack.coverUriString
     // Coil necesita un File (no un String de ruta absoluta) para cargar la
@@ -895,6 +929,37 @@ fun ModpackLibraryCard(
                         )
                     }
                 }
+
+                // ⭐ Badge de ORIGEN WEB (si alguno de sus addons se descargó
+                // desde el WebView interno, con acceso a la página del addon)
+                if (modpackSource != null) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Link,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Text(
+                                text = modpackSource.site,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
             }
 
             // ── Metadatos ────────────────────────────────────
@@ -960,6 +1025,41 @@ fun ModpackLibraryCard(
                     )
                 }
             }
+
+            // ── Acción "Abrir origen del addon" (si se importó desde el WebView) ──
+            if (modpackSource != null) {
+                Surface(
+                    onClick = onOpenSource,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+                        .bounceClick(scaleDown = 0.97f) { onOpenSource() },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "Abrir origen: ${modpackSource.addonName} (${modpackSource.site})",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -970,5 +1070,30 @@ private fun formatModpackDate(timestamp: Long): String {
             .format(Date(timestamp))
     } catch (e: Exception) {
         ""
+    }
+}
+
+/** Origen web de un addon dentro de un modpack guardado. */
+data class ModpackSource(
+    val site: String,      // "MCPEDL" | "CurseForge" | "ModBay"
+    val url: String,       // URL de la página del addon
+    val addonName: String  // nombre del addon para mostrar en el botón
+)
+
+/**
+ * Extrae el ORIGEN WEB del primer addon que tenga sourceUrl+sourceSite
+ * persistidos en el addonsJson del modpack. Devuelve null si ninguno vino
+ * del WebView interno (p. ej. importado por share externo o por archivo).
+ */
+fun extractModpackSource(addonsJson: String): ModpackSource? {
+    if (addonsJson.isBlank()) return null
+    return try {
+        val type = object : com.google.gson.reflect.TypeToken<List<Addon>>() {}.type
+        val addons: List<Addon> = com.google.gson.Gson().fromJson(addonsJson, type)
+            ?: emptyList()
+        addons.firstOrNull { !it.sourceUrl.isNullOrBlank() && !it.sourceSite.isNullOrBlank() }
+            ?.let { ModpackSource(it.sourceSite!!, it.sourceUrl!!, it.name) }
+    } catch (e: Exception) {
+        null
     }
 }

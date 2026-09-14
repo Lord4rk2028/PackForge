@@ -61,7 +61,9 @@ object EntityDependencyResolver {
     // ── ÍNDICES POR CONTENIDO (una lectura por archivo) ───────────────────
 
     private fun indexGeometries(dirs: List<File>): Map<String, List<Candidate>> =
-        indexJsonIds(dirs, { rel -> rel.endsWith(".geo.json", true) }) { _, json ->
+        indexJsonIds(dirs, { rel -> rel.endsWith(".json", true) }) { _, json ->
+            // ⭐ DUCK TYPING: El extractor ya valida contenido raíz "minecraft:geometry".
+            // Archivos .json ofuscados (ej: .fT.json) se detectan correctamente.
             json.optJSONArray("minecraft:geometry")?.let { arr ->
                 (0 until arr.length()).mapNotNull { i ->
                     arr.optJSONObject(i)?.optJSONObject("description")
@@ -124,26 +126,24 @@ object EntityDependencyResolver {
             val rel = file.relativeTo(mergedRpDir).path.replace("\\", "/")
             try {
                 val json = JSONObject(file.readText(StandardCharsets.UTF_8))
-                if (rel.endsWith(".geo.json", true)) {
-                    json.optJSONArray("minecraft:geometry")?.let { arr ->
-                        for (i in 0 until arr.length()) {
-                            val id = arr.optJSONObject(i)?.optJSONObject("description")
-                                ?.optString("identifier")?.trim()
-                            if (!id.isNullOrBlank() && !idx.geoIds.contains(id)) {
-                                idx.geoIds.add(id)
-                                idx.geoHashById[id] = md5(file.readBytes())
-                                idx.geoPathById[id] = rel
-                            }
+                // ⭐ DUCK TYPING: Clasificar por contenido, NO por extensión del archivo
+                // Detectar geometría por presencia de "minecraft:geometry" en el JSON raíz
+                json.optJSONArray("minecraft:geometry")?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        val id = arr.optJSONObject(i)?.optJSONObject("description")
+                            ?.optString("identifier")?.trim()
+                        if (!id.isNullOrBlank() && !idx.geoIds.contains(id)) {
+                            idx.geoIds.add(id)
+                            idx.geoHashById[id] = md5(file.readBytes())
+                            idx.geoPathById[id] = rel
                         }
                     }
                 }
-                if (underSegment(rel, "animations") || underSegment(rel, "animation_controllers") ||
-                    underSegment(rel, "render_controllers")
-                ) {
-                    json.optJSONObject("animations")?.keys()?.forEach { idx.animRcIds.add(it.trim()) }
-                    json.optJSONObject("animation_controllers")?.keys()?.forEach { idx.animRcIds.add(it.trim()) }
-                    json.optJSONObject("render_controllers")?.keys()?.forEach { idx.animRcIds.add(it.trim()) }
-                }
+                // ⭐ DUCK TYPING: Detectar animaciones/render_controllers por contenido,
+                // NO por ruta de directorio. Funciona para archivos ofuscados en cualquier ubicación.
+                json.optJSONObject("animations")?.keys()?.forEach { idx.animRcIds.add(it.trim()) }
+                json.optJSONObject("animation_controllers")?.keys()?.forEach { idx.animRcIds.add(it.trim()) }
+                json.optJSONObject("render_controllers")?.keys()?.forEach { idx.animRcIds.add(it.trim()) }
             } catch (_: Exception) {}
         }
         return idx
@@ -498,24 +498,20 @@ object EntityDependencyResolver {
 
                 val geoIds = mutableSetOf<String>()
                 val animRcIds = mutableSetOf<String>()
-                entries.filter { it.name.endsWith(".geo.json", true) }.forEach { e ->
+                // ⭐ DUCK TYPING: Escanear TODOS los .json del ZIP para detectar geometrías,
+                // animaciones y render_controllers por contenido raíz, NO por extensión de archivo.
+                // Esto permite encontrar archivos ofuscados (ej: .fT.json conteniendo minecraft:geometry).
+                entries.filter { it.name.endsWith(".json", true) && !it.isDirectory }.forEach { e ->
                     runCatching { JSONObject(zip.getInputStream(e).bufferedReader().readText()) }.getOrNull()
                         ?.let { j ->
+                            // Detectar geometría por contenido
                             j.optJSONArray("minecraft:geometry")?.let { arr ->
                                 for (i in 0 until arr.length()) {
                                     arr.optJSONObject(i)?.optJSONObject("description")
                                         ?.optString("identifier")?.trim()?.let { geoIds.add(it) }
                                 }
                             }
-                        }
-                }
-                entries.filter { e ->
-                    val n = e.name.lowercase(Locale.ROOT)
-                    (underSegment(n, "animations") || underSegment(n, "animation_controllers") ||
-                        underSegment(n, "render_controllers")) && n.endsWith(".json")
-                }.forEach { e ->
-                    runCatching { JSONObject(zip.getInputStream(e).bufferedReader().readText()) }.getOrNull()
-                        ?.let { j ->
+                            // Detectar animaciones/render_controllers por contenido
                             j.optJSONObject("animations")?.keys()?.forEach { animRcIds.add(it.trim()) }
                             j.optJSONObject("animation_controllers")?.keys()?.forEach { animRcIds.add(it.trim()) }
                             j.optJSONObject("render_controllers")?.keys()?.forEach { animRcIds.add(it.trim()) }

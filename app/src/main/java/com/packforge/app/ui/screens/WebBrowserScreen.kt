@@ -38,7 +38,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import com.packforge.app.domain.model.OperationProgress
 import com.packforge.app.ui.components.AddonSite
-import com.packforge.app.ui.components.PackForgeTopBar
 import com.packforge.app.ui.components.SiteSelector
 import kotlinx.coroutines.delay
 
@@ -57,7 +56,8 @@ fun WebBrowserScreen(
     onBack: () -> Unit,
     onSiteSelect: (AddonSite) -> Unit,
     onUrlChanged: (String) -> Unit,
-    onImportFromUrl: (String) -> Unit,
+    // (downloadUrl, pageUrl, siteName) -> Importa desde el WebView guardando el origen.
+    onImportFromUrl: (String, String, String) -> Unit,
     onClearError: () -> Unit,
     webView: WebView
 ) {
@@ -86,12 +86,29 @@ fun WebBrowserScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            PackForgeTopBar(
-                title = title,
-                onBackClick = {
-                    onBack()
-                },
-                actions = {
+            // Top bar integrada como flotante compacta sobre el contenido
+            // para maximizar el espacio del WebView
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                modifier = Modifier.fillMaxWidth(),
+                shadowElevation = 2.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver")
+                    }
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f)
+                    )
                     IconButton(onClick = {
                         webViewRef?.let { wv ->
                             if (initialUrl.isNotEmpty() && wv.url != initialUrl) {
@@ -110,7 +127,7 @@ fun WebBrowserScreen(
                         Icon(Icons.Default.OpenInBrowser, "Navegador Externo")
                     }
                 }
-            )
+            }
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().navigationBarsPadding()) {
@@ -216,7 +233,8 @@ fun WebBrowserScreen(
                                     ): Boolean {
                                         val url = request?.url?.toString() ?: return false
                                         if (isAddonDownloadUrl(url)) {
-                                            onImportFromUrl(url)
+                                            // Pasar la URL de la página actual como origen
+                                            onImportFromUrl(url, webViewRef?.url ?: currentUrl, currentSite.sourceKey)
                                         } else {
                                             mainView.loadUrl(url)
                                         }
@@ -253,14 +271,14 @@ fun WebBrowserScreen(
                                 }
 
                                 if (isAddonDownloadUrl(url)) {
-                                    onImportFromUrl(url)
+                                    onImportFromUrl(url, webViewRef?.url ?: currentUrl, currentSite.sourceKey)
                                     return true
                                 }
                                 return false
                             }
                         }
                         wv.setDownloadListener { url, _, _, _, _ ->
-                            if (url != null) onImportFromUrl(url)
+                            if (url != null) onImportFromUrl(url, webViewRef?.url ?: currentUrl, currentSite.sourceKey)
                         }
                         if (wv.url.isNullOrEmpty()) {
                             wv.loadUrl(currentUrl.ifEmpty { initialUrl })

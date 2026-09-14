@@ -66,6 +66,12 @@ object AddonParser {
             val displayName = info.displayName
             val addonClassification = info.classification
 
+            // CRÍTICO: invalidate DirIndexCache después de resolveAddonInfo.
+            // resolveAddonInfo → classify() puede haber extraído .mcpacks anidados
+            // (nested_BP, nested_RP) a parseTempDir. El cache aún no los conoce
+            // y sin esto, pack_icon.png dentro de .mcpacks anidados nunca se encuentra.
+            DirIndexCache.invalidate(parseTempDir)
+
             val addonType = when (addonClassification) {
                 is AddonExtractor.AddonClassification.BEHAVIOR_PACK -> AddonType.BEHAVIOR_ONLY
                 is AddonExtractor.AddonClassification.RESOURCE_PACK -> AddonType.RESOURCE_ONLY
@@ -93,10 +99,12 @@ object AddonParser {
                 val entryName = file.relativeTo(parseTempDir).path.replace("\\", "/")
                 allFiles.add(entryName)
 
-                // Extraer icono
+                // Extraer icono → filesDir en lugar de cacheDir para que no se
+                // pierda si el sistema limpia la caché.
                 if (entryName.lowercase().endsWith("pack_icon.png") && iconPath == null) {
                     try {
-                        val iconFile = File(context.cacheDir, "icon_${addonId}.png")
+                        val iconDir = File(context.filesDir, "addon_icons").apply { mkdirs() }
+                        val iconFile = File(iconDir, "${addonId}_pack_icon.png")
                         FileUtils.fastCopy(file, iconFile)
                         iconPath = iconFile.absolutePath
                     } catch (e: Exception) {}
@@ -216,7 +224,8 @@ object AddonParser {
         val cachedFiles = DirIndexCache.index(File(extracted)).allFiles
         for (f in cachedFiles) {
             if (f.name.equals("pack_icon.png", ignoreCase = true) && iconPath == null) {
-                val dest = File(context.cacheDir, "icon_$addonId.png")
+                val iconDir = File(context.filesDir, "addon_icons").apply { mkdirs() }
+                val dest = File(iconDir, "${addonId}_pack_icon.png")
                 try {
                     FileUtils.fastCopy(f, dest)
                     iconPath = dest.absolutePath

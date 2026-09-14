@@ -142,14 +142,16 @@ fun AddonSlot(addon: Addon) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
-            )
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = "Addon deshabilitado",
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(24.dp)
-            )
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = "Addon deshabilitado",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
     }
 }

@@ -13,6 +13,9 @@ object ConflictEngine {
         val active = addons.filter { it.enabled }
         if (active.size < 2) return emptyList()
 
+        // Mapa id → addon para resolver nombres rápido
+        val addonMap = active.associateBy { it.id }
+
         val conflicts = mutableListOf<Conflict>()
 
         conflicts += detectScriptConflicts(active)
@@ -27,11 +30,33 @@ object ConflictEngine {
         // Eliminar duplicados por combinación de addons y archivo
         val deduped = conflicts.distinctBy { c -> stableKey(c) }
 
+        // ⭐ Filtrar conflictos con un solo addon afectado (sin sentido para resolver)
+        // y conflictos donde TODOS los addons afectados son del MISMO pack (RP+BP).
+        // Cuando un addon se importa como RP y BP por separado, generan miles de
+        // falsos conflictos entre ellos. Si comparten la misma clave de pareja
+        // (mismo nombre normalizado → "My Addon BP" y "My Addon RP" → "my addon")
+        // son partes del mismo addon y no tienen sentido como conflicto.
+        val filtered = deduped.filter { c ->
+            if (c.affectedAddonIds.size < 2) return@filter false
+
+            // Detectar RP+BP del mismo pack: si TODOS los afectados comparten
+            // la misma clave normalizada, es un falso positivo.
+            val pairKeys = c.affectedAddonIds
+                .mapNotNull { id ->
+                    addonMap[id]?.name?.let { com.packforge.app.ui.components.normalizedPairKey(it) }
+                }
+                .filter { it.isNotBlank() }
+            if (pairKeys.isNotEmpty() && pairKeys.distinct().size == 1) {
+                return@filter false
+            }
+            true
+        }
+
         // ⭐ IDs ESTABLES: el id se deriva de tipo + archivo + addons afectados.
         // Antes se usaban UUIDs aleatorios, y cada recálculo regeneraba ids nuevos,
         // dejando huérfano el mapa de resoluciones (la UI parpadeaba "resuelto"
         // y luego el conflicto reaparecía sin resolver).
-        return deduped.map { c ->
+        return filtered.map { c ->
             val stable = c.copy(id = stableKey(c))
             val res = resolutions[stable.id]
             when {

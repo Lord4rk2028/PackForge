@@ -104,11 +104,16 @@ object PackForgeOrchestrator {
      * Fase 1: Copia rápida de todos los addons al directorio de salida usando buffers.
      * NO hace parsing JSON.
      * OPTIMIZACIÓN: Usa DirIndexCache en lugar de walkTopDown() (3-10x más rápido).
+     *
+     * ⭐ REQ-B: Cuando detecta una colisión y renombra un archivo, registra el par
+     * (original → mutada) en el ResourcePathRegistry global para que el pipeline
+     * de remapeo posterior actualice las referencias internas en los JSONs.
      */
     private suspend fun fastMergeAllSources(
         sourceDirs: List<String>,
         targetDir: File,
-        progressCallback: ProgressCallback?
+        progressCallback: ProgressCallback?,
+        resourceRegistry: ResourcePathRegistry
     ) {
         targetDir.mkdirs()
         
@@ -127,7 +132,10 @@ object PackForgeOrchestrator {
                 if (finalTarget.exists()) {
                     val nameWithoutExt = finalTarget.nameWithoutExtension
                     val ext = finalTarget.extension
-                    finalTarget = File(finalTarget.parentFile, "${nameWithoutExt}_pf_${System.currentTimeMillis()}.$ext")
+                    val mutatedFile = File(finalTarget.parentFile, "${nameWithoutExt}_pf_${System.currentTimeMillis()}.$ext")
+                    // ⭐ REQ-B: Registrar mutación para remapeo posterior de referencias JSON
+                    resourceRegistry.registerMutation(relativePath, mutatedFile.relativeTo(targetDir).path)
+                    finalTarget = mutatedFile
                 }
                 
                 finalTarget.parentFile?.mkdirs()
@@ -171,6 +179,7 @@ object PackForgeOrchestrator {
         FolderAliasRegistry.clear()
         DirIndexCache.clear()
         FusionReportBuilder.clear()
+        resourceRegistry.clearGlobalMutations()
 
         try {
             // a) EXTRAER TODOS LOS ADDONS (PARALELIZADO - 3-5x más rápido)
@@ -349,8 +358,8 @@ object PackForgeOrchestrator {
             // FASE 1: Copia Eager - Solo copia de bytes con buffer de 16KB
             progressCallback?.onProgress("Copiando archivos (Fase 1 - Rápida)...")
             val tEagerStart = System.currentTimeMillis()
-            fastMergeAllSources(bpDirs, mergedBpDir, progressCallback)
-            fastMergeAllSources(rpDirs, mergedRpDir, progressCallback)
+            fastMergeAllSources(bpDirs, mergedBpDir, progressCallback, resourceRegistry)
+            fastMergeAllSources(rpDirs, mergedRpDir, progressCallback, resourceRegistry)
             coroutineContext.ensureActive()
             PackForgeLog.d("PackForge_Perf", "⏱️ Fase 1 Eager completada en: ${(System.currentTimeMillis() - tEagerStart) / 1000.0}s")
 
@@ -408,6 +417,19 @@ object PackForgeOrchestrator {
                     }
                 } catch (e: Exception) {
                     PackForgeLog.w("PackForge_Export", "Validación de cobertura no bloqueante: ${e.message}")
+                }
+
+                // ══ FASE 3C: REMAPEO GLOBAL DE MUTACIONES DE RECURSOS ══
+                // ⭐ REQ-B: Actualizar todas las referencias internas en JSONs que apunten
+                // a rutas de recursos que fueron renombradas durante fastMergeAllSources
+                // para evitar colisiones. Esto incluye terrain_texture.json, item_texture.json,
+                // definiciones de entidades (description.textures) y cualquier otra referencia
+                // a texturas/geometrías/sounds que hayan sido mutadas.
+                if (resourceRegistry.hasGlobalMutations()) {
+                    progressCallback?.onProgress("Remapeando referencias de recursos mutados...")
+                    val tRewriteStart = System.currentTimeMillis()
+                    val rewritten = resourceRegistry.applyGlobalRewrites(listOf(mergedBpDir, mergedRpDir))
+                    PackForgeLog.d("PackForge_Export", "🔄 Fase 3C: $rewritten archivos con referencias actualizadas (${(System.currentTimeMillis() - tRewriteStart)}ms)")
                 }
             }
             coroutineContext.ensureActive()
@@ -579,7 +601,16 @@ object PackForgeOrchestrator {
             progressCallback?.onProgress("Limpiando temporales...")
             cleanupTempDirs(tempDir)
             val reportPath = File(outputDir, "fusion_report.txt").absolutePath
-            OutputStreamWriter(FileOutputStream(reportPath), StandardCharsets.UTF_8).use {
+            // OJO: AÑADIR (append), no sobrescribir. El reporte detallado ya se
+            // escribió arriba (MergeReportGenerator: renombres de IDs, aliases de
+            // recursos, hallazgos de scripts, errores de sintaxis). Antes esta
+            // segunda escritura lo machacaba y el usuario perdía todo el
+            // diagnóstico, quedándose solo con el resumen de FusionReportBuilder.
+            OutputStreamWriter(
+                FileOutputStream(reportPath, /* append = */ true),
+                StandardCharsets.UTF_8
+            ).use {
+                it.write("\n")
                 it.write(FusionReportBuilder.generateReport())
             }
 
@@ -1147,7 +1178,13 @@ object PackForgeOrchestrator {
             "❌ BP manifest NO tiene min_engine_version"
         }
         val mev = bpHeader.getJSONArray("min_engine_version")
-        require(mev.getInt(0) >= 1 && mev.getInt(1) >= 20) {
+        // Comparación semántica de versión (major, minor) >= (1, 20).
+        // OJO: no usar `getInt(0) >= 1 && getInt(1) >= 20` porque eso exige
+        // major>=1 Y minor>=20 a la vez, y rechazaría versiones válidas como
+        // 1.19.x (minor=19) o cualquier 2.x (minor=0).
+        val mevMajor = mev.optInt(0, 0)
+        val mevMinor = mev.optInt(1, 0)
+        require(mevMajor > 1 || (mevMajor == 1 && mevMinor >= 20)) {
             "❌ min_engine_version es muy bajo: ${mev}"
         }
 

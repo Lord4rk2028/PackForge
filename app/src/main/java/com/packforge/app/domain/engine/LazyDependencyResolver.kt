@@ -7,8 +7,12 @@ import java.util.zip.ZipFile
 
 /**
  * FASE 2: DETECCIÓN DE HUECOS (HOLE DETECTION) - Lazy & Selectiva.
- * Escanea únicamente los archivos críticos ya copiados en el directorio de salida (ej: .entity.json),
+ * Escanea únicamente los archivos críticos ya copiados en el directorio de salida,
  * parsea sus referencias y rellena los huecos buscando directamente en los ZIPs originales.
+ *
+ * ⭐ DUCK TYPING: Clasifica archivos de entidad por contenido raíz
+ * "minecraft:client_entity", NO por extensión .entity.json. Esto permite
+ * procesar correctamente archivos con nombres ofuscados (ej: .fT.json).
  */
 object LazyDependencyResolver {
     private const val TAG = "PackForge_LazyResolver"
@@ -32,12 +36,15 @@ object LazyDependencyResolver {
             return RepairResult(0, emptyList())
         }
 
-        val entityFiles = entityDir.listFiles()?.filter { it.name.endsWith(".entity.json") } ?: emptyList()
+        // ⭐ SEMANTIC: Aceptar TODOS los .json, clasificar por contenido (duck typing)
+        val entityFiles = entityDir.listFiles()?.filter { it.name.endsWith(".json", true) } ?: emptyList()
 
         entityFiles.forEach { entityFile ->
             try {
                 val json = JSONObject(entityFile.readText(Charsets.UTF_8))
-                val clientEntity = json.optJSONObject("minecraft:client_entity") ?: json
+                // ⭐ DUCK TYPING: Solo procesar archivos con "minecraft:client_entity"
+                if (!json.has("minecraft:client_entity")) return@forEach
+                val clientEntity = json.optJSONObject("minecraft:client_entity") ?: return@forEach
                 val desc = clientEntity.optJSONObject("description") ?: clientEntity
 
                 // 1. Extraer referencias de Geometría

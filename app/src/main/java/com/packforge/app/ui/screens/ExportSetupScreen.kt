@@ -114,8 +114,6 @@ import com.packforge.app.domain.model.Conflict
 import com.packforge.app.domain.model.ConflictSeverity
 import com.packforge.app.domain.model.ExportState
 import com.packforge.app.domain.model.ModpackMetadata
-import androidx.navigation.compose.rememberNavController
-import com.packforge.app.ui.navigation.Screen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -132,6 +130,8 @@ fun ExportSetupScreen(
     onMetadataChange: (ModpackMetadata) -> Unit,
     onExport: (outputUri: Uri?, importToMinecraft: Boolean) -> Unit,
     onResetExport: () -> Unit,
+    /** Navegación real hacia la pestaña Importar (la provee MainActivity). */
+    onNavigateToImport: () -> Unit,
     onConnectMinecraft: (Uri) -> Unit,
     onDisconnectMinecraft: () -> Unit
 ) {
@@ -187,7 +187,9 @@ fun ExportSetupScreen(
 
     // ── PANTALLA DE ÉXITO ────────────────────────────────────
     if (exportState is ExportState.Success) {
-        val navController = rememberNavController()
+        // NO crear aquí un rememberNavController(): sería un NavController nuevo,
+        // desconectado del NavHost de MainActivity, y navigate() no haría nada
+        // (el botón "Volver al editor" quedaba muerto). Usamos el callback real.
         ExportSuccessScreen(
             result = exportState,
             isMinecraftInstalled = isMinecraftInstalled,
@@ -195,11 +197,7 @@ fun ExportSetupScreen(
             validationResult = mergeResult?.validationResult,
             onReset = {
                 onResetExport()
-                navController.navigate(Screen.Import.route) {
-                    popUpTo(Screen.Export.route) { saveState = true }
-                    launchSingleTop = true
-                    restoreState = true
-                }
+                onNavigateToImport()
             }
         )
         return

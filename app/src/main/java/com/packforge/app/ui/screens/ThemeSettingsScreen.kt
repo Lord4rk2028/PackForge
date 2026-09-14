@@ -14,7 +14,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -24,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
@@ -38,7 +42,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -57,14 +60,16 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import kotlinx.coroutines.launch
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.ClipEntry
+import android.content.ClipData
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.packforge.app.ui.components.PackForgeTopBar
 import com.packforge.app.ui.components.bounceClick
 import com.packforge.app.ui.viewmodel.ThemeViewModel
 
@@ -75,6 +80,7 @@ fun ThemeSettingsScreen(
 ) {
     val prefs by viewModel.preferences.collectAsStateWithLifecycle()
     var hexInput by remember(prefs.accentHex) { mutableStateOf(prefs.accentHex) }
+    val scope = rememberCoroutineScope()
 
     fun updateHex(newHex: String) {
         val sanitized = if (newHex.startsWith("#")) newHex else "#$newHex"
@@ -84,15 +90,16 @@ fun ThemeSettingsScreen(
         hexInput = newHex
     }
 
-    Scaffold(
-        topBar = { PackForgeTopBar(title = "Ajustes de Tema", onBackClick = onBack) }
-    ) { padding ->
+    val density = LocalDensity.current
+    var topBarHeightDp by remember { mutableStateOf(72.dp) }
+
+    Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 12.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(rememberScrollState())
+                .padding(top = topBarHeightDp), // Espacio medido dinámicamente para la barra flotante
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             // ⭐ VISTA PREVIA EN VIVO
@@ -198,7 +205,7 @@ fun ThemeSettingsScreen(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
 
                     // ⭐ CÓDIGO HEX COMPACTO CON COPIAR / PEGAR
-                    val clipboardManager = LocalClipboardManager.current
+                    val clipboard = LocalClipboard.current
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -224,7 +231,10 @@ fun ThemeSettingsScreen(
 
                         IconButton(
                             onClick = {
-                                clipboardManager.setText(AnnotatedString(prefs.accentHex))
+                                scope.launch {
+                                    val clipData = ClipData.newPlainText("HEX", prefs.accentHex)
+                                    clipboard.setClipEntry(ClipEntry(clipData))
+                                }
                             },
                             modifier = Modifier.size(40.dp)
                         ) {
@@ -238,8 +248,11 @@ fun ThemeSettingsScreen(
 
                         IconButton(
                             onClick = {
-                                val clip = clipboardManager.getText()?.text
-                                if (!clip.isNullOrBlank()) updateHex(clip.trim())
+                                scope.launch {
+                                    val entry = clipboard.getClipEntry()
+                                    val clip = entry?.clipData?.getItemAt(0)?.text?.toString()
+                                    if (!clip.isNullOrBlank()) updateHex(clip.trim())
+                                }
                             },
                             modifier = Modifier.size(40.dp)
                         ) {
@@ -377,6 +390,39 @@ fun ThemeSettingsScreen(
             }
 
             Spacer(modifier = Modifier.height(100.dp))
+        }
+        
+        // Barra flotante superior con efecto de vidrio
+        Surface(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .onGloballyPositioned { coordinates ->
+                    topBarHeightDp = with(density) { coordinates.size.height.toDp() }
+                },
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+            shadowElevation = 2.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Volver"
+                    )
+                }
+                Text(
+                    text = "Ajustes de Tema",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
     }
 }

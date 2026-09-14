@@ -24,6 +24,16 @@ local.properties
 # ─── Herramientas Locales / Editores ───
 .vscode/
 .kilo/
+.aider-desk/
+CascadeProjects/
+.devin/
+.artifacts/
+
+# ─── Salidas de build / depuración locales (NO versionar) ───
+build_output.txt
+build_result.txt
+compile.log
+write_gradle.py
 
 # ─── Seguridad (¡CRÍTICO!) ───
 *.jks

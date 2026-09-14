@@ -274,18 +274,22 @@ fun AddonPairDialog(
     onRemoveAddon: (String) -> Unit
 ) {
     val labelColor = folderLabelColor()
+    // Fondo del dialogo: en modo oscuro/AMOLED usamos una versión más clara
+    val isDark = isSystemInDarkTheme()
+    val dialogSurfaceColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(
+        alpha = if (isDark) 0.95f else 1f
+    )
 
-    // Fondo oscurecido que resalta la miniinterfaz (el blur sobre el fondo
-    // real se aplica en el contenedor de la pantalla).
+    // Fondo oscurecido que resalta la miniinterfaz
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.55f)),
+            .background(Color.Black.copy(alpha = 0.6f)),
         contentAlignment = Alignment.Center
     ) {
         Surface(
             shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            color = dialogSurfaceColor,
             shadowElevation = 20.dp,
             modifier = Modifier
                 .fillMaxWidth()
@@ -314,11 +318,18 @@ fun AddonPairDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    IconButton(onClick = onClose) {
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Cerrar",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }

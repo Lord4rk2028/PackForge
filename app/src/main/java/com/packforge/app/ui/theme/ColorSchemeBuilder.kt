@@ -66,12 +66,12 @@ object ColorSchemeBuilder {
         val inversePrimary = hslToColor(h, s, if (dark) 0.85f else 0.15f)
         val surfaceTint = primary
 
-        val surfaceContainerLowest = hslToColor(h, neutralS, if (dark) 0.02f else 0.98f)
-        val surfaceContainerLow = hslToColor(h, neutralS, if (dark) 0.05f else 0.96f)
-        val surfaceContainer = hslToColor(h, neutralS, if (dark) 0.08f else 0.93f)
-        val surfaceContainerHigh = hslToColor(h, neutralS, if (dark) 0.11f else 0.88f)
-        val surfaceContainerHighest = hslToColor(h, neutralS, if (dark) 0.14f else 0.82f)
-        val surfaceBright = hslToColor(h, neutralS, if (dark) 0.12f else 1.0f)
+        val surfaceContainerLowest = hslToColor(h, neutralS, if (dark) 0.03f else 0.98f)
+        val surfaceContainerLow = hslToColor(h, neutralS, if (dark) 0.07f else 0.96f)
+        val surfaceContainer = hslToColor(h, neutralS, if (dark) 0.11f else 0.93f)
+        val surfaceContainerHigh = hslToColor(h, neutralS, if (dark) 0.16f else 0.88f)
+        val surfaceContainerHighest = hslToColor(h, neutralS, if (dark) 0.21f else 0.82f)
+        val surfaceBright = hslToColor(h, neutralS, if (dark) 0.20f else 1.0f)
         val surfaceDim = hslToColor(h, neutralS, if (dark) 0.0f else 0.92f)
 
         val primaryFixed = primaryContainer
@@ -145,14 +145,14 @@ object ColorSchemeBuilder {
                 background = Color(0xFF000000),
                 surface = Color(0xFF000000),
                 surfaceContainerLowest = Color(0xFF000000),
-                surfaceContainerLow = Color(0xFF020202),
-                surfaceContainer = Color(0xFF060606),
-                surfaceContainerHigh = Color(0xFF0C0C0C),
-                surfaceContainerHighest = Color(0xFF111111),
-                surfaceVariant = Color(0xFF141414),
-                onSurfaceVariant = Color(0xFFAAAAAA),
+                surfaceContainerLow = Color(0xFF0A0A0A),
+                surfaceContainer = Color(0xFF111111),
+                surfaceContainerHigh = Color(0xFF1B1B1B),
+                surfaceContainerHighest = Color(0xFF242424),
+                surfaceVariant = Color(0xFF1A1A1A),
+                onSurfaceVariant = Color(0xFFB0B0B0),
                 inverseSurface = Color(0xFFE2E2E2),
-                surfaceBright = Color(0xFF000000),
+                surfaceBright = Color(0xFF1E1E1E),
                 surfaceDim = Color(0xFF000000)
             )
         } else base

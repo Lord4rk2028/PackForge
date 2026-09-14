@@ -111,7 +111,9 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
      * from the DeepMerger to the registry.
      */
     fun updateMergeConflicts() {
-        // Combinar conflictos del DeepMerger y del Registro central
+        // Combinar conflictos del DeepMerger y del Registro central.
+        // mergeConflicts es una ConcurrentLinkedQueue: iterarla es seguro aunque
+        // las coroutines de fusión sigan escribiendo en paralelo.
         val fromMerger = com.packforge.app.domain.engine.JsonDeepMerger.mergeConflicts
         fromMerger.forEach { mergerConflict ->
             // Si el conflicto del merger no está en el registro, añadirlo
@@ -151,6 +153,22 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setActiveWebSource(source: String?) {
         _activeWebSource.value = source
+    }
+
+    /**
+     * Abre el WebView interno en la URL de ORIGEN de un addon (página desde
+     * donde se descargó). Cierra la sub-pantalla de biblioteca si estaba abierta
+     * y carga la página del addon para que el usuario pueda ver la versión
+     * actual y re-descargar este addon individualmente si hay actualización.
+     */
+    fun openAddonSource(sourceSite: String, sourceUrl: String) {
+        if (!sourceUrl.isBlank()) {
+            _lastWebUrls.value = _lastWebUrls.value.toMutableMap().apply {
+                put(sourceSite, sourceUrl)
+            }
+        }
+        setShowMyModpacks(false)
+        _activeWebSource.value = sourceSite
     }
 
     // ─── SUB-PANTALLA MY MODPACKS ─────────────────────────
@@ -196,7 +214,12 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
      */
     fun getPersistentWebView(source: String, context: Context): WebView {
         return _persistentWebViews.getOrPut(source) {
-            WebView(context).apply {
+            // applicationContext (NO el context de la Activity): un WebView retiene
+            // una referencia fuerte al Context con el que se construye. El ViewModel
+            // sobrevive a los cambios de configuración, así que usar el Context de la
+            // Activity mantendría viva la Activity destruida -> fuga de memoria.
+            val appContext = context.applicationContext
+            WebView(appContext).apply {
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
@@ -207,10 +230,25 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    /** Elimina la WebView de una fuente (al cerrar el navegador, por ejemplo). */
+    /**
+     * Elimina la WebView de una fuente (al cerrar el navegador, por ejemplo).
+     * Hay que destruirla de verdad: stopLoading() solo detiene la carga, pero la
+     * vista nativa y todo su estado (historial, caché, DOM) siguen en memoria.
+     */
     fun clearPersistentWebView(source: String) {
-        _persistentWebViews.remove(source)?.let {
-            try { it.stopLoading() } catch (e: Exception) {}
+        _persistentWebViews.remove(source)?.let { destroyWebView(it) }
+    }
+
+    /** Destruye con seguridad una WebView, desligándola de su parent antes. */
+    private fun destroyWebView(webView: WebView) {
+        try {
+            (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+            webView.stopLoading()
+            webView.clearHistory()
+            webView.removeAllViews()
+            webView.destroy()
+        } catch (e: Exception) {
+            PackForgeLog.e("PackForge_WebView", "Error destruyendo WebView: ${e.message}")
         }
     }
 
@@ -233,7 +271,15 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun clearWebError() { _webImportError.value = null }
 
-    fun importFromWebUrl(context: Context, downloadUrl: String) {
+    /**
+     * Importa un addon descargado desde el WebView interno.
+     *
+     * @param sourcePageUrl URL de la PÁGINA del addon (no el link directo de
+     *   descarga, que suele expirar). Se guarda en el Addon como sourceUrl para
+     *   poder "abrir el origen" desde la biblioteca de modpacks.
+     * @param sourceSite "MCPEDL" | "CurseForge" | "ModBay"
+     */
+    fun importFromWebUrl(context: Context, downloadUrl: String, sourcePageUrl: String? = null, sourceSite: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             _webImportError.value = null
             // ⭐ Marcar importación activa YA: así la barra de progreso de la
@@ -248,7 +294,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             modrinthRepository.downloadToCache(context, downloadUrl, fileName) { p ->
                 _importProgress.value = OperationProgress.Loading("Descargando...", p)
             }.onSuccess { uri ->
-                importAddons(context, listOf(uri), fromWeb = true)
+                importAddons(context, listOf(uri), fromWeb = true, sourceUrl = sourcePageUrl, sourceSite = sourceSite)
             }.onFailure {
                 _webImportError.value = "Error al descargar: ${it.message}"
                 _importProgress.value = OperationProgress.Idle
@@ -257,31 +303,50 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun importAddons(context: Context, uris: List<Uri>, fromWeb: Boolean = false) {
+    fun importAddons(
+        context: Context,
+        uris: List<Uri>,
+        fromWeb: Boolean = false,
+        sourceUrl: String? = null,
+        sourceSite: String? = null
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
-            _isImporting.value = true
-            val newAddons = mutableListOf<Addon>()
-            uris.forEachIndexed { index, uri ->
-                _importProgress.value = OperationProgress.Loading("Analizando (${index+1}/${uris.size})...", index.toFloat()/uris.size)
-                AddonParser.parseFromUri(context, uri)?.let { addon ->
-                    AddonUriCache.saveUri(addon.id, uri)
-                    newAddons.add(addon)
+            importMutex.lock()
+            try {
+                _isImporting.value = true
+                val newAddons = mutableListOf<Addon>()
+                uris.forEachIndexed { index, uri ->
+                    _importProgress.value = OperationProgress.Loading("Analizando (${index+1}/${uris.size})...", index.toFloat()/uris.size)
+                    AddonParser.parseFromUri(context, uri)?.let { addon ->
+                        // Propagar origen web (página y sitio) cuando viene del WebView interno
+                        val withSource = if (sourceUrl != null) {
+                            addon.copy(sourceUrl = sourceUrl, sourceSite = sourceSite)
+                        } else {
+                            addon
+                        }
+                        AddonUriCache.saveUri(withSource.id, uri)
+                        newAddons.add(withSource)
+                    }
                 }
-            }
-            if (newAddons.isNotEmpty()) {
-                val current = _addons.value.toMutableList()
-                current.addAll(newAddons)
-                _addons.value = current.mapIndexed { i, a -> a.copy(priority = i) }
-                recalculateConflicts()
-                _events.emit(PackForgeEvent.Vibration)
-            }
-            _isImporting.value = false
-            _importProgress.value = OperationProgress.Idle
+                if (newAddons.isNotEmpty()) {
+                    val current = _addons.value.toMutableList()
+                    current.addAll(newAddons)
+                    _addons.value = current.mapIndexed { i, a -> a.copy(priority = i) }
+                    recalculateConflicts()
+                    _events.emit(PackForgeEvent.Vibration)
+                }
+                _isImporting.value = false
+                _importProgress.value = OperationProgress.Idle
 
-            if (fromWeb && newAddons.isNotEmpty()) {
-                // Marcamos el éxito para que la WebView muestre el check verde
-                // "Addon importado" durante unos segundos.
-                _webImportSuccess.value = System.currentTimeMillis()
+                if (fromWeb && newAddons.isNotEmpty()) {
+                    // Marcamos el éxito para que la WebView muestre el check verde
+                    // "Addon importado" durante unos segundos.
+                    _webImportSuccess.value = System.currentTimeMillis()
+                }
+            } finally {
+                importMutex.unlock()
+                _isImporting.value = false
+                _importProgress.value = OperationProgress.Idle
             }
         }
     }
@@ -576,7 +641,102 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun resetExportState() { _exportState.value = ExportState.Idle }
 
-    // ── RE-FUSIÓN DE MODPACKS GUARDADOS (anti-obsolescencia) ────────────────
+    private val _pendingShareUris = MutableStateFlow<List<Uri>>(emptyList())
+    val pendingShareUris: StateFlow<List<Uri>> = _pendingShareUris.asStateFlow()
+
+    // Mutex para evitar que dos importAddons concurrentes se pisen entre sí
+    // (race condition: dos shares rápidos → dos coroutines IO →第二个 sobreescribe el primero).
+    private val importMutex = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Called by composable when share intent URIs are ready.
+     * Adds them to the pending queue. No re-validation needed —
+     * handleShareIntent already validated extensions + zip contents.
+     */
+    fun addShareUris(uris: List<Uri>) {
+        if (uris.isNotEmpty()) {
+            _pendingShareUris.update { it + uris }
+        }
+    }
+
+    fun clearPendingShareUris() { _pendingShareUris.value = emptyList() }
+
+    /**
+     * Detecta si un URI es un modpack creado con PackForge, verificando la
+     * existencia del archivo "PackForge.ID" en la raíz del paquete.
+     */
+    suspend fun isPackForgeModpack(uri: Uri): Boolean =
+        detectPackForgeId(getApplication(), uri) != null
+
+    /**
+     * Lee la metadata "PackForge.ID" de un archivo y devuelve el id del modpack,
+     * o null si no es un modpack de PackForge.
+     */
+    private suspend fun detectPackForgeId(context: Context, uri: Uri): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    ZipInputStream(BufferedInputStream(input)).use { zis ->
+                        var entry = zis.nextEntry
+                        while (entry != null) {
+                            val entryName = entry.name.trimStart('/', '\\')
+                            if (entryName.equals("PackForge.ID", ignoreCase = true)) {
+                                val content = zis.bufferedReader(Charsets.UTF_8).readText()
+                                return@withContext try {
+                                    JSONObject(content).optString("id").ifBlank { null }
+                                } catch (_: Exception) { null }
+                            }
+                            zis.closeEntry()
+                            entry = zis.nextEntry
+                        }
+                    }
+                }
+                null
+            } catch (_: Exception) { null }
+        }
+
+    /**
+     * Importa modpacks de PackForge (compartidos desde apps de terceros) a la
+     * biblioteca. Detecta duplicados por PackForge.ID: si ya están almacenados
+     * emite un aviso; los nuevos se guardan. Los URIs que NO son modpacks se
+     * importan como addons al taller.
+     */
+    fun importSharedModpacksToLibrary(modpackUris: List<Uri>, nonModpackUris: List<Uri>) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val db = database ?: PackForgeDatabase.getInstance(app)
+            var addedCount = 0
+            var duplicateCount = 0
+
+            modpackUris.forEach { uri ->
+                val id = detectPackForgeId(app, uri)
+                if (id != null) {
+                    val existing = db.savedModpackDao().getById(id)
+                    if (existing != null) {
+                        duplicateCount++
+                    } else {
+                        importModpackFromFile(uri)
+                        addedCount++
+                    }
+                }
+            }
+
+            if (nonModpackUris.isNotEmpty()) {
+                importAddons(app, nonModpackUris)
+            }
+
+            when {
+                duplicateCount > 0 && addedCount == 0 -> _events.emit(
+                    PackForgeEvent.ShowSnackbar("El modpack ya se encuentra almacenado en la biblioteca")
+                )
+                duplicateCount > 0 -> _events.emit(
+                    PackForgeEvent.ShowSnackbar(
+                        "$duplicateCount modpack(s) ya estaban almacenados; el resto se importó correctamente"
+                    )
+                )
+            }
+        }
+    }
 
     data class RegenStatus(val modpackId: String, val phase: String, val done: Boolean, val ok: Boolean)
 
@@ -782,7 +942,11 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 addonsJson = Gson().toJson(active.map {
                     it.copy(rawManifest = "", entityIdentifiers = emptyList(),
                         itemIdentifiers = emptyList(), recipeIdentifiers = emptyList())
-                })
+                }),
+                // Persistir resoluciones de conflictos y estrategia para que
+                // se mantengan al editar/regenerar el modpack.
+                resolutionsJson = Gson().toJson(_resolutions.value),
+                conflictStrategy = _conflictStrategy.value.name
             )
             db.savedModpackDao().insert(saved)
             // Si era nuevo, ahora ya tenemos su ID
@@ -901,6 +1065,21 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                     tags = m.tags.split(",").filter { it.isNotBlank() }, 
                     coverUriString = persistentCover
                 )
+
+                // Restaurar resoluciones de conflictos y estrategia guardadas.
+                // Si el campo está vacío (modpacks antiguos), se queda el mapa vacío.
+                if (m.resolutionsJson.isNotBlank()) {
+                    try {
+                        val type = object : com.google.gson.reflect.TypeToken<Map<String, String>>() {}.type
+                        _resolutions.value = Gson().fromJson(m.resolutionsJson, type) ?: emptyMap()
+                    } catch (_: Exception) { _resolutions.value = emptyMap() }
+                } else {
+                    _resolutions.value = emptyMap()
+                }
+                // Restaurar estrategia de conflicto
+                try {
+                    _conflictStrategy.value = ConflictStrategy.valueOf(m.conflictStrategy)
+                } catch (_: Exception) { /* mantener KEEP_FIRST */ }
                 
                 recalculateConflicts()
                 _events.emit(PackForgeEvent.ShowSnackbar("Modpack '${m.name}' cargado para editar"))
@@ -948,5 +1127,9 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
     override fun onCleared() {
         super.onCleared()
         AddonUriCache.clear()
+        // Destruir TODAS las WebViews persistentes: si no, cada fuente visitada
+        // (MCPEDL, CurseForge, ModBay) deja su vista nativa viva para siempre.
+        _persistentWebViews.values.toList().forEach { destroyWebView(it) }
+        _persistentWebViews.clear()
     }
 }
