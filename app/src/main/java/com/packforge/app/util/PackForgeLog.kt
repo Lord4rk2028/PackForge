@@ -1,10 +1,18 @@
 package com.packforge.app.util
 
 import android.util.Log
+import com.packforge.app.BuildConfig
 
 object PackForgeLog {
 
-    private const val ENABLE_DEBUG = true // Cambiar a false en release
+    /**
+     * Activado únicamente en builds de depuración.
+     *
+     * Antes era un flag fijo (`true`) que se olvidaba cambiar antes de publicar:
+     * en release se seguían emitiendo logs. `BuildConfig.DEBUG` lo resuelve solo
+     * (false en release, true en debug) sin intervención manual.
+     */
+    private val ENABLE_DEBUG = BuildConfig.DEBUG
 
     fun d(tag: String, message: String) {
         if (ENABLE_DEBUG) {

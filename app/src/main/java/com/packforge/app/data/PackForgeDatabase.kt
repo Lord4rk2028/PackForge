@@ -1,6 +1,7 @@
 package com.packforge.app.data
 
 import android.content.Context
+import androidx.annotation.VisibleForTesting
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -11,7 +12,7 @@ import com.packforge.app.domain.model.SavedModpack
 @Database(
     entities = [SavedModpack::class],
     version = 3,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class PackForgeDatabase : RoomDatabase() {
 
@@ -26,12 +27,26 @@ abstract class PackForgeDatabase : RoomDatabase() {
          * Estas columnas son opcionales (default vacío/KEEP_FIRST) para compatibilidad
          * con modpacks guardados antes de esta migración.
          */
-        private val MIGRATION_2_3 = object : Migration(2, 3) {
+        @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+        val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE saved_modpacks ADD COLUMN resolutionsJson TEXT NOT NULL DEFAULT ''")
-                db.execSQL("ALTER TABLE saved_modpacks ADD COLUMN conflictStrategy TEXT NOT NULL DEFAULT 'KEEP_FIRST'")
+                MIGRATION_2_3_STATEMENTS.forEach { db.execSQL(it) }
             }
         }
+
+        /**
+         * Sentencias exactas de la migración 2→3, expuestas para test unitario
+         * ([DatabaseMigrationTest]) sin necesidad de instrumentación.
+         */
+        @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+        val MIGRATION_2_3_STATEMENTS = listOf(
+            "ALTER TABLE saved_modpacks ADD COLUMN resolutionsJson TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE saved_modpacks ADD COLUMN conflictStrategy TEXT NOT NULL DEFAULT 'KEEP_FIRST'"
+        )
+
+        /** Alias legible para el test (evita acceder al companion con backticks). */
+        @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+        fun migration23Statements(): List<String> = MIGRATION_2_3_STATEMENTS
 
         fun getInstance(context: Context): PackForgeDatabase {
             return INSTANCE ?: synchronized(this) {

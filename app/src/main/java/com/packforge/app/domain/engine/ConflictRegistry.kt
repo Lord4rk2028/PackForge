@@ -70,6 +70,19 @@ object ConflictRegistry {
         }
     }
 
+    /**
+     * Elimina todos los conflictos donde el addon dado participa como
+     * sourceAddon o targetAddon (por ID o nombre).
+     */
+    fun removeConflictsFor(addonId: String) {
+        _conflicts.update { list ->
+            list.filter { conflict ->
+                conflict.sourceAddon != addonId && conflict.targetAddon != addonId
+            }
+        }
+        Log.d("PackForge_Conflict", "🗑 Conflictos del addon $addonId eliminados")
+    }
+
     /** Vacía el registro (al iniciar una nueva fusión/exportación o limpiar). */
     fun clear() {
         _conflicts.value = emptyList()

@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -446,75 +448,93 @@ fun PackForgeApp(
                         pendingShareModpacks = null
                         pendingShareAddons = emptyList()
                     },
-                    title = { Text("Modpack de PackForge detectado", fontWeight = FontWeight.Bold) },
+                    title = {
+                        Text(
+                            "Modpack de PackForge detectado",
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    },
                     text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("Este archivo es un modpack creado con PackForge.")
-                            Text("¿Cómo quieres importarlo?")
-                            Column(
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(start = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("•", fontWeight = FontWeight.Bold)
-                                    Text("Como Addon: se añade al taller de fusiones.")
-                                }
-                                Row(
-                                    modifier = Modifier.padding(start = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("•", fontWeight = FontWeight.Bold)
-                                    Text("A Biblioteca: se guarda como modpack (si ya existe, se avisará).")
-                                }
-                            }
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "Este archivo es un modpack creado con PackForge.",
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "¿Dónde quieres guardarlo?",
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         }
                     },
                     confirmButton = {
-                        Row(
+                        Column(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            TextButton(onClick = {
-                                packForgeViewModel.importAddons(appContext, modpacks + pendingShareAddons)
-                                pendingShareModpacks = null
-                                pendingShareAddons = emptyList()
-                                if (navController.currentDestination?.route != com.packforge.app.ui.navigation.Screen.Import.route) {
-                                    navController.navigate(com.packforge.app.ui.navigation.Screen.Import.route) {
-                                        popUpTo(navController.graph.startDestinationId) { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
+                            Button(
+                                onClick = {
+                                    val hadAddons = pendingShareAddons.isNotEmpty()
+                                    packForgeViewModel.importSharedModpacksToLibrary(modpacks, pendingShareAddons)
+                                    pendingShareModpacks = null
+                                    pendingShareAddons = emptyList()
+                                    val target = if (hadAddons) {
+                                        com.packforge.app.ui.navigation.Screen.Import.route
+                                    } else {
+                                        com.packforge.app.ui.navigation.Screen.Studio.route
                                     }
-                                }
-                            }) { Text("Addon", fontWeight = FontWeight.Medium) }
-                            Button(onClick = {
-                                val hadAddons = pendingShareAddons.isNotEmpty()
-                                packForgeViewModel.importSharedModpacksToLibrary(modpacks, pendingShareAddons)
-                                pendingShareModpacks = null
-                                pendingShareAddons = emptyList()
-                                val target = if (hadAddons) {
-                                    com.packforge.app.ui.navigation.Screen.Import.route
-                                } else {
-                                    com.packforge.app.ui.navigation.Screen.Studio.route
-                                }
-                                if (navController.currentDestination?.route != target) {
-                                    navController.navigate(target) {
-                                        popUpTo(navController.graph.startDestinationId) { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
+                                    if (navController.currentDestination?.route != target) {
+                                        navController.navigate(target) {
+                                            popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
                                     }
-                                }
-                            }) { Text("Biblioteca", fontWeight = FontWeight.Medium) }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Guardar en Biblioteca", fontWeight = FontWeight.SemiBold)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    packForgeViewModel.importAddons(appContext, modpacks + pendingShareAddons)
+                                    pendingShareModpacks = null
+                                    pendingShareAddons = emptyList()
+                                    if (navController.currentDestination?.route != com.packforge.app.ui.navigation.Screen.Import.route) {
+                                        navController.navigate(com.packforge.app.ui.navigation.Screen.Import.route) {
+                                            popUpTo(navController.graph.startDestinationId) { saveState = true }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Importar como Addon", fontWeight = FontWeight.Medium)
+                            }
+                            TextButton(
+                                onClick = {
+                                    pendingShareModpacks = null
+                                    pendingShareAddons = emptyList()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     },
-                    dismissButton = {
-                        TextButton(onClick = {
-                            pendingShareModpacks = null
-                            pendingShareAddons = emptyList()
-                        }) { Text("Cancelar") }
-                    }
+                    dismissButton = {}
                 )
             }
         }

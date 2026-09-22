@@ -372,15 +372,15 @@ fun ImportDropZone(
             } else {
                 Box(
                     modifier = Modifier
-                        .size(68.dp)
+                        .size(56.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Outlined.FolderOpen,
+                        imageVector = Icons.Default.Extension,
                         contentDescription = null,
-                        modifier = Modifier.size(34.dp),
+                        modifier = Modifier.size(28.dp),
                         tint = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
@@ -448,6 +448,47 @@ private fun FormatChip(format: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
         )
+    }
+}
+
+/**
+ * Estrella de 4 puntas que levita suavemente (sustituye el icono de pieza/bloque
+ * en la zona de importación). Sin círculo, solo la figura flotante.
+ */
+@Composable
+private fun LevitatingFourPointStar(
+    color: Color,
+    size: androidx.compose.ui.unit.Dp
+) {
+    val t = rememberInfiniteTransition(label = "levitatingStar")
+    val offsetY by t.animateFloat(
+        initialValue = -6f, targetValue = 6f,
+        animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "levitateOffset"
+    )
+    val scale by t.animateFloat(
+        initialValue = 0.97f, targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "levitateScale"
+    )
+    Box(
+        modifier = Modifier.offset(y = offsetY.dp).graphicsLayer { scaleX = scale; scaleY = scale },
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.size(size)) {
+            val canvasSize = this@Canvas.size
+            val cx = canvasSize.width / 2f; val cy = canvasSize.height / 2f
+            val r = canvasSize.minDimension / 2f * 0.92f; val mid = r * 0.30f
+            val path = androidx.compose.ui.graphics.Path().apply {
+                moveTo(cx, cy - r)
+                cubicTo(cx + mid, cy - mid, cx + mid, cy - mid, cx + r, cy)
+                cubicTo(cx + mid, cy + mid, cx + mid, cy + mid, cx, cy + r)
+                cubicTo(cx - mid, cy + mid, cx - mid, cy + mid, cx - r, cy)
+                cubicTo(cx - mid, cy - mid, cx - mid, cy - mid, cx, cy - r)
+                close()
+            }
+            drawPath(path, color)
+        }
     }
 }
 
@@ -1019,8 +1060,12 @@ private fun AddonCardIcon(
     type: AddonType,
     enabled: Boolean
 ) {
-    val hasValidIcon = iconPath != null &&
-        runCatching { java.io.File(iconPath).exists() }.getOrDefault(false)
+    // ⚠️ ANR: File.exists() bloqueante en composición. Use remember para evitar
+    // re-ejecutarlo en cada recomposición.
+    val hasValidIcon = remember(iconPath) {
+        iconPath != null &&
+            runCatching { java.io.File(iconPath).exists() }.getOrDefault(false)
+    }
 
     Box(
         modifier = Modifier
@@ -1059,19 +1104,6 @@ private fun AddonCardIcon(
 
 @Composable
 fun EmptyState() {
-    var floatTarget by remember { mutableStateOf(-8f) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(1500)
-            floatTarget = if (floatTarget < 0f) 8f else -8f
-        }
-    }
-    val float by animateFloatAsState(
-        targetValue = floatTarget,
-        animationSpec = tween(1500),
-        label = "float"
-    )
-
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
@@ -1094,18 +1126,11 @@ fun EmptyState() {
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Box(
-                modifier = Modifier
-                    .size(80.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
-                    .offset(y = float.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.Extension,
-                    contentDescription = null,
-                    modifier = Modifier.size(40.dp),
-                    tint = MaterialTheme.colorScheme.primary
+                LevitatingFourPointStar(
+                    color = MaterialTheme.colorScheme.primary,
+                    size = 52.dp
                 )
             }
 

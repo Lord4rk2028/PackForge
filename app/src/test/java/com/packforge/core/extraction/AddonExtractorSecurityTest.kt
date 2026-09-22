@@ -116,15 +116,51 @@ class AddonExtractorSecurityTest {
     fun tooManyEntries_isRejected() {
         val root = tempDir("entries")
         val zip = File(root, "big.zip")
-        val entries = (0 until 1_000_001).map { ZipEntrySpec("f$it.txt", ByteArray(0)) }
+        // El límite es inyectable: se valida el rechazo con un ZIP pequeño y rápido.
+        // (Antes este test generaba 1.000.001 entradas y bloqueaba la suite varios minutos.)
+        val entries = (0 until 60).map { ZipEntrySpec("f$it.txt", ByteArray(0)) }
         createZip(zip, entries)
         val dest = File(root, "out")
 
         val thrown = runCatching {
-            AddonExtractor.extractAddon(zip.absolutePath, dest.absolutePath)
+            AddonExtractor.extractAddon(zip.absolutePath, dest.absolutePath, maxEntries = 50)
         }.exceptionOrNull()
 
         assertTrue("Debe lanzar excepción por nº de entradas", thrown is IllegalStateException)
+        assertFalse("El destino parcial debe limpiarse", dest.exists())
+    }
+
+    @Test
+    fun tooLargeSingleEntry_isRejected() {
+        val root = tempDir("entrysize")
+        val zip = File(root, "fat.zip")
+        createZip(zip, listOf(ZipEntrySpec("blob.bin", ByteArray(4096))))
+        val dest = File(root, "out")
+
+        val thrown = runCatching {
+            AddonExtractor.extractAddon(zip.absolutePath, dest.absolutePath, maxEntrySize = 1024)
+        }.exceptionOrNull()
+
+        assertTrue("Debe lanzar excepción por tamaño de archivo", thrown is IllegalStateException)
+        assertFalse("El destino parcial debe limpiarse", dest.exists())
+    }
+
+    @Test
+    fun tooLargeTotalSize_isRejected() {
+        val root = tempDir("totalsize")
+        val zip = File(root, "total.zip")
+        createZip(
+            zip,
+            (0 until 4).map { ZipEntrySpec("chunk$it.bin", ByteArray(2048)) }
+        )
+        val dest = File(root, "out")
+
+        val thrown = runCatching {
+            AddonExtractor.extractAddon(zip.absolutePath, dest.absolutePath, maxTotalSize = 4096)
+        }.exceptionOrNull()
+
+        assertTrue("Debe lanzar excepción por tamaño total", thrown is IllegalStateException)
+        assertFalse("El destino parcial debe limpiarse", dest.exists())
     }
 
     // ── REGRESIÓN: extracción normal ──────────────────────────────────

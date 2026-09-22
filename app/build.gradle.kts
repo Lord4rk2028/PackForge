@@ -12,8 +12,8 @@ android {
         applicationId = "com.packforge.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 191
+        versionName = "1.9.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -33,6 +33,8 @@ android {
     }
     buildFeatures {
         compose = true
+        // Necesario para PackForgeLog (usa BuildConfig.DEBUG en vez de un flag fijo)
+        buildConfig = true
     }
 
     testOptions {
@@ -44,7 +46,7 @@ android {
 }
 
 dependencies {
-    implementation("io.coil-kt:coil-compose:2.6.0")
+    implementation(libs.coil.compose)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -61,24 +63,13 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.material)
     
-    // Material 3 Expressive (requiere 1.4.0 o superior)
-    implementation("androidx.compose.material3:material3:1.4.0")
-    implementation("androidx.compose.material3:material3-window-size-class:1.4.0")
-    
-    // Coil para imágenes (logos y portadas)
-    implementation("io.coil-kt:coil-compose:2.6.0")
-    
     // DataStore para preferencias de tema
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
-    
-    // Asegurar BOM actualizado
-    implementation(platform("androidx.compose:compose-bom:2025.05.00"))
-    
+    implementation(libs.androidx.datastore.preferences)
+
     // Room dependencies with KSP
-    val room_version = "2.8.4"
-    implementation("androidx.room:room-runtime:$room_version")
-    implementation("androidx.room:room-ktx:$room_version")
-    ksp("androidx.room:room-compiler:$room_version")
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
     
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
@@ -86,7 +77,7 @@ dependencies {
     testImplementation(libs.junit)
     // En tests unitarios locales, org.json viene del mockable-android.jar (stubs vacíos);
     // se añade la implementación real para poder parsear JSON en los tests.
-    testImplementation("org.json:json:20240303")
+    testImplementation(libs.json)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
@@ -109,4 +100,11 @@ tasks.register("androidTestClasses") {
     group = "verification"
     description = "Compila las clases de tests instrumentados (alias de assembleAndroidTest)."
     dependsOn("assembleAndroidTest")
+}
+
+// Ubicación de los esquemas Room exportados (exportSchema = true en PackForgeDatabase).
+// Se versionan en git y permiten validar migraciones y auditar
+// cambios de esquema en cada PR que toque entidades.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }

@@ -13,6 +13,7 @@ import com.packforge.app.data.modrinth.ModrinthRepository
 import com.packforge.app.domain.engine.AddonParser
 import com.packforge.app.domain.engine.AddonUriCache
 import com.packforge.app.domain.engine.ConflictEngine
+import com.packforge.app.domain.engine.ConflictRegistry
 import com.packforge.app.domain.engine.ModpackExporter
 import com.packforge.app.domain.engine.PackForgeOrchestrator
 import com.packforge.app.service.MergeForegroundService
@@ -419,7 +420,12 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun removeAddon(id: String) {
         AddonUriCache.removeUri(id)
+        val affected = _conflicts.value.filter { it.affectedAddonIds.contains(id) }.map { it.id }
         _addons.value = _addons.value.filter { it.id != id }.mapIndexed { i, a -> a.copy(priority = i) }
+        if (affected.isNotEmpty()) {
+            _resolutions.value = _resolutions.value.toMutableMap().apply { affected.forEach { remove(it) } }
+        }
+        ConflictRegistry.removeConflictsFor(id)
         recalculateConflicts()
     }
 
@@ -872,26 +878,38 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 // 6. Guardar en la base de datos de Modpacks (SavedModpackDao)
-                val db = database ?: PackForgeDatabase.getInstance(app)
-                val saved = SavedModpack(
-                    id = modpackId,
-                    name = modpackName,
-                    author = author,
-                    version = version,
-                    mcVersion = mcVersion,
-                    description = description,
-                    addonNames = addonNamesJson,
-                    addonCount = addonCount,
-                    filePath = destMcaddon.absolutePath,
-                    fileName = destMcaddon.name,
-                    createdAt = System.currentTimeMillis(),
-                    coverUriString = coverPath,
-                    tags = "",
-                    addonsJson = "[]"
-                )
-                db.savedModpackDao().insert(saved)
+                PackForgeLog.d("PackForge_Debug", "Intentando guardar modpack: $modpackName (ID: $modpackId)")
+                try {
+                    val db = database ?: PackForgeDatabase.getInstance(app)
+                    // db nunca es null aquí porque getInstance siempre devuelve una instancia válida
+                    PackForgeLog.d("PackForge_Debug", "Instancia de BD obtenida correctamente")
+                    
+                    val saved = SavedModpack(
+                        id = modpackId,
+                        name = modpackName,
+                        author = author,
+                        version = version,
+                        mcVersion = mcVersion,
+                        description = description,
+                        addonNames = addonNamesJson,
+                        addonCount = addonCount,
+                        filePath = destMcaddon.absolutePath,
+                        fileName = destMcaddon.name,
+                        createdAt = System.currentTimeMillis(),
+                        coverUriString = coverPath,
+                        tags = "",
+                        addonsJson = "[]"
+                    )
+                    PackForgeLog.d("PackForge_Debug", "Ejecutando insert en DAO...")
+                    db.savedModpackDao().insert(saved)
+                    PackForgeLog.d("PackForge_Debug", "Insert completado exitosamente.")
 
-                _events.emit(PackForgeEvent.ShowSnackbar("Modpack '$modpackName' añadido a la biblioteca"))
+                    _events.emit(PackForgeEvent.ShowSnackbar("Modpack '$modpackName' añadido a la biblioteca"))
+                } catch (dbException: Exception) {
+                    PackForgeLog.e("PackForge_Debug", "ERROR CRÍTICO AL GUARDAR EN BD: ${dbException.message}", dbException)
+                    _events.emit(PackForgeEvent.ShowSnackbar("Error FATAL al guardar en BD: ${dbException.message}", true))
+                    throw dbException // Relanzar para que el catch externo también lo registre
+                }
                 _isImporting.value = false
                 _importProgress.value = OperationProgress.Idle
 
@@ -915,9 +933,10 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             // CRÍTICO: copiar SIEMPRE a almacenamiento interno. Los content:// URIs pierden el
             // permiso de lectura cuando la app se reinicia, así que guardamos una copia local
             // en filesDir/modpack_icons/{id}_cover.png y referenciamos esa ruta.
-            // Solo se guarda el path interno; si no se pudo persistir, se guarda sin portada
-            // (evita guardar un content:// roto que después se muestra en morado).
-            val persistentCoverPath = persistCoverToInternal(context, _metadata.value.coverUriString, modpackId)
+            // Si no se puso portada personalizada, usar la auto-seleccionada por el orquestador.
+            val coverToPersist = _metadata.value.coverUriString
+                ?: MergeSession.state.value.autoCoverPath
+            val persistentCoverPath = persistCoverToInternal(context, coverToPersist, modpackId)
             if (persistentCoverPath != null) {
                 PackForgeLog.d("PackForge", "Icono de portada persistido: $persistentCoverPath")
             }

@@ -2,16 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permisos para acceder a archivos -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.READ_MEDIA_FILES" />
-    
-    <!-- Para Android 13+ -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-
-    <!-- Para cargar imágenes web -->
+    <!--
+        Solo se declaran los permisos que la app usa de verdad:
+        - INTERNET: buscador Modrinth y portadas via Coil.
+        - FOREGROUND_SERVICE* + POST_NOTIFICATIONS: fusion en segundo plano
+          con notificacion de progreso (MergeForegroundService).
+        La importacion de archivos usa Storage Access Framework
+        (OpenDocument/GetContent/OpenDocumentTree) e intents SEND/VIEW,
+        que NO requieren READ_EXTERNAL_STORAGE ni READ_MEDIA_*.
+    -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Fusión en segundo plano: servicio en primer plano + notificación de progreso -->

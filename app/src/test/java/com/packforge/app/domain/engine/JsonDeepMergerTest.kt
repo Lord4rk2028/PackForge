@@ -131,6 +131,63 @@ class JsonDeepMergerTest {
     }
 
     @Test
+    fun testDeepMerge_RootMinecraftContainer_keepsBaseComponents() {
+        // Regresión: una clave raíz como "minecraft:item"/"minecraft:entity" NO debe
+        // tratarse como un objeto de componentes; si se trata así, el segundo addon
+        // sobrescribe "components" completo y el modpack pierde los componentes del primero.
+        val base = JSONObject().apply {
+            put("format_version", "1.20.0")
+            put("minecraft:item", JSONObject().apply {
+                put("description", JSONObject().apply { put("identifier", "addon_a:sword") })
+                put("components", JSONObject().apply {
+                    put("minecraft:max_stack_size", 1)
+                    put("minecraft:damage", 5)
+                })
+            })
+        }
+        val toMerge = JSONObject().apply {
+            put("minecraft:item", JSONObject().apply {
+                put("description", JSONObject().apply { put("identifier", "addon_a:sword") })
+                put("components", JSONObject().apply {
+                    put("minecraft:durability", JSONObject().apply { put("max_durability", 250) })
+                })
+            })
+        }
+
+        val result = JsonDeepMerger.deepMerge(base, toMerge)
+
+        val components = result.getJSONObject("minecraft:item").getJSONObject("components")
+        assertEquals("El componente del base no debe perderse", 1, components.getInt("minecraft:max_stack_size"))
+        assertEquals("El componente del base no debe perderse", 5, components.getInt("minecraft:damage"))
+        assertEquals(250, components.getJSONObject("minecraft:durability").getInt("max_durability"))
+    }
+
+    @Test
+    fun testDeepMerge_InsideComponents_minecraftKeysAreMergedSemantically() {
+        // Dentro de "components", las claves minecraft:* SÍ deben fusionarse propiedad a
+        // propiedad (no reemplazarse) usando BedrockComponentMerger.
+        val base = JSONObject().apply {
+            put("components", JSONObject().apply {
+                put("minecraft:health", JSONObject().apply { put("max", 20); put("value", 20) })
+            })
+        }
+        val toMerge = JSONObject().apply {
+            put("components", JSONObject().apply {
+                put("minecraft:health", JSONObject().apply { put("value", 10) })
+                put("minecraft:scale", 2.0)
+            })
+        }
+
+        val result = JsonDeepMerger.deepMerge(base, toMerge)
+        val components = result.getJSONObject("components")
+        val health = components.getJSONObject("minecraft:health")
+
+        assertEquals("Propiedad del base conservada", 20, health.getInt("max"))
+        assertEquals("Propiedad sobrescrita por el segundo addon", 10, health.getInt("value"))
+        assertTrue("Componente nuevo presente", components.has("minecraft:scale"))
+    }
+
+    @Test
     fun testDeepMerge_ComplexScenario() {
         // Arrange - caso real de Minecraft Bedrock
         val base = JSONObject().apply {

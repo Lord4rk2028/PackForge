@@ -38,12 +38,11 @@ object JsonDeepMerger {
      * equivocado (o con el archivo de otro hilo), haciendo inútil el reporte.
      * Con ThreadLocal cada hilo ve su propio contexto.
      */
-    private val currentSourceAddon = ThreadLocal.withInitial { "" }
-    private val currentTargetAddon = ThreadLocal.withInitial { "" }
-    private val currentFilePath = ThreadLocal.withInitial { "" }
-
-    private val prioritySourceIndex = ThreadLocal.withInitial { Int.MAX_VALUE }
-    private val priorityWinnerIndex = ThreadLocal.withInitial { Int.MAX_VALUE }
+    private val prioritySourceIndex: ThreadLocal<Int> = ThreadLocal.withInitial { Int.MAX_VALUE }
+    private val priorityWinnerIndex: ThreadLocal<Int> = ThreadLocal.withInitial { Int.MAX_VALUE }
+    private val currentSourceAddon: ThreadLocal<String> = ThreadLocal.withInitial { "" }
+    private val currentTargetAddon: ThreadLocal<String> = ThreadLocal.withInitial { "" }
+    private val currentFilePath: ThreadLocal<String> = ThreadLocal.withInitial { "" }
 
     fun setMergeContext(sourceAddon: String, targetAddon: String, filePath: String) {
         currentSourceAddon.set(sourceAddon)
@@ -85,7 +84,16 @@ object JsonDeepMerger {
             val mergeValue = cleanJsonValue(toMerge.get(key))
 
             when {
-                (isComponents || cleanKey.startsWith("minecraft:")) && baseValue is JSONObject && mergeValue is JSONObject -> {
+                // ⚠️ SÓLO se aplica la fusión semántica de componentes cuando YA estamos
+                // dentro de un objeto "components" (isComponents = true). Antes se activaba
+                // para CUALQUIER clave raíz que empezara por "minecraft:" (p.ej. el propio
+                // "minecraft:item", "minecraft:entity", "minecraft:client_entity"), lo que
+                // enviaba el contenedor raíz a BedrockComponentMerger: éste trata
+                // "description"/"components" como campos planos y SOBRESCRIBÍA el objeto
+                // "components" completo del addon base, perdiendo sus componentes
+                // (max_stack_size, behaviors, etc.) al fusionar dos addons con el mismo
+                // archivo. Ahora los contenedores raíz caen en la rama recursiva normal.
+                isComponents && cleanKey.startsWith("minecraft:") && baseValue is JSONObject && mergeValue is JSONObject -> {
                     result.put(cleanKey, BedrockComponentMerger.mergeComponents(baseValue, mergeValue))
                 }
                 
@@ -102,8 +110,8 @@ object JsonDeepMerger {
                 }
 
                 else -> {
-                    val winnerIdx = priorityWinnerIndex.get()
-                    val sourceHasLowerPriority = prioritySourceIndex.get() > winnerIdx && winnerIdx != Int.MAX_VALUE
+                    val winnerIdx = priorityWinnerIndex.get() ?: Int.MAX_VALUE
+                    val sourceHasLowerPriority = (prioritySourceIndex.get() ?: Int.MAX_VALUE) > winnerIdx && winnerIdx != Int.MAX_VALUE
                     if (baseValue != null && mergeValue !is JSONObject && mergeValue !is JSONArray) {
                         val conflictType = when {
                             cleanKey.contains("item") -> "ITEM_OVERWRITE"
@@ -115,10 +123,10 @@ object JsonDeepMerger {
 
                         val conflict = MergeConflict(
                             id = java.util.UUID.randomUUID().toString(),
-                            filePath = currentFilePath.get(),
+                            filePath = currentFilePath.get() ?: "",
                             conflictType = conflictType,
-                            sourceAddon = currentSourceAddon.get(),
-                            targetAddon = currentTargetAddon.get(),
+                            sourceAddon = currentSourceAddon.get() ?: "",
+                            targetAddon = currentTargetAddon.get() ?: "",
                             severity = com.packforge.app.domain.model.ConflictSeverity.MEDIUM,
                             description = if (sourceHasLowerPriority)
                                 "Colisión de clave '$cleanKey': ganador (índice $winnerIdx) prevaleció"
@@ -228,9 +236,9 @@ object JsonDeepMerger {
             ConflictRegistry.logConflict(
                 severity = com.packforge.app.domain.model.ConflictSeverity.MEDIUM,
                 type = "NAMESPACE_COLLISION",
-                file = currentFilePath.get(),
-                addon1 = currentSourceAddon.get(),
-                addon2 = currentTargetAddon.get(),
+                file = currentFilePath.get() ?: "",
+                addon1 = currentSourceAddon.get() ?: "",
+                addon2 = currentTargetAddon.get() ?: "",
                 description = "Identificador de namespace '$key' sobrescrito por el segundo addon."
             )
         }

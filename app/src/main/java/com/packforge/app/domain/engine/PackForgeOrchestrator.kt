@@ -90,7 +90,9 @@ object PackForgeOrchestrator {
         val totalJsonsMerged: Int,
         val errorMessage: String? = null,
         val validationResult: PackForgeValidator.ValidationResult? = null,
-        val reportPath: String? = null
+        val reportPath: String? = null,
+        /** Portada auto-seleccionada de un addon cuando no se puso una personalizada */
+        val autoCoverPath: String? = null
     )
 
     /**
@@ -496,7 +498,7 @@ object PackForgeOrchestrator {
 
             // g) APLICAR ICONO PERSONALIZADO (AL FINAL, DESPUÉS DE TODO)
             PackForgeLog.d("PackForge_Export", "🔧 PASO 6: Aplicando icono personalizado...")
-            applyCustomIcon(mergedBpDir, mergedRpDir, customIconPath)
+            val resolvedCoverPath = applyCustomIcon(mergedBpDir, mergedRpDir, customIconPath)
             PackForgeLog.d("PackForge_Export", "🔧 PASO 6 completado")
 
             val tCriticosValidacionIconoFin = System.currentTimeMillis()
@@ -620,7 +622,8 @@ object PackForgeOrchestrator {
                 bpUuid = bpUuid,
                 rpUuid = rpUuid,
                 totalJsonsMerged = totalJsonsMerged,
-                reportPath = reportPath
+                reportPath = reportPath,
+                autoCoverPath = resolvedCoverPath?.takeIf { customIconPath == null }
             )
             
         } catch (e: CancellationException) {
@@ -1234,22 +1237,39 @@ object PackForgeOrchestrator {
      * Aplica el icono personalizado al modpack DESPUÉS de fusionar los addons
      * CRÍTICO: Debe llamarse DESPUÉS de fusionar y ANTES de crear el ZIP
      */
-    private fun applyCustomIcon(mergedBpDir: File?, mergedRpDir: File?, customIconPath: String?) {
+    private fun applyCustomIcon(mergedBpDir: File?, mergedRpDir: File?, customIconPath: String?): String? {
         PackForgeLog.d("PackForge_Icon", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         PackForgeLog.d("PackForge_Icon", "🎨 APLICANDO PORTADA PERSONALIZADA")
         PackForgeLog.d("PackForge_Icon", "   BP dir: ${mergedBpDir?.absolutePath ?: "null"}")
         PackForgeLog.d("PackForge_Icon", "   RP dir: ${mergedRpDir?.absolutePath ?: "null"}")
         PackForgeLog.d("PackForge_Icon", "   Icon path: $customIconPath")
         
-        if (customIconPath == null) {
-            PackForgeLog.w("PackForge_Icon", "⚠️ No se proporcionó icono personalizado. Saltando.")
-            return
+        // Si no se proporcionó icono personalizado, elegir uno de los addons fusionados
+        // (portada aleatoria pero consistente para BP y RP)
+        val effectiveIconPath = if (customIconPath == null) {
+            PackForgeLog.w("PackForge_Icon", "⚠️ No se proporcionó icono personalizado. Buscando portada de addon...")
+            val bpDir = mergedBpDir ?: mergedRpDir
+            val rpDir = mergedRpDir ?: mergedBpDir
+            val iconCandidate = pickAddonIcon(bpDir, rpDir)
+            if (iconCandidate != null) {
+                PackForgeLog.d("PackForge_Icon", "🖼️ Portada elegida de addon: $iconCandidate")
+            } else {
+                PackForgeLog.w("PackForge_Icon", "⚠️ No se encontró portada de addon válida")
+            }
+            iconCandidate
+        } else {
+            customIconPath
         }
-        
-        val iconFile = File(customIconPath)
+
+        if (effectiveIconPath == null) {
+            PackForgeLog.w("PackForge_Icon", "⚠️ Sin portada disponible. Saltando.")
+            return null
+        }
+
+        val iconFile = File(effectiveIconPath)
         if (!iconFile.exists()) {
-            PackForgeLog.e("PackForge_Icon", "❌ El archivo de icono no existe: $customIconPath")
-            return
+            PackForgeLog.e("PackForge_Icon", "❌ El archivo de icono no existe: $effectiveIconPath")
+            return null
         }
         
         PackForgeLog.d("PackForge_Icon", "   Icon file existe: ${iconFile.exists()}")
@@ -1259,9 +1279,9 @@ object PackForgeOrchestrator {
         
         if (dirs.isEmpty()) {
             PackForgeLog.e("PackForge_Icon", "❌ No hay directorios válidos para aplicar icono")
-            return
+            return null
         }
-        
+
         PackForgeLog.d("PackForge_Icon", "   Directorios a procesar: ${dirs.size}")
         
         dirs.forEach { dir ->
@@ -1304,8 +1324,32 @@ object PackForgeOrchestrator {
         }
         
         PackForgeLog.d("PackForge_Icon", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        return effectiveIconPath
     }
-    
+
+    /**
+     * Busca un pack_icon.png válido dentro de los addons fusionados para usar como
+     * portada automática cuando el usuario no seleccionó una. Elige ALEATORIAMENTE
+     * entre todos los iconos disponibles (como pediste: probabilidad uniforme cada
+     * vez), y ese mismo gana tanto para BP como RP (consistencia visual).
+     */
+    private fun pickAddonIcon(bpDir: File?, rpDir: File?): String? {
+        val candidatos = mutableListOf<String>()
+        for (dir in listOfNotNull(bpDir, rpDir)) {
+            if (!dir.exists()) continue
+            val cachedFiles = DirIndexCache.index(dir).allFiles
+            for (file in cachedFiles) {
+                if (file.name.equals("pack_icon.png", ignoreCase = true) && file.length() > 0) {
+                    candidatos.add(file.absolutePath)
+                }
+            }
+        }
+        if (candidatos.isEmpty()) return null
+        val elegido = candidatos.random()
+        PackForgeLog.d("PackForge_Icon", "🎲 Portada aleatoria: $elegido entre ${candidatos.size} candidatos")
+        return elegido
+    }
+
     /**
      * Convierte la portada en un icono CUADRADO (center-crop) de 256x256 PNG,
      * el formato que Minecraft Bedrock espera para pack_icon.png.

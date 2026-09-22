@@ -1,5 +1,5 @@
 [versions]
-agp = "9.4.0"
+agp = "9.4.1"
 coreKtx = "1.15.0"
 junit = "4.13.2"
 junitVersion = "1.2.1"
@@ -7,13 +7,19 @@ espressoCore = "3.6.1"
 lifecycle = "2.8.7"
 activityCompose = "1.10.0"
 kotlin = "2.3.21"
-composeBom = "2025.01.01"
+# BOM efectivo del proyecto (antes se declaraba además hardcodeado en app/build.gradle.kts)
+composeBom = "2025.05.00"
 navigation = "2.8.5"
 material = "1.12.0"
+# Material 3 Expressive (requiere 1.4.0 o superior)
+material3 = "1.4.0"
 kotlinxSerialization = "1.7.3"
 ksp = "2.3.8"
 retrofit = "2.11.0"
 okhttp = "4.12.0"
+coil = "2.6.0"
+datastore = "1.1.1"
+room = "2.8.4"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -32,9 +38,15 @@ androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-toolin
 androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
-androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
+androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
 androidx-compose-material3-adaptive = { group = "androidx.compose.material3.adaptive", name = "adaptive" }
 androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
+androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+json = { group = "org.json", name = "json", version = "20240303" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }
 retrofit-converter-gson = { group = "com.squareup.retrofit2", name = "converter-gson", version.ref = "retrofit" }

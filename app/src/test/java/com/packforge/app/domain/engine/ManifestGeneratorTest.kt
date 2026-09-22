@@ -124,6 +124,56 @@ class ManifestGeneratorTest {
     }
 
     @Test
+    fun buildMergedBpManifest_keepsAllModuleNameDependencies() {
+        // Regresión: las deps de módulos @minecraft/* se declaran con "module_name";
+        // antes se ignoraba y todas colapsaban en la misma clave, por lo que a partir
+        // de la segunda se descartaban (el modpack quedaba sin módulos para los scripts).
+        val m = tempManifest(manifestJson(dependencies = listOf(
+            JSONObject().apply { put("module_name", "@minecraft/server"); put("version", "2.0.0") },
+            JSONObject().apply { put("module_name", "@minecraft/server-ui"); put("version", "1.3.0") }
+        )))
+        val out = ManifestGenerator.buildMergedBpManifest(
+            originalBpManifests = listOf(m),
+            originalRpHeaderUuids = emptySet(),
+            newRpHeaderUuid = null,
+            packName = "Modulos",
+            hasScriptsFolder = false
+        )
+        val deps = out.getJSONArray("dependencies")
+        val names = (0 until deps.length())
+            .mapNotNull { deps.optJSONObject(it)?.optString("module_name", "") }
+            .filter { it.isNotBlank() }
+
+        assertEquals("Deben conservarse AMBOS módulos", 2, names.size)
+        assertTrue(names.contains("@minecraft/server"))
+        assertTrue(names.contains("@minecraft/server-ui"))
+    }
+
+    @Test
+    fun buildMergedBpManifest_normalizesStringVersionToArray() {
+        val m = tempManifest(manifestJson(dependencies = listOf(
+            JSONObject().apply { put("module_name", "@minecraft/server"); put("version", "1.4.0") }
+        )))
+        val out = ManifestGenerator.buildMergedBpManifest(
+            originalBpManifests = listOf(m),
+            originalRpHeaderUuids = emptySet(),
+            newRpHeaderUuid = null,
+            packName = "Versiones",
+            hasScriptsFolder = false
+        )
+        val deps = out.getJSONArray("dependencies")
+        var ver: JSONArray? = null
+        for (i in 0 until deps.length()) {
+            val d = deps.optJSONObject(i) ?: continue
+            if (d.optString("module_name") == "@minecraft/server") ver = d.optJSONArray("version")
+        }
+        assertNotNull("La versión string debe normalizarse a array", ver)
+        assertEquals(1, ver!!.getInt(0))
+        assertEquals(4, ver!!.getInt(1))
+        assertEquals(0, ver!!.getInt(2))
+    }
+
+    @Test
     fun generateRpManifest_hasMinEngineVersion() {
         val rp = ManifestGenerator.generateRpManifest("MiMod")
         val header = rp.getJSONObject("header")

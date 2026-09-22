@@ -84,9 +84,18 @@ object AddonExtractor {
      * 
      * @param sourcePath Ruta del archivo .mcaddon/.mcpack
      * @param destinationPath Ruta de la carpeta donde se extraerán los archivos
+     * @param maxEntries Límite de entradas del ZIP (inyectable para tests rápidos).
+     * @param maxEntrySize Límite de bytes por archivo extraído.
+     * @param maxTotalSize Límite de bytes totales acumulados en la extracción.
      * @return Ruta de la carpeta extraída, o null si hubo error
      */
-    fun extractAddon(sourcePath: String, destinationPath: String): String? {
+    fun extractAddon(
+        sourcePath: String,
+        destinationPath: String,
+        maxEntries: Int = MAX_ZIP_ENTRIES,
+        maxEntrySize: Long = MAX_ENTRY_SIZE,
+        maxTotalSize: Long = MAX_TOTAL_SIZE
+    ): String? {
         try {
             val sourceFile = File(sourcePath)
             if (!sourceFile.exists()) {
@@ -110,8 +119,8 @@ object AddonExtractor {
                     while (entry != null) {
                         // 1) Límite de nº de entradas: evita "zip bombs" con millones de entradas.
                         entryCount++
-                        if (entryCount > MAX_ZIP_ENTRIES) {
-                            throw IllegalStateException("ZIP excede el límite técnico del formato (1,000,000 entradas)")
+                        if (entryCount > maxEntries) {
+                            throw IllegalStateException("ZIP excede el límite técnico del formato ($maxEntries entradas)")
                         }
 
                         // 2) VALIDACIÓN ZIP SLIP en TODAS las entradas (archivos y carpetas).
@@ -122,7 +131,7 @@ object AddonExtractor {
                         if (!entry.isDirectory) {
                             if (shouldExtractToDisk(entry.name)) {
                                 // 3) Límite por archivo según el tamaño declarado en la cabecera ZIP.
-                                if (entry.size > MAX_ENTRY_SIZE) {
+                                if (entry.size > maxEntrySize) {
                                     throw IllegalStateException("Archivo demasiado grande en ZIP: ${entry.name} (${entry.size} bytes)")
                                 }
 
@@ -139,12 +148,12 @@ object AddonExtractor {
                                         totalWritten += read
 
                                         // 4) Límite real por archivo (cubre entradas con size = -1).
-                                        if (fileWritten > MAX_ENTRY_SIZE) {
+                                        if (fileWritten > maxEntrySize) {
                                             throw IllegalStateException("Archivo demasiado grande al descomprimir: ${entry.name}")
                                         }
-                                        // 5) Límite total acumulado (200 MB).
-                                        if (totalWritten > MAX_TOTAL_SIZE) {
-                                            throw IllegalStateException("Tamaño total de extracción supera el límite (200 MB)")
+                                        // 5) Límite total acumulado (200 MB por defecto).
+                                        if (totalWritten > maxTotalSize) {
+                                            throw IllegalStateException("Tamaño total de extracción supera el límite (${maxTotalSize / (1024 * 1024)} MB)")
                                         }
                                         read = zis.read(buffer)
                                     }

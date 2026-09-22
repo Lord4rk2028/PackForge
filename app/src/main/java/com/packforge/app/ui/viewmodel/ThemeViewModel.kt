@@ -41,16 +41,16 @@ private fun Preferences.toThemePreferences(): ThemePreferences {
     )
 }
 
-private fun loadCachedPreferences(context: Context, dataStore: DataStore<Preferences>): ThemePreferences {
+/**
+ * Lee el cache SP de forma no-bloqueante. Si no hay cache, devuelve defaults;
+ * la corrección llega por el collect() del init que lee DataStore en IO.
+ * NUNCA usa runBlocking en el hilo principal (causa ANR frío).
+ */
+private fun loadCachedPreferences(context: Context): ThemePreferences {
     val sp = context.getSharedPreferences(SP_THEME_CACHE, Context.MODE_PRIVATE)
     if (!sp.contains("dark_mode") && !sp.contains("accent_hex")) {
-        return runBlocking {
-            try {
-                withTimeout(1000) { dataStore.data.first().toThemePreferences() }
-            } catch (e: Exception) {
-                ThemePreferences()
-            }
-        }
+        // Sin cache: defaults; el init actualiza cuando DataStore emita
+        return ThemePreferences()
     }
     val verbose = sp.getBoolean("verbose_file_logs", false)
     PackForgeConfig.verboseFileLogs = verbose
@@ -79,7 +79,7 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val dataStore = application.themeDataStore
 
-    private val _preferences = MutableStateFlow(loadCachedPreferences(application, dataStore))
+    private val _preferences = MutableStateFlow(loadCachedPreferences(application))
     val preferences: StateFlow<ThemePreferences> = _preferences.asStateFlow()
 
     init {

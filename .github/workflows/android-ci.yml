@@ -2,9 +2,11 @@ name: Android CI
 
 on:
   push:
-    branches: [main]
+    # El repositorio usa "master" como rama por defecto; se deja "main" por
+    # compatibilidad si en el futuro se renombra la rama.
+    branches: [master, main]
   pull_request:
-    branches: [main]
+    branches: [master, main]
 
 jobs:
   build:
@@ -18,15 +20,23 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: gradle
 
       - name: Grant execute permission to gradlew
         run: chmod +x gradlew
 
       - name: Run unit tests
-        run: ./gradlew test
+        run: ./gradlew test --stacktrace
 
       - name: Build debug APK
         run: ./gradlew assembleDebug
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

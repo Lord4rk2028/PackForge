@@ -34,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -280,11 +281,15 @@ fun AddonPairDialog(
         alpha = if (isDark) 0.95f else 1f
     )
 
-    // Fondo oscurecido que resalta la miniinterfaz
+    // Fondo oscurecido que resalta la miniinterfaz — tocar fuera cierra la ventanita
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.6f)),
+            .background(Color.Black.copy(alpha = 0.6f))
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null
+            ) { onClose() },
         contentAlignment = Alignment.Center
     ) {
         Surface(
@@ -318,17 +323,18 @@ fun AddonPairDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    IconButton(
+                    androidx.compose.material3.FilledIconButton(
                         onClick = onClose,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                        colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(
+                            containerColor = if (isDark) Color(0xFF2C2C2C) else Color(0xFFE6E6E6),
+                            contentColor = if (isDark) Color.White else Color.Black
+                        ),
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Cerrar",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (isDark) Color.White else Color.Black,
                             modifier = Modifier.size(20.dp)
                         )
                     }

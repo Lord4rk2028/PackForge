@@ -95,6 +95,11 @@ object AddonParser {
 
             // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
             val cachedFiles = DirIndexCache.index(parseTempDir).allFiles
+
+            // CRÍTICO: Detectar si es un modpack de PackForge ANTES del loop
+            // para priorizar el pack_icon.png de la raíz del modpack (no el de addons anidados).
+            val isPackForgeModpack = cachedFiles.any { it.name == "PackForge.ID" }
+
             for (file in cachedFiles) {
                 val entryName = file.relativeTo(parseTempDir).path.replace("\\", "/")
                 allFiles.add(entryName)
@@ -102,12 +107,28 @@ object AddonParser {
                 // Extraer icono → filesDir en lugar de cacheDir para que no se
                 // pierda si el sistema limpia la caché.
                 if (entryName.lowercase().endsWith("pack_icon.png") && iconPath == null) {
-                    try {
-                        val iconDir = File(context.filesDir, "addon_icons").apply { mkdirs() }
-                        val iconFile = File(iconDir, "${addonId}_pack_icon.png")
-                        FileUtils.fastCopy(file, iconFile)
-                        iconPath = iconFile.absolutePath
-                    } catch (e: Exception) {}
+                    // Si es modpack de PackForge, solo aceptar el pack_icon.png de la raíz
+                    // (BP_PackForge/pack_icon.png o RP_PackForge/pack_icon.png) —
+                    // NO los de addons individuales anidados dentro.
+                    if (isPackForgeModpack) {
+                        val isRootIcon = entryName == "BP_PackForge/pack_icon.png" ||
+                            entryName == "RP_PackForge/pack_icon.png"
+                        if (isRootIcon) {
+                            try {
+                                val iconDir = File(context.filesDir, "addon_icons").apply { mkdirs() }
+                                val iconFile = File(iconDir, "${addonId}_pack_icon.png")
+                                FileUtils.fastCopy(file, iconFile)
+                                iconPath = iconFile.absolutePath
+                            } catch (e: Exception) {}
+                        }
+                    } else {
+                        try {
+                            val iconDir = File(context.filesDir, "addon_icons").apply { mkdirs() }
+                            val iconFile = File(iconDir, "${addonId}_pack_icon.png")
+                            FileUtils.fastCopy(file, iconFile)
+                            iconPath = iconFile.absolutePath
+                        } catch (e: Exception) {}
+                    }
                 }
 
                 // Clasificación para el modelo visual

@@ -81,7 +81,8 @@ Fusionar addons manualmente requiere:
 | `ManifestGenerator` | Crea manifests válidos y enlaza behavior + resource packs |
 | `BedrockCompatibilityAnalyzer` | Evalúa compatibilidad de versiones y formatos |
 | `EntityDependencyResolver` | Mantiene coherencia entre entidades y spawn rules |
-| `FastModpackExporter` | Exporta el `.mcaddon` final optimizado |
+| `PackForgeOrchestrator` | Orquesta la fusión completa (copiado, merges críticos, validación y empaquetado del `.mcaddon`) |
+| `BedrockCriticalFilesMerger` | Fusiona los archivos sensibles de Bedrock (entidades, bloques, texturas, sonidos, recetas) |
 
 ### 🌟 Funcionalidades de Usuario
 
@@ -189,7 +190,7 @@ chmod +x gradlew
 | **Networking** | Retrofit 2.11 + OkHttp 4.12 + Gson |
 | **Imágenes** | Coil 2.6.0 |
 | **Navegación** | Navigation Compose 2.8.5 |
-| **Build** | Gradle 9.3.1 + KSP, SDK 35 |
+| **Build** | Gradle 9.7.1 + KSP, SDK 35 (version catalog en `gradle/libs.versions.toml`) |
 | **CI/CD** | GitHub Actions |
 
 </div>
@@ -207,7 +208,7 @@ app/src/main/java/com/packforge/app/
 ├── domain/                          # 🧠 Lógica de negocio (Motor de fusión)
 │   ├── engine/
 │   │   ├── AddonExtractor.kt            # Desempaqueta .mcaddon/.zip
-│   │   ├── AddonParser.kt / AddonMerger.kt
+│   │   ├── AddonParser.kt               # Parseo de manifest e identificadores
 │   │   ├── ConflictEngine.kt            # ⚠️ Detección de conflictos
 │   │   ├── IdentifierRemapper.kt        # 🔀 Remapeo de IDs
 │   │   ├── JsonDeepMerger.kt            # 🧩 Fusión JSON profunda
@@ -215,7 +216,7 @@ app/src/main/java/com/packforge/app/
 │   │   ├── BedrockCompatibilityAnalyzer.kt
 │   │   ├── EntityDependencyResolver.kt
 │   │   ├── ScriptCollisionAnalyzer.kt
-│   │   └── FastModpackExporter.kt       # 📤 Exportación final
+│   │   └── PackForgeOrchestrator.kt     # 📤 Orquestación y exportación final
 │   │
 │   └── model/                       # Modelos de dominio
 │       ├── Addon.kt

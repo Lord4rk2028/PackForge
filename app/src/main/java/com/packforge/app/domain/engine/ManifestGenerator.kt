@@ -130,26 +130,37 @@ object ManifestGenerator {
                     for (i in 0 until deps.length()) {
                         val dep = deps.optJSONObject(i) ?: continue
                         val uuid = dep.optString("uuid", "").lowercase()
-                        val name = dep.optString("name", "")
 
                         // Si es el uuid de un RP ORIGINAL → ya está el nuevo RP agregado
                         if (uuid.isNotEmpty() && uuid in rpUuidsNormalized) {
                             continue
                         }
 
-                        // Conservar toda dependencia (uuid o @minecraft/*); duplicados → mayor versión
-                        val depKey = if (uuid.isNotEmpty()) "uuid:$uuid" else "name:$name"
+                        // Conservar toda dependencia; duplicados → mayor versión.
+                        // IMPORTANTE: los módulos de scripting de Bedrock se declaran con
+                        // "module_name" (p.ej. {"module_name":"@minecraft/server"}), NO con
+                        // "name". Al ignorarlo, TODAS las dependencias @minecraft/* colapsaban
+                        // en la misma clave ("name:") y a partir de la segunda se descartaban
+                        // en silencio → el modpack fusionado quedaba sin módulos y los scripts
+                        // no cargaban en Minecraft.
+                        val depKey = dependencyKey(dep)
                         if (depKey.isEmpty()) continue
 
-                        val existing = findExistingDependency(dependencies, dep, depKey)
+                        val incomingVersion = normalizeVersion(dep.opt("version"))
+                        val existing = findExistingDependency(dependencies, depKey)
                         if (existing != null) {
                             // Mantener la versión MAYOR en caso de duplicado
-                            val existingVer = existing.optJSONArray("version")
-                            val newVer = dep.optJSONArray("version")
-                            if (newVer != null && versionGreater(newVer, existingVer)) {
-                                existing.put("version", newVer)
+                            // (si no es interpretable, se conserva la existente tal cual).
+                            val existingVer: JSONArray? = normalizeVersion(existing.opt("version"))
+                            if (incomingVersion != null &&
+                                versionGreater(incomingVersion, existingVer)
+                            ) {
+                                existing.put("version", incomingVersion)
                             }
                         } else {
+                            // Unificar el formato de versión (string "2.0.0" → [2,0,0]) para poder
+                            // comparar y para que el manifest final sea consistente.
+                            if (incomingVersion != null) dep.put("version", incomingVersion)
                             dependencies.put(dep)
                             seenDeps.add(depKey)
                         }
@@ -338,16 +349,22 @@ object ManifestGenerator {
                     }
                 }
 
-                // Conservar dependencias @minecraft/*
+                // Conservar dependencias @minecraft/* (tanto "name" como "module_name").
                 json.optJSONArray("dependencies")?.let { deps ->
                     for (i in 0 until deps.length()) {
                         val dep = deps.optJSONObject(i) ?: continue
-                        val name = dep.optString("name", "")
-                        if (name.isNotEmpty() && name.startsWith("@minecraft/")) {
-                            val depKey = "name:$name"
-                            if (seenDeps.add(depKey)) {
-                                dependencies.put(dep)
+                        val depKey = dependencyKey(dep)
+                        if (depKey.isEmpty()) continue
+                        val isMinecraft = dep.optString("name", "")
+                            .startsWith("@minecraft/") ||
+                            dep.optString("module_name", "")
+                                .startsWith("@minecraft/")
+                        if (!isMinecraft) continue
+                        if (seenDeps.add(depKey)) {
+                            normalizeVersion(dep.opt("version"))?.let {
+                                dep.put("version", it)
                             }
+                            dependencies.put(dep)
                         }
                     }
                 }
@@ -556,19 +573,55 @@ object ManifestGenerator {
     }
 
     /**
-     * Busca una dependencia ya añadida con la misma clave (uuid o nombre).
+     * Clave única de una dependencia del manifest.
+     *
+     * Bedrock admite tres formas de identificar una dependencia y hay que
+     * distinguirlas todas, porque de lo contrario entradas distintas se
+     * consideran duplicadas y se descartan:
+     *  - por UUID            → {"uuid": "...", "version": [1,0,0]}
+     *  - módulo de scripting → {"module_name": "@minecraft/server", "version": "2.0.0"}
+     *  - nombre libre        → {"name": "...", "version": "1.0.0"}
      */
-    private fun findExistingDependency(
-        dependencies: JSONArray,
-        candidate: JSONObject,
-        candidateKey: String
-    ): JSONObject? {
+    private fun dependencyKey(dep: JSONObject): String {
+        val uuid = dep.optString("uuid", "").lowercase()
+        val moduleName = dep.optString("module_name", "")
+        val name = dep.optString("name", "")
+        return when {
+            uuid.isNotEmpty() -> "uuid:$uuid"
+            moduleName.isNotBlank() -> "module_name:$moduleName"
+            name.isNotBlank() -> "name:$name"
+            else -> ""
+        }
+    }
+
+    /**
+     * Normaliza el campo `version` de una dependencia a un array de enteros.
+     *
+     * El formato de Minecraft Bedrock es mixto: las dependencias por UUID usan
+     * array ([1,0,0]) y los módulos de scripting usan string ("2.0.0"). Sin
+     * unificar el formato no se pueden comparar versiones (que es lo que exige
+     * la regla "en duplicados gana la versión mayor").
+     *
+     * @return JSONArray equivalente, o null si no hay versión interpretable
+     *         (en ese caso se conserva el valor original tal cual).
+     */
+    private fun normalizeVersion(raw: Any?): JSONArray? = when (raw) {
+        is JSONArray -> JSONArray(raw.toString())
+        is Number -> JSONArray(listOf(raw.toInt()))
+        is String -> {
+            val parts = raw.trim().split(".").mapNotNull { it.trim().toIntOrNull() }
+            if (parts.isEmpty()) null else JSONArray(parts)
+        }
+        else -> null
+    }
+
+    /**
+     * Busca una dependencia ya añadida con la misma clave (uuid, module_name o nombre).
+     */
+    private fun findExistingDependency(dependencies: JSONArray, candidateKey: String): JSONObject? {
         for (i in 0 until dependencies.length()) {
             val dep = dependencies.optJSONObject(i) ?: continue
-            val uuid = dep.optString("uuid", "").lowercase()
-            val name = dep.optString("name", "")
-            val key = if (uuid.isNotEmpty()) "uuid:$uuid" else "name:$name"
-            if (key == candidateKey) return dep
+            if (dependencyKey(dep) == candidateKey) return dep
         }
         return null
     }

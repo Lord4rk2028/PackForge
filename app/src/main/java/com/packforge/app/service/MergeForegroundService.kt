@@ -52,7 +52,9 @@ object MergeSession {
         val reportPath: String? = null,
         val regenerateId: String? = null,
         /** "editor" (exportación normal, UI propia) | "library" (re-fusión con overlay). */
-        val origin: String = "idle"
+        val origin: String = "idle",
+        /** Portada auto-seleccionada cuando el usuario no puso una */
+        val autoCoverPath: String? = null
     )
 
     private val _state = MutableStateFlow(State())
@@ -73,11 +75,15 @@ object MergeSession {
         _state.value = _state.value.copy(phase = phase, percent = percent)
     }
 
-    internal fun finish(success: Boolean, message: String, fileName: String?, outputPath: String?, reportPath: String?, regenerateId: String?) {
+    internal fun finish(
+        success: Boolean, message: String, fileName: String?, outputPath: String?,
+        reportPath: String?, regenerateId: String?, autoCoverPath: String? = null
+    ) {
         _state.value = _state.value.copy(
             done = true, success = success, message = message,
             fileName = fileName, outputPath = outputPath,
-            reportPath = reportPath, regenerateId = regenerateId
+            reportPath = reportPath, regenerateId = regenerateId,
+            autoCoverPath = autoCoverPath
         )
     }
 }
@@ -208,7 +214,8 @@ class MergeForegroundService : Service() {
             MergeSession.finish(
                 success = true, message = "¡Modpack fusionado con éxito!",
                 fileName = "$name.mcaddon", outputPath = visiblePath,
-                reportPath = reportPath, regenerateId = null
+                reportPath = reportPath, regenerateId = null,
+                autoCoverPath = result.autoCoverPath
             )
             notifyFinal(true, "Guardado en ${dest.whereLabel}. Reporte: ${reportHint(reportPath)}", accentColor)
         } catch (e: CancellationException) {
