@@ -253,7 +253,7 @@ app/src/main/java/com/packforge/app/
 │   ├── PackForgeDatabase.kt
 │   ├── SavedModpackDao.kt
 │   ├── ThemePreferences.kt
-│   └── modrinth/                    # Descarga de addons a caché (OkHttp)
+│   └── download/                   # Descarga de addons a caché (OkHttp)
 │
 ├── ui/                              # 🎨 Interfaz de usuario
 │   ├── screens/

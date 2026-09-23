@@ -8,8 +8,8 @@ import android.webkit.WebView
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.packforge.app.data.PackForgeDatabase
+import com.packforge.app.data.download.AddonDownloadRepository
 import com.packforge.app.util.PackForgeLog
-import com.packforge.app.data.modrinth.ModrinthRepository
 import com.packforge.app.domain.engine.AddonParser
 import com.packforge.app.domain.engine.AddonUriCache
 import com.packforge.app.domain.engine.ConflictEngine
@@ -36,7 +36,7 @@ sealed class PackForgeEvent {
 
 class PackForgeViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val modrinthRepository by lazy { ModrinthRepository() }
+    private val addonDownloadRepository by lazy { AddonDownloadRepository() }
     private var database: PackForgeDatabase? = null
 
     private val _events = MutableSharedFlow<PackForgeEvent>()
@@ -292,7 +292,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             val fileName = downloadUrl.substringBefore('?').substringAfterLast('/')
                 .takeIf { it.contains(".") } ?: "web_addon.mcaddon"
             
-            modrinthRepository.downloadToCache(context, downloadUrl, fileName) { p ->
+            addonDownloadRepository.downloadToCache(context, downloadUrl, fileName) { p ->
                 _importProgress.value = OperationProgress.Loading("Descargando...", p)
             }.onSuccess { uri ->
                 importAddons(context, listOf(uri), fromWeb = true, sourceUrl = sourcePageUrl, sourceSite = sourceSite)

@@ -12,7 +12,7 @@
         name="external_storage"
         path="." />
     <!-- cacheDir completo: incluye los temporales share_* creados al compartir
-         vía content:// y la carpeta modrinth/ de descargas -->
+         vía content:// y la carpeta downloads/ de addons descargados -->
     <cache-path
         name="cache"
         path="." />

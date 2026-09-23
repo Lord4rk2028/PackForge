@@ -4,7 +4,7 @@
 
     <!--
         Solo se declaran los permisos que la app usa de verdad:
-        - INTERNET: buscador Modrinth y portadas via Coil.
+        - INTERNET: navegador integrado (MCPEDL, CurseForge, ModBay) y portadas via Coil.
         - FOREGROUND_SERVICE* + POST_NOTIFICATIONS: fusion en segundo plano
           con notificacion de progreso (MergeForegroundService).
         La importacion de archivos usa Storage Access Framework
