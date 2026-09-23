@@ -1,5 +1,7 @@
 package com.packforge.app
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -504,7 +506,7 @@ fun PackForgeApp(
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("Guardar en Biblioteca", fontWeight = FontWeight.SemiBold)
+                                Text(stringResource(R.string.share_save_library), fontWeight = FontWeight.SemiBold)
                             }
                             OutlinedButton(
                                 onClick = {
@@ -521,7 +523,7 @@ fun PackForgeApp(
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("Importar como Addon", fontWeight = FontWeight.Medium)
+                                Text(stringResource(R.string.share_import_addon), fontWeight = FontWeight.Medium)
                             }
                             TextButton(
                                 onClick = {
@@ -530,7 +532,7 @@ fun PackForgeApp(
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.common_cancel), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     },

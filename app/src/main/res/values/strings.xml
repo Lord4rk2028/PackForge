@@ -1,3 +1,125 @@
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <string name="app_name">PackForge</string>
+
+    <!-- Comunes -->
+    <string name="common_cancel">Cancelar</string>
+    <string name="common_close">Cerrar</string>
+    <string name="common_retry">Reintentar</string>
+    <string name="common_back">Atrás</string>
+    <string name="common_delete">Eliminar</string>
+    <string name="common_accept">Aceptar</string>
+    <string name="cd_warning">Advertencia</string>
+    <string name="cd_success">Éxito</string>
+    <string name="cd_reload">Recargar</string>
+    <string name="cd_clear">Borrar</string>
+    <string name="cd_edit">Editar</string>
+    <string name="cd_share">Compartir</string>
+    <string name="cd_import">Importar</string>
+    <string name="cd_info">Información</string>
+
+    <!-- MainActivity -->
+    <string name="share_save_library">Guardar en Biblioteca</string>
+    <string name="share_import_addon">Importar como Addon</string>
+
+    <!-- AddonPairGroup -->
+    <string name="cd_rp_bp_folder">Carpeta RP+BP</string>
+    <string name="cd_remove_addon_named">Quitar %1$s</string>
+
+    <!-- ErrorState -->
+    <string name="error_state_a11y">Error: %1$s. %2$s. Botón para reintentar disponible.</string>
+
+    <!-- MinecraftThemeComponents -->
+    <string name="crafting_table">Mesa de Crafteo</string>
+    <string name="cd_addon_disabled">Addon deshabilitado</string>
+    <string name="cd_craft">Craftear</string>
+
+    <!-- SiteSelector -->
+    <string name="cd_logo_of">Logo de %1$s</string>
+
+    <!-- ConflictsScreen -->
+    <string name="conflict_strategy_title">Estrategia de Conflicto</string>
+    <string name="conflict_strategy_help">Cómo actuar si dos addons modifican el mismo archivo (no fusionable):</string>
+    <string name="conflict_resolution_title">Resolución de Conflictos</string>
+    <string name="conflict_ready_to_export">Listo para exportar</string>
+    <string name="conflict_winner_label">Ganador de la fusión:</string>
+    <string name="conflict_original_priority">Prioridad original: #%1$d</string>
+    <string name="conflict_try_code_merge">Intentar fusión de código (Beta)</string>
+    <string name="cd_battle">Batalla</string>
+    <string name="cd_vs">VS</string>
+
+    <!-- ExportSetupScreen -->
+    <string name="cd_custom_cover">Portada personalizada</string>
+    <string name="field_name">Nombre del Modpack</string>
+    <string name="field_author">Autor</string>
+    <string name="field_version">Versión</string>
+    <string name="field_mc_bedrock">MC Bedrock</string>
+    <string name="field_description">Descripción</string>
+    <string name="field_tags">Etiquetas (separadas por coma)</string>
+    <string name="field_tags_hint">survival, rpg, pvp…</string>
+    <string name="export_cancel_merge">Cancelar fusión</string>
+    <string name="export_continue_merging">Seguir fusionando</string>
+    <string name="export_debug_zip">Debug ZIP</string>
+    <string name="export_conflict_log">Registro de conflictos:</string>
+    <string name="export_validation_completed">VALIDACIÓN COMPLETADA</string>
+    <string name="export_fixed_textures">Texturas faltantes reparadas: %1$s</string>
+    <string name="export_fixed_models">Modelos faltantes reparados: %1$d</string>
+    <string name="export_lang_keys_merged">Claves de idioma fusionadas: %1$s (%2$s)</string>
+    <string name="export_sounds_merged">Sonidos fusionados</string>
+    <string name="export_fixed_references">Referencias rotas reparadas: %1$s</string>
+    <string name="export_warnings_header">ADVERTENCIAS (no críticas):</string>
+    <string name="export_open_in_minecraft">ABRIR EN MINECRAFT</string>
+    <string name="export_verify_manifest">Verificar Manifest</string>
+    <string name="export_manifest_verification">VERIFICACIÓN DE MANIFEST</string>
+    <string name="export_manifest_file">Archivo: %1$s</string>
+    <string name="export_manifest_size">Tamaño: %1$s</string>
+    <string name="export_bp_label">BEHAVIOR PACK:</string>
+    <string name="export_manifest_zip_path">Ruta en ZIP: %1$s</string>
+    <string name="export_manifest_header_name">header.name: %1$s</string>
+    <string name="export_manifest_uuid">UUID: %1$s</string>
+    <string name="export_manifest_dependencies">Dependencies: %1$s</string>
+    <string name="export_manifest_preview">Contenido (primeros 200 chars):</string>
+    <string name="export_rp_label">RESOURCE PACK:</string>
+    <string name="export_dependencies_check">VERIFICACIÓN DE DEPENDENCIAS:</string>
+    <string name="export_zip_structure">ESTRUCTURA COMPLETA ZIP (%1$d archivos):</string>
+    <string name="export_back_to_editor">Volver al editor</string>
+
+    <!-- ImportScreen -->
+    <string name="import_browse_files">Examinar Archivos</string>
+    <string name="cd_clear_workshop">Limpiar todo el taller</string>
+    <string name="cd_priority_up">Subir prioridad</string>
+    <string name="cd_priority_down">Bajar prioridad</string>
+    <string name="cd_remove_addon">Quitar addon</string>
+    <string name="cd_addon_icon">Icono de %1$s</string>
+
+    <!-- McpedlSearchScreen -->
+    <string name="mcpedl_search_hint">Ej.: furniture, shader, lucky block…</string>
+    <string name="cd_open_browser">Abrir en navegador</string>
+
+    <!-- MergeOverlay -->
+    <string name="cd_cancel_process">Cancelar proceso</string>
+    <string name="merge_cancel_reload_title">Cancelar recarga</string>
+    <string name="merge_cancel_reload_message">¿Estás seguro de cancelar la recarga del modpack? Se eliminará todo el progreso de esta fusión.</string>
+    <string name="merge_confirm_cancel">Sí, cancelar</string>
+    <string name="merge_keep_going">No, continuar</string>
+
+
+    <!-- StudioScreen -->
+    <string name="studio_regenerate_title">Regenerar modpack</string>
+    <string name="studio_no_modpacks">Sin modpacks guardados</string>
+    <string name="studio_explore_sources">Explorar fuentes</string>
+    <string name="studio_delete_title">Eliminar modpack</string>
+    <string name="studio_delete_message">¿Eliminar \'%1$s\'? Se borrará del historial de PackForge.</string>
+    <string name="cd_cover_of">Portada de %1$s</string>
+    <string name="cd_regenerate_engine">Regenerar con el motor actual</string>
+
+    <!-- ThemeSettingsScreen -->
+    <string name="theme_primary">Primario</string>
+    <string name="theme_tonal">Tonal</string>
+    <string name="field_hex">HEX</string>
+    <string name="cd_copy_hex">Copiar HEX</string>
+    <string name="cd_paste_hex">Pegar HEX</string>
+
+    <!-- WebBrowserHelpers -->
+    <string name="cd_change_site">Cambiar sitio</string>
+    <string name="cd_selected">Seleccionado</string>
 </resources>

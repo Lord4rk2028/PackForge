@@ -1,5 +1,7 @@
 package com.packforge.app.ui.components
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -42,12 +44,12 @@ fun CraftingTableLayout(
         ) {
             Icon(
                 imageVector = Icons.Filled.Extension,
-                contentDescription = "Mesa de Crafteo",
+                contentDescription = stringResource(R.string.crafting_table),
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(24.dp)
             )
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Mesa de Crafteo", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.crafting_table), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             if (addons.isNotEmpty()) {
                 Surface(
                     shape = RoundedCornerShape(50),
@@ -147,7 +149,7 @@ fun AddonSlot(addon: Addon) {
             ) {
                 Icon(
                     imageVector = Icons.Default.Close,
-                    contentDescription = "Addon deshabilitado",
+                    contentDescription = stringResource(R.string.cd_addon_disabled),
                     tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(24.dp)
                 )
@@ -248,7 +250,7 @@ fun ResultSlot(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Warning,
-                    contentDescription = "Craftear",
+                    contentDescription = stringResource(R.string.cd_craft),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp)
                 )

@@ -1,5 +1,7 @@
 package com.packforge.app.ui.screens
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -100,7 +102,7 @@ fun MergeOverlay() {
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Cancelar proceso",
+                            contentDescription = stringResource(R.string.cd_cancel_process),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                         )
                     }
@@ -149,19 +151,19 @@ fun MergeOverlay() {
     if (showConfirmCancel && visible) {
         AlertDialog(
             onDismissRequest = { showConfirmCancel = false },
-            title = { Text("Cancelar recarga", fontWeight = FontWeight.Bold) },
-            text = { Text("¿Estás seguro de cancelar la recarga del modpack? Se eliminará todo el progreso de esta fusión.") },
+            title = { Text(stringResource(R.string.merge_cancel_reload_title), fontWeight = FontWeight.Bold) },
+            text = { Text(stringResource(R.string.merge_cancel_reload_message)) },
             confirmButton = {
                 TextButton(onClick = {
                     showConfirmCancel = false
                     MergeForegroundService.stop(context)
                 }) {
-                    Text("Sí, cancelar", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.merge_confirm_cancel), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showConfirmCancel = false }) {
-                    Text("No, continuar")
+                    Text(stringResource(R.string.merge_keep_going))
                 }
             }
         )

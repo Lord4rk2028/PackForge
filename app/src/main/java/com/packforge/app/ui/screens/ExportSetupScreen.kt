@@ -1,5 +1,7 @@
 package com.packforge.app.ui.screens
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.EaseInOut
@@ -337,7 +339,7 @@ fun ExportSetupScreen(
                                 if (fileExists) {
                                     CachedAsyncImage(
                                         model = imageModel,
-                                        contentDescription = "Portada personalizada",
+                                        contentDescription = stringResource(R.string.cd_custom_cover),
                                         modifier = Modifier.fillMaxSize(),
                                         contentScale = ContentScale.Crop
                                     )
@@ -396,7 +398,7 @@ fun ExportSetupScreen(
                         onValueChange = {
                             onMetadataChange(metadata.copy(name = it))
                         },
-                        label = { Text("Nombre del Modpack") },
+                        label = { Text(stringResource(R.string.field_name)) },
                         leadingIcon = {
                             Icon(
                                 Icons.Default.Title,
@@ -415,7 +417,7 @@ fun ExportSetupScreen(
                                 metadata.copy(author = it)
                             )
                         },
-                        label = { Text("Autor") },
+                        label = { Text(stringResource(R.string.field_author)) },
                         leadingIcon = {
                             Icon(
                                 Icons.Default.Person,
@@ -439,7 +441,7 @@ fun ExportSetupScreen(
                                     metadata.copy(version = it)
                                 )
                             },
-                            label = { Text("Versión") },
+                            label = { Text(stringResource(R.string.field_version)) },
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(12.dp),
                             singleLine = true
@@ -472,7 +474,7 @@ fun ExportSetupScreen(
                                 value = metadata.mcVersion,
                                 onValueChange = {},
                                 readOnly = true,
-                                label = { Text("MC Bedrock") },
+                                label = { Text(stringResource(R.string.field_mc_bedrock)) },
                                 trailingIcon = {
                                     ExposedDropdownMenuDefaults
                                         .TrailingIcon(
@@ -512,7 +514,7 @@ fun ExportSetupScreen(
                                 metadata.copy(description = it)
                             )
                         },
-                        label = { Text("Descripción") },
+                        label = { Text(stringResource(R.string.field_description)) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         minLines = 2,
@@ -530,7 +532,7 @@ fun ExportSetupScreen(
                             )
                         },
                         label = {
-                            Text("Etiquetas (separadas por coma)")
+                            Text(stringResource(R.string.field_tags))
                         },
                         leadingIcon = {
                             Icon(
@@ -539,7 +541,7 @@ fun ExportSetupScreen(
                             )
                         },
                         placeholder = {
-                            Text("survival, rpg, pvp...")
+                            Text(stringResource(R.string.field_tags_hint))
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -838,12 +840,12 @@ fun ExportSetupScreen(
                         ) {
                             Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Cancelar fusión")
+                            Text(stringResource(R.string.export_cancel_merge))
                         }
                     },
                     dismissButton = {
                         TextButton(onClick = { showCancelDialog = false }) {
-                            Text("Seguir fusionando")
+                            Text(stringResource(R.string.export_continue_merging))
                         }
                     }
                 )
@@ -877,9 +879,9 @@ fun ExportSetupScreen(
                                 contentColor = MaterialTheme.colorScheme.error
                             )
                         ) {
-                            Icon(Icons.Default.Close, contentDescription = "Cancel", modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.common_cancel), modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Cancelar fusión", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.export_cancel_merge), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -997,7 +999,7 @@ fun ExportSetupScreen(
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary
                     )
-                    Text("Debug ZIP", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.export_debug_zip), fontWeight = FontWeight.Bold)
                 }
             },
             text = {
@@ -1287,7 +1289,7 @@ fun ExportSetupScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showDebugZip = false }) {
-                    Text("Cerrar")
+                    Text(stringResource(R.string.common_close))
                 }
             }
         )
@@ -1677,7 +1679,7 @@ fun ExportSuccessScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(12.dp)) {
-                    Text("Registro de conflictos:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                    Text(stringResource(R.string.export_conflict_log), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                     conflicts.take(5).forEach { 
                         Text("• $it", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -1702,16 +1704,16 @@ fun ExportSuccessScreen(
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)
                         )
-                        Text("VALIDACIÓN COMPLETADA", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                        Text(stringResource(R.string.export_validation_completed), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                     }
                     Text("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", style = MaterialTheme.typography.bodySmall)
                     
-                    Text("Texturas faltantes reparadas: ${validationResult.fixedReferences}", style = MaterialTheme.typography.bodySmall)
-                    Text("Modelos faltantes reparados: ${validationResult.missingModels.size}", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.export_fixed_textures, validationResult.fixedReferences), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.export_fixed_models, validationResult.missingModels.size), style = MaterialTheme.typography.bodySmall)
                     
                     if (validationResult.langKeysAdded.isNotEmpty()) {
                         validationResult.langKeysAdded.forEach { (lang, count) ->
-                            Text("Claves de idioma fusionadas: $count ($lang)", style = MaterialTheme.typography.bodySmall)
+                            Text(stringResource(R.string.export_lang_keys_merged, count, lang), style = MaterialTheme.typography.bodySmall)
                         }
                     }
                     
@@ -1722,9 +1724,9 @@ fun ExportSuccessScreen(
                             tint = if (validationResult.soundsFixed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(16.dp)
                         )
-                        Text("Sonidos fusionados", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.export_sounds_merged), style = MaterialTheme.typography.bodySmall)
                     }
-                    Text("Referencias rotas reparadas: ${validationResult.fixedReferences}", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.export_fixed_references, validationResult.fixedReferences), style = MaterialTheme.typography.bodySmall)
                     
                     if (validationResult.warnings.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(4.dp))
@@ -1735,7 +1737,7 @@ fun ExportSuccessScreen(
                                 tint = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.size(16.dp)
                             )
-                            Text("ADVERTENCIAS (no críticas):", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                            Text(stringResource(R.string.export_warnings_header), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                         }
                         validationResult.warnings.take(3).forEach { warning ->
                             Text("• $warning", style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -1759,7 +1761,7 @@ fun ExportSuccessScreen(
             ) {
                 Icon(Icons.Outlined.SportsEsports, null)
                 Spacer(Modifier.width(8.dp))
-                Text("ABRIR EN MINECRAFT", fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.export_open_in_minecraft), fontWeight = FontWeight.Bold)
             }
             Spacer(modifier = Modifier.height(12.dp))
         }
@@ -1773,7 +1775,7 @@ fun ExportSuccessScreen(
         ) {
             Icon(Icons.Default.FolderOpen, null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
-            Text("Verificar Manifest", fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.export_verify_manifest), fontWeight = FontWeight.Bold)
         }
         Spacer(modifier = Modifier.height(12.dp))
         
@@ -1785,22 +1787,22 @@ fun ExportSuccessScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("VERIFICACIÓN DE MANIFEST", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-                    Text("Archivo: ${result.fileName}", style = MaterialTheme.typography.bodySmall)
-                    Text("Tamaño: $fileSize", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.export_manifest_verification), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.export_manifest_file, result.fileName), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.export_manifest_size, fileSize), style = MaterialTheme.typography.bodySmall)
                     
                     HorizontalDivider()
                     
                     // BP Manifest Info
-                    Text("BEHAVIOR PACK:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
-                    Text("Ruta en ZIP: $bpManifestPath", style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-                    Text("header.name: $bpHeaderName", style = MaterialTheme.typography.bodySmall)
-                    Text("UUID: $bpUuid", style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-                    Text("Dependencies: $bpDependencies", style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                    Text(stringResource(R.string.export_bp_label), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                    Text(stringResource(R.string.export_manifest_zip_path, bpManifestPath), style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                    Text(stringResource(R.string.export_manifest_header_name, bpHeaderName), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.export_manifest_uuid, bpUuid), style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                    Text(stringResource(R.string.export_manifest_dependencies, bpDependencies), style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                     
                     if (bpManifestContent != null) {
                         HorizontalDivider()
-                        Text("Contenido (primeros 200 chars):", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                        Text(stringResource(R.string.export_manifest_preview), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
                         Text(
                             bpManifestContent!!.take(200),
                             style = MaterialTheme.typography.bodySmall,
@@ -1811,14 +1813,14 @@ fun ExportSuccessScreen(
                     HorizontalDivider()
                     
                     // RP Manifest Info
-                    Text("RESOURCE PACK:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
-                    Text("Ruta en ZIP: $rpManifestPath", style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-                    Text("header.name: $rpHeaderName", style = MaterialTheme.typography.bodySmall)
-                    Text("UUID: $rpUuid", style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                    Text(stringResource(R.string.export_rp_label), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                    Text(stringResource(R.string.export_manifest_zip_path, rpManifestPath), style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                    Text(stringResource(R.string.export_manifest_header_name, rpHeaderName), style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.export_manifest_uuid, rpUuid), style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                     
                     if (rpManifestContent != null) {
                         HorizontalDivider()
-                        Text("Contenido (primeros 200 chars):", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                        Text(stringResource(R.string.export_manifest_preview), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
                         Text(
                             rpManifestContent!!.take(200),
                             style = MaterialTheme.typography.bodySmall,
@@ -1829,7 +1831,7 @@ fun ExportSuccessScreen(
                     HorizontalDivider()
                     
                     // Dependency verification
-                    Text("VERIFICACIÓN DE DEPENDENCIAS:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                    Text(stringResource(R.string.export_dependencies_check), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Icon(
                             imageVector = if (dependencyMatch) Icons.Default.CheckCircle else Icons.Default.Error,
@@ -1847,7 +1849,7 @@ fun ExportSuccessScreen(
                     HorizontalDivider()
                     
                     // Full ZIP structure
-                    Text("ESTRUCTURA COMPLETA ZIP (${zipStructure.size} archivos):", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                    Text(stringResource(R.string.export_zip_structure, zipStructure.size), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
                     zipStructure.take(30).forEach { entry ->
                         Text("  $entry", style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                     }
@@ -1865,7 +1867,7 @@ fun ExportSuccessScreen(
             modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(16.dp)
         ) {
-            Text("Volver al editor")
+            Text(stringResource(R.string.export_back_to_editor))
         }
     }
 }
@@ -1979,7 +1981,7 @@ private fun IconDebugDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cerrar")
+                Text(stringResource(R.string.common_close))
             }
         }
     )

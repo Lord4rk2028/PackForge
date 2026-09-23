@@ -1,5 +1,7 @@
 package com.packforge.app.ui.screens
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -354,7 +356,7 @@ fun ImportDropZone(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "Limpiar todo el taller",
+                        contentDescription = stringResource(R.string.cd_clear_workshop),
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -417,7 +419,7 @@ fun ImportDropZone(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Examinar Archivos", fontWeight = FontWeight.SemiBold)
+                    Text(stringResource(R.string.import_browse_files), fontWeight = FontWeight.SemiBold)
                 }
 
                 // Chips de formatos compatibles
@@ -857,7 +859,7 @@ fun AddonCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowUp,
-                            contentDescription = "Subir prioridad",
+                            contentDescription = stringResource(R.string.cd_priority_up),
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -873,7 +875,7 @@ fun AddonCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = "Bajar prioridad",
+                            contentDescription = stringResource(R.string.cd_priority_down),
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -907,7 +909,7 @@ fun AddonCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Delete,
-                            contentDescription = "Quitar addon",
+                            contentDescription = stringResource(R.string.cd_remove_addon),
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(18.dp)
                         )
@@ -1082,7 +1084,7 @@ private fun AddonCardIcon(
         if (hasValidIcon) {
             CachedAsyncImage(
                 model = iconPath,
-                contentDescription = "Icono de $addonName",
+                contentDescription = stringResource(R.string.cd_addon_icon, addonName),
                 modifier = Modifier.fillMaxSize(),
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop
             )

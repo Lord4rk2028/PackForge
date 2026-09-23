@@ -1,5 +1,7 @@
 package com.packforge.app.ui.screens
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -148,14 +150,14 @@ fun ThemeSettingsScreen(
                             onClick = {},
                             modifier = Modifier.bounceClick(scaleDown = 0.94f) {}
                         ) {
-                            Text("Primario")
+                            Text(stringResource(R.string.theme_primary))
                         }
 
                         FilledTonalButton(
                             onClick = {},
                             modifier = Modifier.bounceClick(scaleDown = 0.94f) {}
                         ) {
-                            Text("Tonal")
+                            Text(stringResource(R.string.theme_tonal))
                         }
 
                         Surface(
@@ -222,7 +224,7 @@ fun ThemeSettingsScreen(
                         OutlinedTextField(
                             value = hexInput,
                             onValueChange = { if (it.length <= 7) updateHex(it) },
-                            label = { Text("HEX") },
+                            label = { Text(stringResource(R.string.field_hex)) },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
@@ -240,7 +242,7 @@ fun ThemeSettingsScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "Copiar HEX",
+                                contentDescription = stringResource(R.string.cd_copy_hex),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -258,7 +260,7 @@ fun ThemeSettingsScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ContentPaste,
-                                contentDescription = "Pegar HEX",
+                                contentDescription = stringResource(R.string.cd_paste_hex),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -413,7 +415,7 @@ fun ThemeSettingsScreen(
                 IconButton(onClick = onBack) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Volver"
+                        contentDescription = stringResource(R.string.common_back)
                     )
                 }
                 Text(

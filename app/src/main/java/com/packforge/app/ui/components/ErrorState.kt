@@ -1,5 +1,7 @@
 package com.packforge.app.ui.components
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -36,11 +38,13 @@ fun ErrorState(
     modifier: Modifier = Modifier,
     iconDescription: String = "Error: $title"
 ) {
+    // Izado fuera de .semantics: ese lambda no es composable y no puede llamar a stringResource
+    val a11yDescription = stringResource(R.string.error_state_a11y, title, message)
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .semantics {
-                contentDescription = "Error: $title. $message. Botón para reintentar disponible."
+                contentDescription = a11yDescription
             },
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f),
@@ -86,7 +90,7 @@ fun ErrorState(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.size(8.dp))
-                Text("Reintentar")
+                Text(stringResource(R.string.common_retry))
             }
         }
     }
@@ -125,7 +129,7 @@ fun ErrorStateSimple(
                 modifier = Modifier.size(16.dp)
             )
             Spacer(modifier = Modifier.size(4.dp))
-            Text("Reintentar", style = MaterialTheme.typography.labelMedium)
+            Text(stringResource(R.string.common_retry), style = MaterialTheme.typography.labelMedium)
         }
     }
 }

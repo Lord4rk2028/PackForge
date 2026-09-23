@@ -1,0 +1,125 @@
+<resources>
+    <string name="app_name">PackForge</string>
+
+    <!-- Common -->
+    <string name="common_cancel">Cancel</string>
+    <string name="common_close">Close</string>
+    <string name="common_retry">Retry</string>
+    <string name="common_back">Back</string>
+    <string name="common_delete">Delete</string>
+    <string name="common_accept">OK</string>
+    <string name="cd_warning">Warning</string>
+    <string name="cd_success">Success</string>
+    <string name="cd_reload">Reload</string>
+    <string name="cd_clear">Clear</string>
+    <string name="cd_edit">Edit</string>
+    <string name="cd_share">Share</string>
+    <string name="cd_import">Import</string>
+    <string name="cd_info">Information</string>
+
+    <!-- MainActivity -->
+    <string name="share_save_library">Save to Library</string>
+    <string name="share_import_addon">Import as Addon</string>
+
+    <!-- AddonPairGroup -->
+    <string name="cd_rp_bp_folder">RP+BP folder</string>
+    <string name="cd_remove_addon_named">Remove %1$s</string>
+
+    <!-- ErrorState -->
+    <string name="error_state_a11y">Error: %1$s. %2$s. Retry button available.</string>
+
+    <!-- MinecraftThemeComponents -->
+    <string name="crafting_table">Crafting Table</string>
+    <string name="cd_addon_disabled">Addon disabled</string>
+    <string name="cd_craft">Craft</string>
+
+    <!-- SiteSelector -->
+    <string name="cd_logo_of">Logo of %1$s</string>
+
+    <!-- ConflictsScreen -->
+    <string name="conflict_strategy_title">Conflict Strategy</string>
+    <string name="conflict_strategy_help">What to do if two addons modify the same file (not mergeable):</string>
+    <string name="conflict_resolution_title">Conflict Resolution</string>
+    <string name="conflict_ready_to_export">Ready to export</string>
+    <string name="conflict_winner_label">Merge winner:</string>
+    <string name="conflict_original_priority">Original priority: #%1$d</string>
+    <string name="conflict_try_code_merge">Try code merge (Beta)</string>
+    <string name="cd_battle">Battle</string>
+    <string name="cd_vs">VS</string>
+
+    <!-- ExportSetupScreen -->
+    <string name="cd_custom_cover">Custom cover</string>
+    <string name="field_name">Modpack Name</string>
+    <string name="field_author">Author</string>
+    <string name="field_version">Version</string>
+    <string name="field_mc_bedrock">MC Bedrock</string>
+    <string name="field_description">Description</string>
+    <string name="field_tags">Tags (comma separated)</string>
+    <string name="field_tags_hint">survival, rpg, pvp…</string>
+    <string name="export_cancel_merge">Cancel merge</string>
+    <string name="export_continue_merging">Keep merging</string>
+    <string name="export_debug_zip">Debug ZIP</string>
+    <string name="export_conflict_log">Conflict log:</string>
+    <string name="export_validation_completed">VALIDATION COMPLETED</string>
+    <string name="export_fixed_textures">Missing textures fixed: %1$s</string>
+    <string name="export_fixed_models">Missing models fixed: %1$d</string>
+    <string name="export_lang_keys_merged">Language keys merged: %1$s (%2$s)</string>
+    <string name="export_sounds_merged">Sounds merged</string>
+    <string name="export_fixed_references">Broken references fixed: %1$s</string>
+    <string name="export_warnings_header">WARNINGS (non-critical):</string>
+    <string name="export_open_in_minecraft">OPEN IN MINECRAFT</string>
+    <string name="export_verify_manifest">Verify Manifest</string>
+    <string name="export_manifest_verification">MANIFEST VERIFICATION</string>
+    <string name="export_manifest_file">File: %1$s</string>
+    <string name="export_manifest_size">Size: %1$s</string>
+    <string name="export_bp_label">BEHAVIOR PACK:</string>
+    <string name="export_manifest_zip_path">Path in ZIP: %1$s</string>
+    <string name="export_manifest_header_name">header.name: %1$s</string>
+    <string name="export_manifest_uuid">UUID: %1$s</string>
+    <string name="export_manifest_dependencies">Dependencies: %1$s</string>
+    <string name="export_manifest_preview">Content (first 200 chars):</string>
+    <string name="export_rp_label">RESOURCE PACK:</string>
+    <string name="export_dependencies_check">DEPENDENCY VERIFICATION:</string>
+    <string name="export_zip_structure">FULL ZIP STRUCTURE (%1$d files):</string>
+    <string name="export_back_to_editor">Back to editor</string>
+
+    <!-- ImportScreen -->
+    <string name="import_browse_files">Browse Files</string>
+    <string name="cd_clear_workshop">Clear entire workshop</string>
+    <string name="cd_priority_up">Move priority up</string>
+    <string name="cd_priority_down">Move priority down</string>
+    <string name="cd_remove_addon">Remove addon</string>
+    <string name="cd_addon_icon">Icon of %1$s</string>
+
+    <!-- McpedlSearchScreen -->
+    <string name="mcpedl_search_hint">E.g.: furniture, shader, lucky block…</string>
+    <string name="cd_open_browser">Open in browser</string>
+
+    <!-- MergeOverlay -->
+    <string name="cd_cancel_process">Cancel process</string>
+    <string name="merge_cancel_reload_title">Cancel reload</string>
+    <string name="merge_cancel_reload_message">Are you sure you want to cancel the modpack reload? All progress of this merge will be lost.</string>
+    <string name="merge_confirm_cancel">Yes, cancel</string>
+    <string name="merge_keep_going">No, continue</string>
+
+
+    <!-- StudioScreen -->
+    <string name="studio_regenerate_title">Regenerate modpack</string>
+    <string name="studio_no_modpacks">No saved modpacks</string>
+    <string name="studio_explore_sources">Explore sources</string>
+    <string name="studio_delete_title">Delete modpack</string>
+    <string name="studio_delete_message">Are you sure you want to delete \'%1$s\'? It will be removed from PackForge history.</string>
+    <string name="cd_cover_of">Cover of %1$s</string>
+    <string name="cd_regenerate_engine">Regenerate with current engine</string>
+
+    <!-- ThemeSettingsScreen -->
+    <string name="theme_primary">Primary</string>
+    <string name="theme_tonal">Tonal</string>
+    <string name="field_hex">HEX</string>
+    <string name="cd_copy_hex">Copy HEX</string>
+    <string name="cd_paste_hex">Paste HEX</string>
+
+    <!-- WebBrowserHelpers -->
+    <string name="cd_change_site">Change site</string>
+    <string name="cd_selected">Selected</string>
+</resources>

@@ -86,7 +86,7 @@ Fusionar addons manualmente requiere:
 
 ### 🌟 Funcionalidades de Usuario
 
-- 🔍 **Búsqueda integrada** — Explora Modrinth, MCPEDL y CurseForge desde la app
+- 🔍 **Búsqueda integrada** — Explora MCPEDL, CurseForge y ModBay desde la app
 - 📂 **Gestor de archivos** — Abre `.mcaddon` y `.mcpack` directamente desde el explorador
 - ✅ **Verificación de Minecraft** — Detecta si tienes Bedrock Edition instalado
 - 💾 **Persistencia local** — Room para guardar modpacks y DataStore para preferencias
@@ -164,6 +164,31 @@ chmod +x gradlew
 ./gradlew build
 ```
 
+### 📦 Build de release (minificado y firmado)
+
+```bash
+# APK de release con R8 + resource shrinking (sale SIN firmar si no hay keystore)
+./gradlew assembleRelease
+
+# 1. Genera tu keystore una sola vez (¡guárdalo y respáldalo fuera del repo!)
+keytool -genkeypair -v -keystore keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias packforge
+
+# 2. Crea "keystore.properties" en la raíz del repo (ya está en .gitignore):
+#    storeFile=keystore.jks
+#    storePassword=...
+#    keyAlias=packforge
+#    keyPassword=...
+# 3. Vuelve a compilar: el APK saldrá firmado en app/build/outputs/apk/release/
+./gradlew assembleRelease
+```
+
+### 🌍 Traducciones (i18n)
+
+La UI se declara en `app/src/main/res/values/strings.xml` (español, idioma por defecto)
+y `app/src/main/res/values-en/strings.xml` (inglés). Para añadir un idioma, copia
+`strings.xml` a `res/values-<código>/` y traduce los valores. Los textos de UI van
+siempre vía `stringResource(R.string.…)`; no escribas textos visibles hardcodeados.
+
 ---
 
 ## 📋 Requisitos del Sistema
@@ -228,7 +253,7 @@ app/src/main/java/com/packforge/app/
 │   ├── PackForgeDatabase.kt
 │   ├── SavedModpackDao.kt
 │   ├── ThemePreferences.kt
-│   └── modrinth/                    # API Modrinth client
+│   └── modrinth/                    # Descarga de addons a caché (OkHttp)
 │
 ├── ui/                              # 🎨 Interfaz de usuario
 │   ├── screens/
@@ -237,7 +262,6 @@ app/src/main/java/com/packforge/app/
 │   │   ├── ConflictsScreen.kt
 │   │   ├── ExportScreen.kt
 │   │   ├── CoverPickerScreen.kt
-│   │   ├── ModrinthSearchScreen.kt
 │   │   ├── McpedlSearchScreen.kt
 │   │   ├── ThemeSettingsScreen.kt
 │   │   └── WebBrowserScreen.kt

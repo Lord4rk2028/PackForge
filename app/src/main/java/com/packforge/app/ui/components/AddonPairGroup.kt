@@ -1,5 +1,7 @@
 package com.packforge.app.ui.components
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -199,7 +201,7 @@ fun AddonPairCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Folder,
-                        contentDescription = "Carpeta RP+BP",
+                        contentDescription = stringResource(R.string.cd_rp_bp_folder),
                         tint = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.size(12.dp)
                     )
@@ -333,7 +335,7 @@ fun AddonPairDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Cerrar",
+                            contentDescription = stringResource(R.string.common_close),
                             tint = if (isDark) Color.White else Color.Black,
                             modifier = Modifier.size(20.dp)
                         )
@@ -456,7 +458,7 @@ private fun AddonPairRow(
             IconButton(onClick = onDelete) {
                 Icon(
                     imageVector = Icons.Default.Delete,
-                    contentDescription = "Quitar ${addon.name}",
+                    contentDescription = stringResource(R.string.cd_remove_addon_named, addon.name),
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(20.dp)
                 )

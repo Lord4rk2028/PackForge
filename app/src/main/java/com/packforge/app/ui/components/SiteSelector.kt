@@ -1,5 +1,7 @@
 package com.packforge.app.ui.components
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -148,7 +150,7 @@ private fun SiteCard(
         ) {
             AsyncImage(
                 model = site.logoUrl,
-                contentDescription = "Logo de ${site.displayName}",
+                contentDescription = stringResource(R.string.cd_logo_of, site.displayName),
                 modifier = Modifier
                     .size(28.dp)
                     .clip(CircleShape)

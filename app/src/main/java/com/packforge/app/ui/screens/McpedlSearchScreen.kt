@@ -1,5 +1,7 @@
 package com.packforge.app.ui.screens
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.net.Uri
@@ -110,7 +112,7 @@ fun McpedlSearchScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Atrás"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                     Text(
@@ -120,7 +122,7 @@ fun McpedlSearchScreen(
                         modifier = Modifier.weight(1f)
                     )
                     IconButton(onClick = { webViewRef?.reload() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Recargar")
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.cd_reload))
                     }
                     IconButton(
                         onClick = {
@@ -134,7 +136,7 @@ fun McpedlSearchScreen(
                     ) {
                         Icon(
                             Icons.Default.OpenInBrowser,
-                            contentDescription = "Abrir en navegador"
+                            contentDescription = stringResource(R.string.cd_open_browser)
                         )
                     }
                 }
@@ -160,7 +162,7 @@ fun McpedlSearchScreen(
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isImporting,
-                placeholder = { Text("Ej.: furniture, shader, lucky blockâ€¦") },
+                placeholder = { Text(stringResource(R.string.mcpedl_search_hint)) },
                 leadingIcon = {
                     Icon(Icons.Default.Search, contentDescription = null)
                 },
@@ -168,7 +170,7 @@ fun McpedlSearchScreen(
                     Row {
                         if (query.isNotEmpty()) {
                             IconButton(onClick = { query = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = "Borrar")
+                                Icon(Icons.Default.Close, contentDescription = stringResource(R.string.cd_clear))
                             }
                         }
                     }
@@ -251,7 +253,7 @@ fun McpedlSearchScreen(
                         IconButton(onClick = onClearError) {
                             Icon(
                                 Icons.Default.Close,
-                                contentDescription = "Cerrar",
+                                contentDescription = stringResource(R.string.common_close),
                                 tint = MaterialTheme.colorScheme.onErrorContainer
                             )
                         }

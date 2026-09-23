@@ -1,5 +1,7 @@
 package com.packforge.app.ui.screens
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -152,7 +154,7 @@ fun StudioScreen(
         modpackToRegenerate?.let { target ->
             AlertDialog(
                 onDismissRequest = { modpackToRegenerate = null },
-                title = { Text("Regenerar modpack", fontWeight = FontWeight.Bold) },
+                title = { Text(stringResource(R.string.studio_regenerate_title), fontWeight = FontWeight.Bold) },
                 text = {
                     Text(
                         text = "¿Estás seguro de regenerar '${target.name}' con el motor actual?\nEsto fusionará todos los addons nuevamente y reemplazará el contenido actual.",
@@ -164,12 +166,12 @@ fun StudioScreen(
                         modpackToRegenerate = null
                         viewModel.regenerateModpack(target.id)
                     }) {
-                        Text("Aceptar", color = MaterialTheme.colorScheme.primary)
+                        Text(stringResource(R.string.common_accept), color = MaterialTheme.colorScheme.primary)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { modpackToRegenerate = null }) {
-                        Text("Cancelar", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.common_cancel), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             )
@@ -261,7 +263,7 @@ fun StudioScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Start,
                         content = {
-                            Icon(Icons.Default.Upload, contentDescription = "Importar")
+                            Icon(Icons.Default.Upload, contentDescription = stringResource(R.string.cd_import))
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 text = "Importar Modpack",
@@ -330,7 +332,7 @@ fun StudioScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Lightbulb,
-                                contentDescription = "Información",
+                                contentDescription = stringResource(R.string.cd_info),
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -581,7 +583,7 @@ fun MyModpacksScreen(
                         horizontalArrangement = Arrangement.End
                     ) {
                         TextButton(onClick = { showShareDialog = false }) {
-                            Text("Cerrar")
+                            Text(stringResource(R.string.common_close))
                         }
                     }
                 }
@@ -621,7 +623,7 @@ fun MyModpacksScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Volver"
+                            contentDescription = stringResource(R.string.common_back)
                         )
                     }
                     Text(
@@ -666,7 +668,7 @@ fun MyModpacksScreen(
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Icon(Icons.Outlined.FolderOpen, null, Modifier.size(64.dp).alpha(0.4f))
-                    Text("Sin modpacks guardados", style = MaterialTheme.typography.titleMedium, modifier = Modifier.alpha(0.6f))
+                    Text(stringResource(R.string.studio_no_modpacks), style = MaterialTheme.typography.titleMedium, modifier = Modifier.alpha(0.6f))
                     Text(
                         "Toca + para explorar fuentes y crear tu primer modpack",
                         style = MaterialTheme.typography.bodySmall,
@@ -680,7 +682,7 @@ fun MyModpacksScreen(
                     ) {
                         Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Explorar fuentes")
+                        Text(stringResource(R.string.studio_explore_sources))
                     }
                 }
             }
@@ -717,10 +719,10 @@ fun MyModpacksScreen(
     }
 
     modpackToDelete?.let { m ->
-        AlertDialog(onDismissRequest = { modpackToDelete = null }, title = { Text("Eliminar modpack") },
-            text = { Text("¿Eliminar '${m.name}'? Se borrará del historial de PackForge.") },
-            confirmButton = { TextButton(onClick = { onDelete(m.id); modpackToDelete = null }) { Text("Eliminar", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { modpackToDelete = null }) { Text("Cancelar") } }
+        AlertDialog(onDismissRequest = { modpackToDelete = null }, title = { Text(stringResource(R.string.studio_delete_title)) },
+            text = { Text(stringResource(R.string.studio_delete_message, m.name)) },
+            confirmButton = { TextButton(onClick = { onDelete(m.id); modpackToDelete = null }) { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { modpackToDelete = null }) { Text(stringResource(R.string.common_cancel)) } }
         )
     }
 }
@@ -878,7 +880,7 @@ fun ModpackLibraryCard(
                     coverModel != null -> {
                         CachedAsyncImage(
                             model = coverModel,
-                            contentDescription = "Portada de ${modpack.name}",
+                            contentDescription = stringResource(R.string.cd_cover_of, modpack.name),
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop
                         )
@@ -998,20 +1000,20 @@ fun ModpackLibraryCard(
                     onClick = onLoad,
                     modifier = Modifier.weight(1f).height(38.dp).bounceClick(scaleDown = 0.88f) { onLoad() }
                 ) {
-                    Icon(Icons.Default.Edit, contentDescription = "Editar", modifier = Modifier.size(17.dp))
+                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.cd_edit), modifier = Modifier.size(17.dp))
                 }
                 FilledTonalIconButton(
                     onClick = onShare,
                     modifier = Modifier.weight(1f).height(38.dp).bounceClick(scaleDown = 0.88f) { onShare() }
                 ) {
-                    Icon(Icons.Default.Share, contentDescription = "Compartir", modifier = Modifier.size(17.dp))
+                    Icon(Icons.Default.Share, contentDescription = stringResource(R.string.cd_share), modifier = Modifier.size(17.dp))
                 }
                 // Re-fusionar con el motor actual (anti-obsolescencia)
                 FilledTonalIconButton(
                     onClick = onRegenerate,
                     modifier = Modifier.weight(1f).height(38.dp).bounceClick(scaleDown = 0.88f) { onRegenerate() }
                 ) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Regenerar con el motor actual", modifier = Modifier.size(17.dp))
+                    Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.cd_regenerate_engine), modifier = Modifier.size(17.dp))
                 }
                 IconButton(
                     onClick = onDelete,
@@ -1019,7 +1021,7 @@ fun ModpackLibraryCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Delete,
-                        contentDescription = "Eliminar",
+                        contentDescription = stringResource(R.string.common_delete),
                         modifier = Modifier.size(18.dp),
                         tint = MaterialTheme.colorScheme.error
                     )

@@ -1,5 +1,7 @@
 package com.packforge.app.ui.screens
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -48,7 +50,7 @@ fun LandscapeSiteSelector(
         IconButton(onClick = { expanded = !expanded }) {
             Icon(
                 imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = "Cambiar sitio",
+                contentDescription = stringResource(R.string.cd_change_site),
                 tint = MaterialTheme.colorScheme.onSurface
             )
         }
@@ -66,7 +68,7 @@ fun LandscapeSiteSelector(
                             expanded = false
                         },
                         trailingIcon = {
-                            if (site == currentSite) Icon(Icons.Default.Check, contentDescription = "Seleccionado", tint = MaterialTheme.colorScheme.primary)
+                            if (site == currentSite) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.cd_selected), tint = MaterialTheme.colorScheme.primary)
                         }
                     )
                 }

@@ -1,5 +1,7 @@
 package com.packforge.app.ui.screens
 
+import com.packforge.app.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -127,8 +129,8 @@ fun ConflictsScreen(
                 )
             ) {
                 Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Estrategia de Conflicto", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Cómo actuar si dos addons modifican el mismo archivo (no fusionable):", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.conflict_strategy_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.conflict_strategy_help), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -190,7 +192,7 @@ fun ConflictSummaryCard(total: Int, resolved: Int, conflicts: List<Conflict>) {
     ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Resolución de Conflictos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.conflict_resolution_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Badge(containerColor = if (criticalUnresolved > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primaryContainer) {
                     Text("$resolved/$total", color = if (criticalUnresolved > 0) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimaryContainer)
                 }
@@ -234,7 +236,7 @@ fun ConflictSummaryCard(total: Int, resolved: Int, conflicts: List<Conflict>) {
                 ) {
                     Icon(
                         imageVector = Icons.Default.Warning,
-                        contentDescription = "Advertencia",
+                        contentDescription = stringResource(R.string.cd_warning),
                         tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(16.dp)
                     )
@@ -247,11 +249,11 @@ fun ConflictSummaryCard(total: Int, resolved: Int, conflicts: List<Conflict>) {
                 ) {
                     Icon(
                         imageVector = Icons.Default.CheckCircle,
-                        contentDescription = "Éxito",
+                        contentDescription = stringResource(R.string.cd_success),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(16.dp)
                     )
-                    Text("Listo para exportar", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.conflict_ready_to_export), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -305,7 +307,7 @@ fun ConflictCard(conflict: Conflict, addons: List<Addon>, resolution: String?, o
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(conflict.description, style = MaterialTheme.typography.bodySmall)
 
-                    Text("Ganador de la fusión:", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.conflict_winner_label), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
 
                     val affected = addons.filter { conflict.affectedAddonIds.contains(it.id) }
                     affected.forEach { addon ->
@@ -320,7 +322,7 @@ fun ConflictCard(conflict: Conflict, addons: List<Addon>, resolution: String?, o
                                 RadioButton(selected = selected, onClick = { onResolve(conflict.id, addon.id) })
                                 Column {
                                     Text(addon.name, style = MaterialTheme.typography.bodyMedium, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
-                                    Text("Prioridad original: #${addon.priority + 1}", style = MaterialTheme.typography.labelSmall)
+                                    Text(stringResource(R.string.conflict_original_priority, addon.priority + 1), style = MaterialTheme.typography.labelSmall)
                                 }
                             }
                         }
@@ -338,7 +340,7 @@ fun ConflictCard(conflict: Conflict, addons: List<Addon>, resolution: String?, o
                             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.AutoMirrored.Filled.MergeType, null, tint = if (isMerge) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.width(12.dp))
-                                Text("Intentar fusión de código (Beta)", style = MaterialTheme.typography.bodyMedium)
+                                Text(stringResource(R.string.conflict_try_code_merge), style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                     }
@@ -446,7 +448,7 @@ fun MergeConflictsSection(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.MergeType,
-                        contentDescription = "Batalla",
+                        contentDescription = stringResource(R.string.cd_battle),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(24.dp)
                     )
@@ -578,7 +580,7 @@ fun ConflictBattleCard(
 
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.MergeType,
-                    contentDescription = "VS",
+                    contentDescription = stringResource(R.string.cd_vs),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(24.dp)
                 )
