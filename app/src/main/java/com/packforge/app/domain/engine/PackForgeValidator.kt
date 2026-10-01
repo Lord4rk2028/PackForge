@@ -412,12 +412,18 @@ object PackForgeValidator {
         val animationsDir = File(rpDir, "animations")
         animationsDir.mkdirs()
 
-        val entityFiles = entityDir.listFiles()?.filter { it.name.endsWith(".entity.json") }?.toList() ?: emptyList()
+        // ⭐ DUCK TYPING: se aceptan TODOS los .json de entity/ y se clasifican por
+        // contenido raíz "minecraft:client_entity" (NO por extensión .entity.json),
+        // para no ignorar entidades con nombres ofuscados (ej: .fT.json).
+        val entityFiles = entityDir.listFiles()
+            ?.filter { it.extension.equals("json", ignoreCase = true) }
+            ?.toList() ?: emptyList()
         var processed = 0
 
         for (entityFile in entityFiles) {
             try {
                 val json = JSONObject(entityFile.readText())
+                if (!json.has("minecraft:client_entity")) continue
                 val desc = json.optJSONObject("minecraft:client_entity")?.optJSONObject("description") ?: json.optJSONObject("description")
 
                 // Validar texturas

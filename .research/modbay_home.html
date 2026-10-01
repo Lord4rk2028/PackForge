@@ -1,0 +1,1105 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head> 
+	<script>
+		(function () {
+			try {
+				var saved = localStorage.getItem('theme');
+				var theme;
+
+				if (saved) {
+					theme = saved;
+				} else {
+					theme = 'system';
+				}
+
+				var effective = theme === 'system'
+					? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+					: theme;
+
+				document.documentElement.classList.add(effective);
+
+				var icon = document.querySelector('.control .icon');
+				if (icon) {
+					if (theme === 'system') {
+						icon.className = 'icon icon--settings';
+					} else {
+						icon.className = `icon ${effective === 'dark' ? 'icon--sun' : 'icon--moon'}`;
+					}
+				}
+			} catch (e) { console.log(e) }
+		})();
+	</script>
+
+	<title>ModBay | Everything for Minecraft PE</title>
+<meta name="charset" content="utf-8">
+<meta name="title" content="ModBay | Everything for Minecraft PE">
+<meta name="description" content="ModBay is a portal for Minecraft PE fans. Big bay of Add-ons, Mods, News, Guides, Maps and Textures. Create an account and join the community.">
+<link rel="canonical" href="https://modbay.org/">
+<link rel="alternate" type="application/rss+xml" title="ModBay | Everything for Minecraft PE" href="https://modbay.org/rss.xml">
+<link rel="search" type="application/opensearchdescription+xml" title="ModBay | Everything for Minecraft PE" href="https://modbay.org/index.php?do=opensearch">
+<meta property="twitter:card" content="summary">
+<meta property="twitter:title" content="ModBay | Everything for Minecraft PE">
+<meta property="twitter:description" content="ModBay is a portal for Minecraft PE fans. Big bay of Add-ons, Mods, News, Guides, Maps and Textures. Create an account and join the community.">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ModBay">
+<meta property="og:title" content="ModBay | Everything for Minecraft PE">
+<meta property="og:description" content="ModBay is a portal for Minecraft PE fans. Big bay of Add-ons, Mods, News, Guides, Maps and Textures. Create an account and join the community.">
+<meta property="og:url" content="https://modbay.org/">
+<meta property="og:image" content="https://modbay.org/templates/Modbay2/images/logo_s.png">
+<meta property="og:image:secure_url" content="https://modbay.org/templates/Modbay2/images/logo_s.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="399">
+<meta property="og:image:height" content="96">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<link rel="shortcut icon" href="/templates/Modbay2/images/favicon.ico">
+	<link rel="apple-touch-icon" sizes="180x180" href="/templates/Modbay2/images/apple-touch-icon-180x180.png?2">
+	<link rel="icon" type="image/png" href="/templates/Modbay2/images/apple-touch-icon-180x180.png?2">
+	<link rel="mask-icon" href="/templates/Modbay2/images/safari-pinned-tab.svg?1" color="#5bbad5">
+	<link rel="manifest" href="/templates/Modbay2/images/site.webmanifest?2">
+	<meta name="msapplication-TileColor" content="#fff">
+	<meta name="theme-color" content="#fff">
+	<link rel="stylesheet" href="/templates/Modbay2/css/styles.min.css?1756106150">
+	
+    
+
+    
+	
+
+        
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1523415454330391" crossorigin="anonymous"></script>
+      
+    <script>
+(function (id, cfg) {
+  var s = window.screen || 0, w = s.width, h = s.height;
+  var bot = navigator.webdriver === true || (w === h && w >= 1000) || (w === 1280 && h === 1200) || (w === 1800 && h === 1125) || /HeadlessChrome/.test(navigator.userAgent);
+  if (bot) { window.gtag = function () {}; return; } /* ga-guard */
+  window.dataLayer = window.dataLayer || [];
+  window.gtag = function () { dataLayer.push(arguments); };
+  gtag('js', new Date());
+  gtag('config', id, cfg || {});
+  var g = document.createElement('script'); g.async = true; g.src = 'https://www.googletagmanager.com/gtag/js?id=' + id; document.head.appendChild(g);
+})('G-1FM2FL4W5Q', null);
+</script>
+</head>
+<body>
+	
+<script src="/engine/classes/min/index.php?g=general3&amp;v=06b09"></script>
+<script src="/engine/classes/min/index.php?f=engine/classes/js/jqueryui3.js,engine/classes/js/dle_js.js,engine/fcsh/assets/js/xcore_site.min.js&amp;v=06b09" defer></script>
+	<header class="header">
+		<div class="header__container">
+			<div class="header__container-inner">
+				<div class="header__col">
+					<div class="header__btn header__btn--nav"><span class="icon icon--burger"></span></div>
+					<a class="logo logo--small" href="/"><picture><img class="logo" src="/templates/Modbay2/images/logo_s.png" alt="ModBay logo"></picture></a>
+				</div>
+				<div class="header__col">
+					<div class="header__btn header__btn--search"><span class="icon icon--search"></span></div>
+					<div data-nosnippet class="header__btn header__btn--text"><a href="#" class="log_in">Log In</a></div>
+				</div>
+			</div>
+		</div>
+		<div class="header__container header__container--search">
+			<form method="get" action="/index.php?do=search&full_search=1" class="search search--mobile">
+				<div class="search__wrapper"><span class="icon icon--search"></span>
+					<div class="search__close"><span class="icon icon--close"></span></div>
+					<input class="search__input" type="search" name="story" placeholder="Search..." autocomplete="off">
+				</div>
+				<input type="hidden" name="do" value="search"><input type="hidden" name="subaction" value="search">
+			</form>
+		</div>
+	</header>
+	<div class="grid">
+		<div class="grid__container grid__container--indent-bottom-big">
+			<div class="grid__col grid__col--small" data-position="left">
+				<aside class="sidebar">
+					<div class="sidebar__container">
+						<div class="sidebar__row sidebar__row--space-hor sidebar__row--space-between">
+							<div class="sidebar__btn"><span class="icon icon--close"></span></div>
+							<a class="logo logo--small" href="/">
+								<picture><img class="logo" src="/templates/Modbay2/images/logo_s.png" alt="ModBay logo"></picture>
+							</a>
+							<div class="control"><span class="icon"></span></div>
+						</div>
+						<div class="sidebar__row sidebar__row--border-bottom">
+							<form method="get" action="/index.php?do=search&full_search=1" class="search">
+								<div class="search__wrapper"><span class="icon icon--search"></span>
+									<input class="search__input" type="search" name="story" placeholder="Search..." autocomplete="off">
+								</div>
+								<input type="hidden" name="do" value="search"><input type="hidden" name="subaction" value="search">
+							</form>
+						</div>
+						<div class="sidebar__scrollable-unit">
+							<div class="sidebar__row">
+								<div class="nav nav--indent-top">
+									<div class="nav__list"><a class="nav__item nav__item--active" href="/"><span class="icon icon--catalog"></span>Feed</a><a class="nav__item" href="https://modbay.org/news/"><span class="icon icon--cm1"></span>News</a><a class="nav__item" href="https://modbay.org/guides/"><span class="icon icon--cm2"></span>Guides</a><a class="nav__item" href="https://modbay.org/mods/"><span class="icon icon--cm3"></span>Mods</a><a class="nav__item" href="https://modbay.org/maps/"><span class="icon icon--cm4"></span>Maps</a><a class="nav__item" href="https://modbay.org/textures/"><span class="icon icon--cm5"></span>Texture Packs</a><a class="nav__item" href="https://modbay.org/seeds/"><span class="icon icon--cm9"></span>Seeds</a></div>
+								</div>
+							</div>
+							<div class="sidebar__row sidebar__row--indent-top">
+								<div class="nav nav--indent-bottom">
+									<div class="nav__list"><a class="nav__item" href="/ratings/"><span class="icon icon--star"></span>User Rankings</a><a class="nav__item" href="/about.html"><span class="icon icon--info"></span>About</a><a class="nav__item" href="/contact.html"><span class="icon icon--notebook"></span>Contact</a></div>
+								</div>
+							</div>
+							<div class="sidebar__row sidebar__row--space-hor" data-nosnippet>
+								<div class="btn btn--icon-plus"><a href="/addnews.html" class="log_in"><span class="icon icon--plus"></span>Publish</a></div>
+							</div>
+							<div class="sidebar__row sidebar__row--space-hor">
+								<div class="social">
+									<a class="sc__item sc__item--youtube" href="https://www.youtube.com/channel/UCFx8x3HcZaZTghwn7FAMLIA" target="_blank" aria-label="ModBay on YouTube">
+										<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="none">
+											<rect width="31" height="31" x=".5" y=".5" fill="#fff" rx="5.5"></rect>
+											<path fill="#1A1B35" d="M23.652 12.613c-.184-.61-.586-1.128-1.276-1.29C21.128 11.027 16 11 16 11s-5.127.027-6.376.323c-.69.162-1.09.68-1.276 1.29C8.014 13.719 8 16 8 16s.014 2.281.348 3.387c.184.61.586 1.128 1.276 1.29C10.873 20.973 16 21 16 21s5.127-.027 6.377-.323c.689-.162 1.091-.68 1.275-1.29C23.986 18.281 24 16 24 16s-.014-2.281-.348-3.387Z"></path>
+											<path fill="#fff" d="m18.588 16.001-4.235-2.083v4.167"></path>
+											<rect width="31" height="31" x=".5" y=".5" stroke="#E4ECF1" rx="5.5"></rect>
+										</svg>
+									</a>
+									<a class="sc__item sc__item--twitter" href="https://x.com/modbay_" target="_blank" aria-label="ModBay on X">
+										<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="none">
+											<rect width="31" height="31" x=".5" y=".5" fill="#fff" rx="5.5"></rect>
+											<path fill="#1A1B35" d="M 11.902344 8.464844 L 19.347656 0 L 17.582031 0 L 11.117188 7.347656 L 5.957031 0 L 0 0 L 7.808594 11.113281 L 0 19.988281 L 1.765625 19.988281 L 8.589844 12.226562 L 14.042969 19.988281 L 20 19.988281 Z M 9.484375 11.210938 L 8.695312 10.105469 L 2.398438 1.300781 L 5.109375 1.300781 L 10.191406 8.40625 L 10.980469 9.511719 L 17.585938 18.75 L 14.875 18.75 Z M 9.484375 11.210938" style="transform: translate(6px, 6px);"></path>
+											<rect width="31" height="31" x=".5" y=".5" stroke="#E4ECF1" rx="5.5"></rect>
+										</svg>
+									</a>
+									<a class="sc__item sc__item--discord" href="https://discord.com/invite/DpNJ5fApJM" target="_blank" aria-label="ModBay on Discord">
+										<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="none">
+											<rect width="31" height="31" x=".5" y=".5" fill="#fff" rx="5.5"></rect>
+											<path fill="#1A1B35" d="M22.664 9.887c-1.22-.568-2.54-.98-3.914-1.219a.083.083 0 0 0-.064.028 12.47 12.47 0 0 0-.486.999 14.75 14.75 0 0 0-4.4 0 9.214 9.214 0 0 0-.495-1c-.01-.018-.037-.027-.064-.027-1.375.238-2.686.65-3.915 1.22-.009 0-.018.008-.027.018-2.493 3.73-3.18 7.36-2.842 10.954 0 .018.01.036.028.046a15.926 15.926 0 0 0 4.803 2.429c.028.009.055 0 .064-.019.367-.504.697-1.035.981-1.595.018-.036 0-.073-.037-.082a11.274 11.274 0 0 1-1.503-.715c-.037-.018-.037-.073-.01-.101.102-.073.203-.156.303-.23a.057.057 0 0 1 .065-.008c3.153 1.439 6.554 1.439 9.67 0a.056.056 0 0 1 .065.009c.1.082.201.156.302.238.037.028.037.083-.01.101-.476.284-.98.513-1.502.715-.037.01-.046.055-.037.082.293.56.623 1.091.98 1.596.028.009.056.018.083.009a15.863 15.863 0 0 0 4.813-2.43.05.05 0 0 0 .027-.045c.404-4.153-.669-7.755-2.841-10.954-.01-.01-.019-.019-.037-.019ZM12.81 18.67c-.944 0-1.733-.871-1.733-1.944 0-1.072.77-1.943 1.733-1.943.971 0 1.741.88 1.732 1.944 0 1.072-.77 1.943-1.732 1.943Zm6.389 0c-.944 0-1.733-.871-1.733-1.944 0-1.072.77-1.943 1.733-1.943.972 0 1.742.88 1.732 1.944 0 1.072-.76 1.943-1.732 1.943Z"></path>
+											<rect width="31" height="31" x=".5" y=".5" stroke="#E4ECF1" rx="5.5"></rect>
+										</svg>
+									</a>
+								</div>
+							</div>
+						</div>
+					</div>
+				</aside>
+			</div>
+			<div class="grid__col grid__col--small" data-position="right">
+				<aside class="sidebar sidebar--simple">
+					<div class="auth">
+	<div data-nosnippet class="auth__btn auth__btn--log-in log_in"><a href="#">Log In</a></div>
+	<div class="auth__btn auth__btn--sign-up"><a href="/index.php?do=register">Sign Up</a></div>
+</div>
+<div class="login__container" id="log_in" style="display:none;">
+	<form id="log_in_form" method="post">
+		<div class="login__row login__row--header"><div class="login__title">Log in</div></div>
+		<div class="login__row">
+			<label id="login_check" class="login__label" for="login_name">Login or E-Mail</label>
+			<input class="login__input-text login__input-text--login" type="text" id="login_name" name="login_name" placeholder="Enter your Login or E-Mail" required><span class="login__message">The Login or E-Mail was not found</span>
+		</div>
+		<div class="login__row">
+			<div class="login__row-inner"><label class="login__label" for="login_password">Password</label><a class="login__link" href="https://modbay.org/index.php?do=lostpassword">Forgot?</a></div>
+			<input class="login__input-text login__input-text--password" type="password" id="login_password" name="login_password" placeholder="Enter the password" required><span class="login__message">Incorrect password</span>
+		</div>
+		<div class="login__row" style="text-align: center;">
+			<div id="login_recaptcha" class="g-recaptcha" data-sitekey="adda2b00-4b78-41e8-892e-089a8e36a30c" data-theme="light" data-expired-callback="login_butt_dis" data-callback="correctCaptcha" style="height:78px; transform:scale(0.92); -webkit-transform:scale(0.92); transform-origin:center;"></div>
+			<script>
+				function correctCaptcha(resp) { if (resp.length != 0) { $("#login_butt").removeAttr("disabled"); } else { $("#login_butt").prop("disabled", true); }}
+				function login_butt_dis() { $("#login_butt").prop("disabled", true); }
+			</script>
+		</div>
+		<div class="login__row login__row--indent-bottom-small"><input id="login_butt" class="login__btn login__btn--submit" type="submit" value="Log in" disabled></div>
+		<div class="login__row login__row--indent-bottom-small"><a class="login__sign-in login__sign-in--google" href="https://accounts.google.com/o/oauth2/auth?client_id=1071545918235-7j11nr5f5q0j2buvbp1f18i71kja6d1u.apps.googleusercontent.com&amp;redirect_uri=https%3A%2F%2Fmodbay.org%2Findex.php%3Fdo%3Dauth-social%26provider%3Dgoogle&amp;scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.email+https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fuserinfo.profile&amp;state=58d412f5ff1d4aed1541c92a0acec790&amp;response_type=code">Sign in&nbsp;with Google</a></div>
+		<div class="login__row"><a class="login__sign-in login__sign-in--twitter" href="https://twitter.com/i/oauth2/authorize?response_type=code&amp;client_id=RWRvQklMSzNOck1DU2c1NHdfOTQ6MTpjaQ&amp;redirect_uri=https%3A%2F%2Fmodbay.org%2Findex.php%3Fdo%3Dauth-social%26provider%3Dtwitter&amp;scope=tweet.read+tweet.write+offline.access+users.read&amp;state=58d412f5ff1d4aed1541c92a0acec790&amp;code_challenge=AXumTIB2_y7heCRqiYZxLIM6pbN-d3iwZumcfzxNtXE&amp;code_challenge_method=plain">Sign in&nbsp;with X</a></div>
+		<div class="login__row"><p class="login__text">New to&nbsp;ModBay? <a href="/index.php?do=register">Sign Up</a></p></div>
+		<input name="login" type="hidden" id="login" value="submit">
+	</form>
+</div>
+					<div class="sidebar-nav">
+						<div class="sidebar-nav__item sidebar-nav__item--active" data-content="1">Top posts</div>
+						<div class="sidebar-nav__item" data-content="2">Recent comments</div>
+						<div class="sidebar-nav__close">
+							<div class="icon icon--close"></div>
+						</div>
+					</div>
+					<div class="sidebar-widget sidebar-widget--default" data-content="1">
+						<div class="sidebar-widget__row sidebar-widget__row--top">
+							<div class="sidebar-widget__title">Top posts</div>
+							<div class="sidebar-widget__btn"><span class="icon icon--arrow-top-small"></span><span class="icon icon--arrow-bottom-small"></span></div>
+						</div>
+						<div class="sidebar-widget__row sidebar-widget__row--bottom">
+							<div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2022-12-08T12:08:36-08:00">1 Jun 2025</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/365-better-on-bedrock.html">Better on Bedrock v1.0 -- Stable</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2023-10-28T02:01:21-07:00">27 Oct 2025</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/1244-fearcraft-addon.html">FearCraft the Experiment [Inspired by Java] {Public Beta}</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2023-09-07T08:35:37-07:00">1 Sep 2026</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/1018-vanillanimals.html">VanillAnimals Update v1.1.5 || Minecraft 26.0+ Support!!</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2022-08-10T01:49:35-07:00">14 Apr 2025</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/104-backpack-plus.html">Backpack Plus Addon</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2023-04-15T12:03:44-07:00">29 Nov 2025</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/655-raboys-zombie-apocalypse.html">Raboy&#039;s Zombie Apocalypse v1.2.47 | Improved Performance, New Worldgen and 1.21.100+ Support!</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2023-02-06T08:35:35-08:00">17 Sep 2025</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/499-the-haunted-by-herobrine.html">The Haunted by Herobrine Addon [The Classic Experience]</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2022-12-21T23:30:24-08:00">24 Aug 2025</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/370-forsaken-odyssey.html">Forsaken Odyssey (v1.18)</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2023-06-01T22:53:45-07:00">25 Jan 2025</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/764-mhafys-ship.html">Mhafy&#039;s Ship: Naval Warfare [v0.70.0 Bedrock 1.21.10+]</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2025-04-10T09:15:39-07:00">29 Nov 2025</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/4265-the-knocker-remake-with-unique-ai.html">The Knocker Remake [With Unique AI]</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2024-04-30T00:09:31-07:00">22 Feb 2025</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/1917-the-knocker-addon.html">The Knocker Addon for Bedrock {Unofficial Port from a Java Mod by M_Productions}</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2023-01-24T15:56:26-08:00">4 Jul 2025</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/463-raiyons-dynamic-light.html">Raiyon&#039;s Dynamic Lightning</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2023-01-24T15:19:53-08:00">5 Jul 2025</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/462-raiyons-java-combat.html">Raiyon&#039;s Java Combat</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2023-10-11T07:17:54-07:00">30 Aug 2026</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/1165-banner-markers.html">Banner Markers</a></div>
+</div><div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a class="sidebar-widget__tag sw_color-c3" href="https://modbay.org/mods/">Mods</a>
+		<div class="sidebar-widget__date"><time datetime="2022-08-09T03:06:06-07:00">11 Jul 2025</time></div>
+	</div>
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle"><a class="sidebar-widget__text" href="https://modbay.org/mods/97-raiyons-more-shields-addon.html">Raiyon&#039;s More Vanilla Shields</a></div>
+</div>
+						</div>
+					</div>
+					<div class="sidebar-widget sidebar-widget--default" data-content="2">
+						<div class="sidebar-widget__row sidebar-widget__row--top">
+							<div class="sidebar-widget__title">Recent comments</div>
+							<div class="sidebar-widget__btn"><span class="icon icon--arrow-top-small"></span><span class="icon icon--arrow-bottom-small"></span></div>
+						</div>
+						<div class="sidebar-widget__row sidebar-widget__row--bottom">
+							<div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		
+		<div class="sidebar-widget__avatar-wrap">
+			<img class="sidebar-widget__avatar" src="/templates/Modbay2/dleimages/noavatar.svg" alt="No avatar image">
+			
+		</div>
+		<span class="sidebar-widget__name">Ggg</span>
+		
+		
+
+		
+		
+
+		<div class="sidebar-widget__date">
+			<time datetime="2026-09-27T12:58:49-07:00">Today, 12:58</time>
+		</div>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle">
+		<a class="sidebar-widget__text" href="https://modbay.org/textures/7547-villager-news-indonesian-subtitles.html#comment-id-23005">Bro make villager news addon plz im not spending money villager</a>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--bottom">
+		<a class="sidebar-widget__text sidebar-widget__text--selected" href="https://modbay.org/textures/7547-villager-news-indonesian-subtitles.html#comment-id-23005">Villager News 1.0 Indonesian Subtitles v1.0</a>
+	</div>
+</div>
+<div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a href="https://modbay.org/user/blackpistol/">
+		<div class="sidebar-widget__avatar-wrap">
+			<img class="sidebar-widget__avatar" src="/uploads/fotos/foto_29456.webp" alt="BlackPistol profile avatar">
+			
+		</div>
+		<span class="sidebar-widget__name">BlackPistol</span>
+		
+		
+
+		
+		</a>
+
+		<div class="sidebar-widget__date">
+			<time datetime="2026-09-27T11:00:20-07:00">Today, 11:00</time>
+		</div>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle">
+		<a class="sidebar-widget__text" href="https://modbay.org/mods/7605-mekanism-fissile.html#comment-id-23004">...3 years old. Now secondly, even if I setup everything exactly</a>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--bottom">
+		<a class="sidebar-widget__text sidebar-widget__text--selected" href="https://modbay.org/mods/7605-mekanism-fissile.html#comment-id-23004">Mekanism fissile</a>
+	</div>
+</div>
+<div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a href="https://modbay.org/user/blackpistol/">
+		<div class="sidebar-widget__avatar-wrap">
+			<img class="sidebar-widget__avatar" src="/uploads/fotos/foto_29456.webp" alt="BlackPistol profile avatar">
+			
+		</div>
+		<span class="sidebar-widget__name">BlackPistol</span>
+		
+		
+
+		
+		</a>
+
+		<div class="sidebar-widget__date">
+			<time datetime="2026-09-27T10:57:12-07:00">Today, 10:57</time>
+		</div>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle">
+		<a class="sidebar-widget__text" href="https://modbay.org/mods/7605-mekanism-fissile.html#comment-id-23003">But first of all, the blocks and everything are set up just like</a>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--bottom">
+		<a class="sidebar-widget__text sidebar-widget__text--selected" href="https://modbay.org/mods/7605-mekanism-fissile.html#comment-id-23003">Mekanism fissile</a>
+	</div>
+</div>
+<div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		
+		<div class="sidebar-widget__avatar-wrap">
+			<img class="sidebar-widget__avatar" src="/templates/Modbay2/dleimages/noavatar.svg" alt="No avatar image">
+			
+		</div>
+		<span class="sidebar-widget__name">Chaoshedgewolf</span>
+		
+		
+
+		
+		
+
+		<div class="sidebar-widget__date">
+			<time datetime="2026-09-27T09:44:59-07:00">Today, 09:44</time>
+		</div>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle">
+		<a class="sidebar-widget__text" href="https://modbay.org/mods/7598-minimap.html#comment-id-23002">I have this mod it’s great but the mini map doesn’t stay on the</a>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--bottom">
+		<a class="sidebar-widget__text sidebar-widget__text--selected" href="https://modbay.org/mods/7598-minimap.html#comment-id-23002">Minimap 1.0</a>
+	</div>
+</div>
+<div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		
+		<div class="sidebar-widget__avatar-wrap">
+			<img class="sidebar-widget__avatar" src="/templates/Modbay2/dleimages/noavatar.svg" alt="No avatar image">
+			
+		</div>
+		<span class="sidebar-widget__name">Chaoshedgewolf</span>
+		
+		
+
+		
+		
+
+		<div class="sidebar-widget__date">
+			<time datetime="2026-09-27T07:13:04-07:00">Today, 07:13</time>
+		</div>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle">
+		<a class="sidebar-widget__text" href="https://modbay.org/textures/4453-particles-particle.html#comment-id-23001">Just for like so different textures for different things you run</a>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--bottom">
+		<a class="sidebar-widget__text sidebar-widget__text--selected" href="https://modbay.org/textures/4453-particles-particle.html#comment-id-23001">Particles Particle v1.4 Update</a>
+	</div>
+</div>
+<div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a href="https://modbay.org/user/rihanaismiyati/">
+		<div class="sidebar-widget__avatar-wrap">
+			<img class="sidebar-widget__avatar" src="/uploads/fotos/foto_58723.webp" alt="rihanaismiyati profile avatar">
+			
+		</div>
+		<span class="sidebar-widget__name">rihanaismiyati</span>
+		
+		
+
+		
+		</a>
+
+		<div class="sidebar-widget__date">
+			<time datetime="2026-09-27T04:32:50-07:00">Today, 04:32</time>
+		</div>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle">
+		<a class="sidebar-widget__text" href="https://modbay.org/textures/7547-villager-news-indonesian-subtitles.html#comment-id-23000">https://modbay.org/textures/7547-villager-news-indonesian-subtitles</a>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--bottom">
+		<a class="sidebar-widget__text sidebar-widget__text--selected" href="https://modbay.org/textures/7547-villager-news-indonesian-subtitles.html#comment-id-23000">Villager News 1.0 Indonesian Subtitles v1.0</a>
+	</div>
+</div>
+<div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a href="https://modbay.org/user/b5074146/">
+		<div class="sidebar-widget__avatar-wrap">
+			<img class="sidebar-widget__avatar" src="/uploads/fotos/foto_46035.webp" alt="bohdan2986 profile avatar">
+			
+		</div>
+		<span class="sidebar-widget__name">bohdan2986</span>
+		
+		
+
+		
+		</a>
+
+		<div class="sidebar-widget__date">
+			<time datetime="2026-09-27T01:48:46-07:00">Today, 01:48</time>
+		</div>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle">
+		<a class="sidebar-widget__text" href="https://modbay.org/mods/7605-mekanism-fissile.html#comment-id-22999">Oh, sorry! I confused this with a comment under my own mod.</a>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--bottom">
+		<a class="sidebar-widget__text sidebar-widget__text--selected" href="https://modbay.org/mods/7605-mekanism-fissile.html#comment-id-22999">Mekanism fissile</a>
+	</div>
+</div>
+<div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a href="https://modbay.org/user/b5074146/">
+		<div class="sidebar-widget__avatar-wrap">
+			<img class="sidebar-widget__avatar" src="/uploads/fotos/foto_46035.webp" alt="bohdan2986 profile avatar">
+			
+		</div>
+		<span class="sidebar-widget__name">bohdan2986</span>
+		
+		
+
+		
+		</a>
+
+		<div class="sidebar-widget__date">
+			<time datetime="2026-09-27T01:47:20-07:00">Today, 01:47</time>
+		</div>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle">
+		<a class="sidebar-widget__text" href="https://modbay.org/mods/7605-mekanism-fissile.html#comment-id-22998">I am the original creator of this add-on. I created it myself from</a>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--bottom">
+		<a class="sidebar-widget__text sidebar-widget__text--selected" href="https://modbay.org/mods/7605-mekanism-fissile.html#comment-id-22998">Mekanism fissile</a>
+	</div>
+</div>
+<div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		<a href="https://modbay.org/user/blackpistol/">
+		<div class="sidebar-widget__avatar-wrap">
+			<img class="sidebar-widget__avatar" src="/uploads/fotos/foto_29456.webp" alt="BlackPistol profile avatar">
+			
+		</div>
+		<span class="sidebar-widget__name">BlackPistol</span>
+		
+		
+
+		
+		</a>
+
+		<div class="sidebar-widget__date">
+			<time datetime="2026-09-27T00:18:45-07:00">Today, 00:18</time>
+		</div>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle">
+		<a class="sidebar-widget__text" href="https://modbay.org/mods/7605-mekanism-fissile.html#comment-id-22997">I definitely think you should update this add-on on behalf of the</a>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--bottom">
+		<a class="sidebar-widget__text sidebar-widget__text--selected" href="https://modbay.org/mods/7605-mekanism-fissile.html#comment-id-22997">Mekanism fissile</a>
+	</div>
+</div>
+<div class="sidebar-widget__item">
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--top">
+		
+		<div class="sidebar-widget__avatar-wrap">
+			<img class="sidebar-widget__avatar" src="/templates/Modbay2/dleimages/noavatar.svg" alt="No avatar image">
+			
+		</div>
+		<span class="sidebar-widget__name">Guest Luis</span>
+		
+		
+
+		
+		
+
+		<div class="sidebar-widget__date">
+			<time datetime="2026-09-26T22:33:20-07:00">Yesterday, 22:33</time>
+		</div>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--middle">
+		<a class="sidebar-widget__text" href="https://modbay.org/mods/7543-godzilla-bloodbath.html#comment-id-22996">Me gusta</a>
+	</div>
+
+	<div class="sidebar-widget__item-row sidebar-widget__item-row--bottom">
+		<a class="sidebar-widget__text sidebar-widget__text--selected" href="https://modbay.org/mods/7543-godzilla-bloodbath.html#comment-id-22996">Godzilla Bloodbath 2.0 | Remastered</a>
+	</div>
+</div>
+
+						</div>
+					</div>
+				</aside>
+			</div>
+			<div class="grid__col grid__col--big">
+				<div class="content">
+					<div class="content__row content__row--header content__row--indent-top">
+						<div class="content__col">
+							<h1 class="content__title">Feed</h1>
+						</div>
+						<div class="content__col" data-nosnippet>
+							<form class="select select--simple">
+								<div class="select__subtitle">Sort by:</div>
+								<select id="user_sort" class="chosen-select sort_main"><option value="2">Date</option><option value="3">Popularity</option><option value="7">Comments</option></select>
+							</form>
+							<div class="content__btn content__btn--activity"><span class="icon icon--thunderstorm"></span></div>
+						</div>
+					</div>
+					
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1523415454330391"
+     crossorigin="anonymous"></script>
+<!-- modbay-hor -->
+<ins class="adsbygoogle"
+     style="display:block"
+     data-ad-client="ca-pub-1523415454330391"
+     data-ad-slot="2601959324"
+     data-ad-format="auto"
+     data-full-width-responsive="true"></ins>
+<script>
+     (adsbygoogle = window.adsbygoogle || []).push({});
+</script>
+                    
+					<div id="main_content" class="content__row"><article class="post-card art7623" data-id="7623">
+	<div class="post-card__row">
+		<div class="post-card__col">
+			<a class="post-card__name-link" href="https://modbay.org/user/baycontent/"><img class="post-card__avatar" loading="lazy" decoding="async" src="/uploads/fotos/foto_48988.webp?1773054951" alt="BayContent profile avatar"><div class="post-card__name">BayContent</div>
+			
+			</a>
+			<div class="post-card__time"><time datetime="2026-09-27T16:22:46-07:00">Today, 16:22</time></div>
+        </div>
+		<div class="post-card__col">
+			<div class="tags"><a class="tags__item tags__item--c2" href="https://modbay.org/guides/">Guides</a></div>
+		</div>
+	</div>
+	<div class="post-card__row">
+		
+
+		<h2 class="post-card__title"><a href="https://modbay.org/guides/7623-what-is-a-mcpack-file-and-how-to-open-it.html">What Is a .mcpack File and How to Open It</a></h2>
+		<p class="post-card__descr">A .mcpack holds exactly one pack, which is why add-ons often come as two files. How to open them on every platform, and how to turn a .zip into a .mcpack.</p>
+		<a class="post-card__link-img" href="https://modbay.org/guides/7623-what-is-a-mcpack-file-and-how-to-open-it.html"><img class="lozad" loading="lazy" decoding="async" alt="Thumbnail: What Is a .mcpack File and How to Open It" src="/uploads/posts/2026-09/9e447d6cfc_what-is-a-_mcpack-file-and-how-to-open-it-cover.webp" srcset="/uploads/circle.svg 920w" data-srcset="/uploads/posts/2026-09/9e447d6cfc_what-is-a-_mcpack-file-and-how-to-open-it-cover.webp 920w" style="object-fit: contain; max-width: 100%; height: auto; aspect-ratio: 920 / 543;" width="920" height="543" sizes="100vw"></a>
+	</div>
+	<div class="post-card__row">
+		<div class="post-card__stat">
+			<div class="post-card__stat-item pc_like"><a href="#" class="log_in" onclick="doRatex('plus', '7623'); return false;" ><span class="icon icon--heart"></span><span class="post-card__stat-item-text"><span id="ratig-layer-7623"><span class="ratingtypeplus" >0</span></span></span></a></div>
+			<div class="post-card__stat-item"><a href="https://modbay.org/guides/7623-what-is-a-mcpack-file-and-how-to-open-it.html#comments"><span class="icon icon--comment"></span><span class="post-card__stat-item-text">0</span></a></div>
+			<div class="post-card__stat-item f_a"><span class="icon icon--eye"></span><span class="post-card__stat-item-text">0</span></div>
+		</div>
+	</div>
+</article><article class="post-card art7605" data-id="7605">
+	<div class="post-card__row">
+		<div class="post-card__col">
+			<a class="post-card__name-link" href="https://modbay.org/user/nyx777/"><img class="post-card__avatar" loading="lazy" decoding="async" src="/uploads/fotos/foto_58614.webp" alt="Nyx777 profile avatar"><div class="post-card__name">Nyx777</div>
+			
+			</a>
+			<div class="post-card__time"><time datetime="2026-09-24T18:05:59-07:00">Today, 15:30</time></div>
+        </div>
+		<div class="post-card__col">
+			<div class="tags"><a class="tags__item tags__item--c3" href="https://modbay.org/mods/">Mods</a></div>
+		</div>
+	</div>
+	<div class="post-card__row">
+		
+
+		<h2 class="post-card__title"><a href="https://modbay.org/mods/7605-mekanism-fissile.html">Mekanism fissile</a></h2>
+		<p class="post-card__descr">☢️ Mekanism Fissile is a Minecraft Bedrock addon adapting Mekanism's nuclear fission systems, adding machines and components to produce and use fissile fuel on Bedrock editions.</p>
+		<a class="post-card__link-img" href="https://modbay.org/mods/7605-mekanism-fissile.html"><img class="lozad" loading="lazy" decoding="async" alt="Thumbnail: Mekanism fissile" src="/uploads/posts/2026-09/f9157d37a7_mekanism-fissile-cover.webp" srcset="/uploads/circle.svg 920w" data-srcset="/uploads/posts/2026-09/f9157d37a7_mekanism-fissile-cover.webp 920w" style="object-fit: contain; max-width: 100%; height: auto; aspect-ratio: 920 / 404;" width="920" height="404" sizes="100vw"></a>
+	</div>
+	<div class="post-card__row">
+		<div class="post-card__stat">
+			<div class="post-card__stat-item pc_like"><a href="#" class="log_in" onclick="doRatex('plus', '7605'); return false;" ><span class="icon icon--heart"></span><span class="post-card__stat-item-text"><span id="ratig-layer-7605"><span class="ratingtypeplus" >0</span></span></span></a></div>
+			<div class="post-card__stat-item"><a href="https://modbay.org/mods/7605-mekanism-fissile.html#comments"><span class="icon icon--comment"></span><span class="post-card__stat-item-text">5</span></a></div>
+			<div class="post-card__stat-item f_a"><span class="icon icon--eye"></span><span class="post-card__stat-item-text">85</span></div>
+		</div>
+	</div>
+</article><article class="post-card art7621" data-id="7621">
+	<div class="post-card__row">
+		<div class="post-card__col">
+			<a class="post-card__name-link" href="https://modbay.org/user/ghostofsw/"><img class="post-card__avatar" loading="lazy" decoding="async" src="/uploads/fotos/foto_58742.webp" alt="GhostOfSW profile avatar"><div class="post-card__name">GhostOfSW</div>
+			
+			</a>
+			<div class="post-card__time"><time datetime="2026-09-27T11:56:10-07:00">Today, 11:56</time></div>
+        </div>
+		<div class="post-card__col">
+			<div class="tags"><a class="tags__item tags__item--c3" href="https://modbay.org/mods/">Mods</a></div>
+		</div>
+	</div>
+	<div class="post-card__row">
+		
+
+		<h2 class="post-card__title"><a href="https://modbay.org/mods/7621-terrestratopic.html">Terrestratopic</a></h2>
+		<p class="post-card__descr">Terrestratopic is a Bedrock terrain generation datapack that reshapes landscapes with multi-scale mountains, valleys, plateaus and ridgelines for more natural, scenic exploration and building.</p>
+		<a class="post-card__link-img" href="https://modbay.org/mods/7621-terrestratopic.html"><img class="lozad" loading="lazy" decoding="async" alt="Thumbnail: Terrestratopic" src="/uploads/posts/2026-09/b0c3bd230c_terrestratopic-cover.webp" srcset="/uploads/circle.svg 920w" data-srcset="/uploads/posts/2026-09/b0c3bd230c_terrestratopic-cover.webp 920w" style="object-fit: contain; max-width: 100%; height: auto; aspect-ratio: 920 / 414;" width="920" height="414" sizes="100vw"></a>
+	</div>
+	<div class="post-card__row">
+		<div class="post-card__stat">
+			<div class="post-card__stat-item pc_like"><a href="#" class="log_in" onclick="doRatex('plus', '7621'); return false;" ><span class="icon icon--heart"></span><span class="post-card__stat-item-text"><span id="ratig-layer-7621"><span class="ratingtypeplus" >0</span></span></span></a></div>
+			<div class="post-card__stat-item"><a href="https://modbay.org/mods/7621-terrestratopic.html#comments"><span class="icon icon--comment"></span><span class="post-card__stat-item-text">0</span></a></div>
+			<div class="post-card__stat-item f_a"><span class="icon icon--eye"></span><span class="post-card__stat-item-text">13</span></div>
+		</div>
+	</div>
+</article><article class="post-card art7622" data-id="7622">
+	<div class="post-card__row">
+		<div class="post-card__col">
+			<a class="post-card__name-link" href="https://modbay.org/user/baycontent/"><img class="post-card__avatar" loading="lazy" decoding="async" src="/uploads/fotos/foto_48988.webp?1773054951" alt="BayContent profile avatar"><div class="post-card__name">BayContent</div>
+			
+			</a>
+			<div class="post-card__time"><time datetime="2026-09-27T11:21:08-07:00">Today, 11:21</time></div>
+        </div>
+		<div class="post-card__col">
+			<div class="tags"><a class="tags__item tags__item--c2" href="https://modbay.org/guides/">Guides</a></div>
+		</div>
+	</div>
+	<div class="post-card__row">
+		
+
+		<h2 class="post-card__title"><a href="https://modbay.org/guides/7622-what-is-a-mcaddon-file-and-how-to-install-it.html">What Is a .mcaddon File and How to Install It</a></h2>
+		<p class="post-card__descr">A .mcaddon bundles a behavior pack and a resource pack into one file. Here is how to install one on Android, iOS and Windows, and what to do when it fails.</p>
+		<a class="post-card__link-img" href="https://modbay.org/guides/7622-what-is-a-mcaddon-file-and-how-to-install-it.html"><img class="lozad" loading="lazy" decoding="async" alt="Thumbnail: What Is a .mcaddon File and How to Install It" src="/uploads/posts/2026-09/0c50cf834c_what-is-a-_mcaddon-file-and-how-to-install-it-cover.webp" srcset="/uploads/circle.svg 920w" data-srcset="/uploads/posts/2026-09/0c50cf834c_what-is-a-_mcaddon-file-and-how-to-install-it-cover.webp 920w" style="object-fit: contain; max-width: 100%; height: auto; aspect-ratio: 920 / 519;" width="920" height="519" sizes="100vw"></a>
+	</div>
+	<div class="post-card__row">
+		<div class="post-card__stat">
+			<div class="post-card__stat-item pc_like"><a href="#" class="log_in" onclick="doRatex('plus', '7622'); return false;" ><span class="icon icon--heart"></span><span class="post-card__stat-item-text"><span id="ratig-layer-7622"><span class="ratingtypeplus" >0</span></span></span></a></div>
+			<div class="post-card__stat-item"><a href="https://modbay.org/guides/7622-what-is-a-mcaddon-file-and-how-to-install-it.html#comments"><span class="icon icon--comment"></span><span class="post-card__stat-item-text">0</span></a></div>
+			<div class="post-card__stat-item f_a"><span class="icon icon--eye"></span><span class="post-card__stat-item-text">5</span></div>
+		</div>
+	</div>
+</article><article class="post-card art7618" data-id="7618">
+	<div class="post-card__row">
+		<div class="post-card__col">
+			<a class="post-card__name-link" href="https://modbay.org/user/youseefelemer/"><img class="post-card__avatar" loading="lazy" decoding="async" src="/uploads/fotos/foto_50287.webp?1781957421" alt="YouseefElemer profile avatar"><div class="post-card__name">YouseefElemer</div>
+			<img width="15" height="15" class="user-profile__badge" src="/templates/Modbay2/images/badges/smiling-happy.svg" alt="smiling-happy badge">
+			</a>
+			<div class="post-card__time"><time datetime="2026-09-27T10:01:31-07:00">Today, 10:01</time></div>
+        </div>
+		<div class="post-card__col">
+			<div class="tags"><a class="tags__item tags__item--c3" href="https://modbay.org/mods/">Mods</a></div>
+		</div>
+	</div>
+	<div class="post-card__row">
+		
+
+		<h2 class="post-card__title"><a href="https://modbay.org/mods/7618-uncrafting-table.html">Uncrafting Table | Reverse Crafting Block</a></h2>
+		<p class="post-card__descr">Uncrafting Table adds a single block that runs crafting backwards: put an item in, get its materials back.</p>
+		<a class="post-card__link-img" href="https://modbay.org/mods/7618-uncrafting-table.html"><img class="lozad" loading="lazy" decoding="async" alt="Thumbnail: Uncrafting Table | Reverse Crafting Block" src="/uploads/posts/2026-09/d681dd1775_feature-breakdown.webp" srcset="/uploads/circle.svg 920w" data-srcset="/uploads/posts/2026-09/d681dd1775_feature-breakdown.webp 920w" style="object-fit: contain; max-width: 100%; height: auto; aspect-ratio: 920 / 513;" width="920" height="513" sizes="100vw"></a>
+	</div>
+	<div class="post-card__row">
+		<div class="post-card__stat">
+			<div class="post-card__stat-item pc_like"><a href="#" class="log_in" onclick="doRatex('plus', '7618'); return false;" ><span class="icon icon--heart"></span><span class="post-card__stat-item-text"><span id="ratig-layer-7618"><span class="ratingtypeplus" >0</span></span></span></a></div>
+			<div class="post-card__stat-item"><a href="https://modbay.org/mods/7618-uncrafting-table.html#comments"><span class="icon icon--comment"></span><span class="post-card__stat-item-text">0</span></a></div>
+			<div class="post-card__stat-item f_a"><span class="icon icon--eye"></span><span class="post-card__stat-item-text">8</span></div>
+		</div>
+	</div>
+</article><article class="post-card art7617" data-id="7617">
+	<div class="post-card__row">
+		<div class="post-card__col">
+			<a class="post-card__name-link" href="https://modbay.org/user/overtregularity13/"><img class="post-card__avatar" loading="lazy" decoding="async" src="/uploads/fotos/foto_54009.webp" alt="OvertRegularity13 profile avatar"><div class="post-card__name">OvertRegularity13</div>
+			
+			</a>
+			<div class="post-card__time"><time datetime="2026-09-27T08:11:32-07:00">Today, 08:11</time></div>
+        </div>
+		<div class="post-card__col">
+			<div class="tags"><a class="tags__item tags__item--c3" href="https://modbay.org/mods/">Mods</a></div>
+		</div>
+	</div>
+	<div class="post-card__row">
+		
+
+		<h2 class="post-card__title"><a href="https://modbay.org/mods/7617-buddy.html">Buddy Add-On</a></h2>
+		<p class="post-card__descr">Add a horror-themed Buddy mob to your Minecraft world: a hostile boss with 250 HP, slowness attack, and an iron axe drop for brave adventurers.</p>
+		<a class="post-card__link-img" href="https://modbay.org/mods/7617-buddy.html"><img class="lozad" loading="lazy" decoding="async" alt="Thumbnail: Buddy Add-On" src="/uploads/posts/2026-09/4165de82b5_buddy-add-on-cover.webp" srcset="/uploads/circle.svg 920w" data-srcset="/uploads/posts/2026-09/4165de82b5_buddy-add-on-cover.webp 920w" style="object-fit: contain; max-width: 100%; height: auto; aspect-ratio: 920 / 480;" width="920" height="480" sizes="100vw"></a>
+	</div>
+	<div class="post-card__row">
+		<div class="post-card__stat">
+			<div class="post-card__stat-item pc_like"><a href="#" class="log_in" onclick="doRatex('plus', '7617'); return false;" ><span class="icon icon--heart"></span><span class="post-card__stat-item-text"><span id="ratig-layer-7617"><span class="ratingtypeplus" >0</span></span></span></a></div>
+			<div class="post-card__stat-item"><a href="https://modbay.org/mods/7617-buddy.html#comments"><span class="icon icon--comment"></span><span class="post-card__stat-item-text">0</span></a></div>
+			<div class="post-card__stat-item f_a"><span class="icon icon--eye"></span><span class="post-card__stat-item-text">27</span></div>
+		</div>
+	</div>
+</article><article class="post-card art7549" data-id="7549">
+	<div class="post-card__row">
+		<div class="post-card__col">
+			<a class="post-card__name-link" href="https://modbay.org/user/flappyguy/"><img class="post-card__avatar" loading="lazy" decoding="async" src="/uploads/fotos/foto_9558.webp" alt="Flappyguy profile avatar"><div class="post-card__name">Flappyguy</div>
+			
+			<span class="user-verified-icon"></span></a>
+			<div class="post-card__time"><time datetime="2026-09-27T08:10:50-07:00">Today, 08:10</time></div>
+        </div>
+		<div class="post-card__col">
+			<div class="tags"><a class="tags__item tags__item--c4" href="https://modbay.org/maps/">Maps</a></div>
+		</div>
+	</div>
+	<div class="post-card__row">
+		
+
+		<h2 class="post-card__title"><a href="https://modbay.org/maps/7549-dungeons-parkour.html">Dungeons Parkour</a></h2>
+		<p class="post-card__descr">This Map Is A Dungeon Themed Parkour Map! This Map Isn't Just A Parkour Map, There'll Be A Boss fight On This Map In The End Which Makes It Unique To Other Parkour Maps!</p>
+		<a class="post-card__link-img" href="https://modbay.org/maps/7549-dungeons-parkour.html"><img class="lozad" loading="lazy" decoding="async" alt="Thumbnail: Dungeons Parkour" src="/uploads/posts/2026-09/c5886eea5b_dungeons-parkour-cover.webp" srcset="/uploads/circle.svg 920w" data-srcset="/uploads/posts/2026-09/c5886eea5b_dungeons-parkour-cover.webp 920w" style="object-fit: contain; max-width: 100%; height: auto; aspect-ratio: 920 / 518;" width="920" height="518" sizes="100vw"></a>
+	</div>
+	<div class="post-card__row">
+		<div class="post-card__stat">
+			<div class="post-card__stat-item pc_like"><a href="#" class="log_in" onclick="doRatex('plus', '7549'); return false;" ><span class="icon icon--heart"></span><span class="post-card__stat-item-text"><span id="ratig-layer-7549"><span class="ratingtypeplus" >0</span></span></span></a></div>
+			<div class="post-card__stat-item"><a href="https://modbay.org/maps/7549-dungeons-parkour.html#comments"><span class="icon icon--comment"></span><span class="post-card__stat-item-text">0</span></a></div>
+			<div class="post-card__stat-item f_a"><span class="icon icon--eye"></span><span class="post-card__stat-item-text">11</span></div>
+		</div>
+	</div>
+</article><article class="post-card art7544" data-id="7544">
+	<div class="post-card__row">
+		<div class="post-card__col">
+			<a class="post-card__name-link" href="https://modbay.org/user/karloslima195/"><img class="post-card__avatar" loading="lazy" decoding="async" src="/uploads/fotos/foto_48135.webp?1770728034" alt="KD PRODUCTIONS profile avatar"><div class="post-card__name">KD PRODUCTIONS</div>
+			
+			</a>
+			<div class="post-card__time"><time datetime="2026-09-14T10:11:24-07:00">Today, 04:50</time></div>
+        </div>
+		<div class="post-card__col">
+			<div class="tags"><a class="tags__item tags__item--c3" href="https://modbay.org/mods/">Mods</a></div>
+		</div>
+	</div>
+	<div class="post-card__row">
+		
+
+		<h2 class="post-card__title"><a href="https://modbay.org/mods/7544-sonicraft.html">SONICRAFT ADDON 2.5(hotfix update)</a></h2>
+		<p class="post-card__descr">This addon is based on Sonic and adds 2 mobs and 2 items to your Minecraft world.</p>
+		<a class="post-card__link-img" href="https://modbay.org/mods/7544-sonicraft.html"><img class="lozad" loading="lazy" decoding="async" alt="Thumbnail: SONICRAFT ADDON 2.5(hotfix update)" src="/uploads/posts/2026-09/615f68774c_sonicraft-addon-by-kd-productions-cover.webp" srcset="/uploads/circle.svg 920w" data-srcset="/uploads/posts/2026-09/615f68774c_sonicraft-addon-by-kd-productions-cover.webp 920w" style="object-fit: contain; max-width: 100%; height: auto; aspect-ratio: 920 / 414;" width="920" height="414" sizes="100vw"></a>
+	</div>
+	<div class="post-card__row">
+		<div class="post-card__stat">
+			<div class="post-card__stat-item pc_like"><a href="#" class="log_in" onclick="doRatex('plus', '7544'); return false;" ><span class="icon icon--heart"></span><span class="post-card__stat-item-text"><span id="ratig-layer-7544"><span class="ratingtypeplus" >0</span></span></span></a></div>
+			<div class="post-card__stat-item"><a href="https://modbay.org/mods/7544-sonicraft.html#comments"><span class="icon icon--comment"></span><span class="post-card__stat-item-text">0</span></a></div>
+			<div class="post-card__stat-item f_a"><span class="icon icon--eye"></span><span class="post-card__stat-item-text">60</span></div>
+		</div>
+	</div>
+</article><article class="post-card art3794" data-id="3794">
+	<div class="post-card__row">
+		<div class="post-card__col">
+			<a class="post-card__name-link" href="https://modbay.org/user/zorrocraft20/"><img class="post-card__avatar" loading="lazy" decoding="async" src="/uploads/fotos/foto_3056_1702811819.webp" alt="zorrocraft profile avatar"><div class="post-card__name">zorrocraft</div>
+			<img width="15" height="15" class="user-profile__badge" src="/templates/Modbay2/images/badges/smiling-sace-with-tear.svg" alt="smiling-sace-with-tear badge">
+			<span class="user-verified-icon"></span></a>
+			<div class="post-card__time"><time datetime="2025-01-09T14:37:40-08:00">Today, 03:35</time></div>
+        </div>
+		<div class="post-card__col">
+			<div class="tags"><a class="tags__item tags__item--c3" href="https://modbay.org/mods/">Mods</a></div>
+		</div>
+	</div>
+	<div class="post-card__row">
+		
+
+		<h2 class="post-card__title"><a href="https://modbay.org/mods/3794-dynamic-health-and-damage-bar.html">Dynamic Health &amp; Damage Bar [Achievement Friendly]</a></h2>
+		<p class="post-card__descr">This addon shows a health bar above entities. Bar location at the top of the entity's hitbox shows damage values from all sources, including modded entities, lava, fire, and more.</p>
+		<a class="post-card__link-img" href="https://modbay.org/mods/3794-dynamic-health-and-damage-bar.html"><img class="lozad" loading="lazy" decoding="async" alt="Thumbnail: Dynamic Health &amp; Damage Bar [Achievement Friendly]" src="/uploads/posts/2026-08/6fce1c359e_dynamic-health-and-damage-bar-cover.webp" srcset="/uploads/circle.svg 920w" data-srcset="/uploads/posts/2026-08/6fce1c359e_dynamic-health-and-damage-bar-cover.webp 920w" style="object-fit: contain; max-width: 100%; height: auto; aspect-ratio: 920 / 434;" width="920" height="434" sizes="100vw"></a>
+	</div>
+	<div class="post-card__row">
+		<div class="post-card__stat">
+			<div class="post-card__stat-item pc_like"><a href="#" class="log_in" onclick="doRatex('plus', '3794'); return false;" ><span class="icon icon--heart"></span><span class="post-card__stat-item-text"><span id="ratig-layer-3794"><span class="ratingtypeplus" >13</span></span></span></a></div>
+			<div class="post-card__stat-item"><a href="https://modbay.org/mods/3794-dynamic-health-and-damage-bar.html#comments"><span class="icon icon--comment"></span><span class="post-card__stat-item-text">4</span></a></div>
+			<div class="post-card__stat-item f_a"><span class="icon icon--eye"></span><span class="post-card__stat-item-text">4 529</span></div>
+		</div>
+	</div>
+</article><article class="post-card art7023" data-id="7023">
+	<div class="post-card__row">
+		<div class="post-card__col">
+			<a class="post-card__name-link" href="https://modbay.org/user/gladarcher/"><img class="post-card__avatar" loading="lazy" decoding="async" src="/uploads/fotos/foto_50928.webp?1783295909" alt="Gladarcher profile avatar"><div class="post-card__name">Gladarcher</div>
+			
+			</a>
+			<div class="post-card__time"><time datetime="2026-07-06T13:31:06-07:00">Yesterday, 22:00</time></div>
+        </div>
+		<div class="post-card__col">
+			<div class="tags"><a class="tags__item tags__item--c3" href="https://modbay.org/mods/">Mods</a></div>
+		</div>
+	</div>
+	<div class="post-card__row">
+		
+
+		<h2 class="post-card__title"><a href="https://modbay.org/mods/7023-cursedcraft.html">CursedCraft v2 Survival Or Die - By PnTMC - Dwellers - Revamp Gladarcher</a></h2>
+		<p class="post-card__descr">Adds a variety of famous and creepy creatures to Minecraft Bedrock, expanding AI chase encounters with new mobs, behaviors, and thrills for survival and adventure.</p>
+		<a class="post-card__link-img" href="https://modbay.org/mods/7023-cursedcraft.html"><img class="lozad" loading="lazy" decoding="async" alt="Thumbnail: CursedCraft v2 Survival Or Die - By PnTMC - Dwellers - Revamp Gladarcher" src="/uploads/posts/2026-09/117980b302_cursedcraft-cover.webp" srcset="/uploads/circle.svg 920w" data-srcset="/uploads/posts/2026-09/117980b302_cursedcraft-cover.webp 920w" style="object-fit: contain; max-width: 100%; height: auto; aspect-ratio: 920 / 502;" width="920" height="502" sizes="100vw"></a>
+	</div>
+	<div class="post-card__row">
+		<div class="post-card__stat">
+			<div class="post-card__stat-item pc_like"><a href="#" class="log_in" onclick="doRatex('plus', '7023'); return false;" ><span class="icon icon--heart"></span><span class="post-card__stat-item-text"><span id="ratig-layer-7023"><span class="ratingtypeplus" >2</span></span></span></a></div>
+			<div class="post-card__stat-item"><a href="https://modbay.org/mods/7023-cursedcraft.html#comments"><span class="icon icon--comment"></span><span class="post-card__stat-item-text">9</span></a></div>
+			<div class="post-card__stat-item f_a"><span class="icon icon--eye"></span><span class="post-card__stat-item-text">2 132</span></div>
+		</div>
+	</div>
+</article></div>
+					<script>
+					function lozadx(zone) {
+						let aspectRatioImg = "1";
+						let SetImgHeight = "1";
+						let SetImgHeightCustom = "1";
+						if (!zone) zone = "article .post-card__link-img .lozad";
+						let FullStoryBlock = document.querySelectorAll(zone);
+						FullStoryBlock.forEach(function(img){
+							let offWidth = img.closest(".post-card__row").offsetWidth;
+							aspectRatioImg = img.getAttribute("height") * offWidth / img.getAttribute("width");
+							SetImgHeight = img.getAttribute("height");
+							SetImgHeightCustom = aspectRatioImg;
+							let SetImgHeightFinish = offWidth > img.getAttribute("width") ? SetImgHeight : SetImgHeightCustom;
+							img.classList.add("loaded");
+							img.style.height = SetImgHeightFinish + "px";
+						});
+					}
+					lozadx();
+					</script>
+					<div class="content__row content__row--footer">
+						<div id="pagination" class="pagination">
+	<span><span class="icon icon--arrow-left"></span></span>
+	<div id="list_pages" class="pagination__list"><span class="active">1</span> <a href="https://modbay.org/page/2/" >2</a> <a href="https://modbay.org/page/3/" >3</a> <span class="nav_ext">...</span> <a href="https://modbay.org/page/519/">519</a></div>
+	<a href="https://modbay.org/page/2/" aria-label="Next page"><span class="icon icon--arrow-right"></span></a>
+</div>
+						<button id="more_news" class="more__btn btn" type="button" style="display:none"><a href="#" onclick="event.preventDefault()">Load more</a></button>
+						<script>if (document.querySelector("#list_pages") && document.querySelector("#list_pages").lastElementChild.nodeName === "A") document.querySelector("#more_news").style.removeProperty('display');</script>
+					<br>
+      <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1523415454330391"
+     crossorigin="anonymous"></script>
+<ins class="adsbygoogle"
+     style="display:block"
+     data-ad-format="fluid"
+     data-ad-layout-key="-5w+ce+2v-x+66"
+     data-ad-client="ca-pub-1523415454330391"
+     data-ad-slot="3764558256"></ins>
+<script>
+     (adsbygoogle = window.adsbygoogle || []).push({});
+</script>
+                    </div>
+					
+                    
+				</div>
+			</div>
+		</div>
+				<div class="grid__container">
+			<article class="seo">
+				<div class="seo__container">
+					<section class="seo__section">
+						<h2>Welcome to ModBay</h2>
+						<p>ModBay is the source for the best Minecraft mods and addons! Discover new possibilities and expand the boundaries of your creativity.</p>
+					</section>
+					<section class="seo__section">
+						<h2>ModBay Team</h2>
+						<p>We are a team of enthusiasts aiming to create a fan website. Our site is not an official resource and we are not affiliated with the development of Minecraft or companies like Mojang and Microsoft. If you're a Minecraft fan and want to showcase your creations, create an account on ModBay!</p>
+					</section>
+					<section class="seo__section">
+						<h2>What is Minecraft</h2>
+						<p>Minecraft is a popular sandbox game that provides players with vast opportunities for creativity and development. Here are some of the main features and capabilities of this game: diverse game modes, infinite open world, building and crafting, multiplayer gameplay with friends, and much more.</p>
+						<br><p>Minecraft was released in 2009. For several years, the game was in Alpha and Beta stages, with its official release happening in 2011. Initially, Minecraft stood out conceptually from many other games because of its openness and freedom for creativity. Players can build and destroy blocks at will, creating unique worlds and adventures. And if that's not enough, mods can further enhance the possibilities.</p>
+					</section>
+					<section class="seo__section">
+						<h2>Why ModBay</h2>
+						<p>At ModBay, we strive to provide gamers with a convenient and simple way to obtain mods. We meticulously verify the submitted content, checking for safety and quality. Rest assured, all content on our site is checked and fully compatible with your version of the game.</p>
+						<br><p>Our site also offers handy filters and categories, so you can easily find exactly what you're looking for. You can also view comments from other players to be confident in your choice.</p>
+					</section>
+					<section class="seo__section">
+						<h2>How to Start Using ModBay</h2>
+						<p>The site is completely free, and all basic functionality is available to any user. The main page displays all user-published content. There are also several separate sections — News, Guides, Mods, Maps, Texture Packs, and Seeds. You can always sort publications by date of publication, popularity, or the number of comments. In the Mods, Maps, Texture Packs, and Seeds sections, there are additional filters.</p>
+						<br><p>Any user can create their own account in the system. Having an account allows you to have a personal profile on the site. Users can edit their profile, upload an avatar, add a description, links to their social networks. Also, authorized users can comment on publications, leave likes on comments and publications. But the most important feature is the Publication of their own posts. You can share your own addon, map, texture pack.</p>
+					</section>
+				</div>
+				<div class="seo__btn-wrapper">
+					<div class="seo__btn">Learn More</div>
+				</div>
+			</article>
+		</div>
+		
+		
+		
+		
+		
+		
+		<div class="grid__container">
+			<footer class="footer">
+				<div class="footer__row">
+					<div class="footer__col">
+						<a class="logo logo--big logo--indent-botoom" href="/"><div class="control"><span class="icon"></span></div></a>
+						<p class="footer__text">&copy;&nbsp;2022&nbsp;- 2026 ModBay</p>
+					</div>
+					<div class="footer__col">
+						<ul class="footer__nav">
+							<li><a href="/news/">News</a></li>
+							<li><a href="/maps/">Maps</a></li>
+							<li><a href="/about.html">About</a></li>
+							<li><a href="/rules.html">Rules</a></li>
+							<li><a href="/guides/">Guides</a></li>
+							<li><a href="/textures/">Texture Packs</a></li>
+							<li><a href="/contact.html">Contact</a></li>
+							<li><a href="/ratings/">User Rankings</a></li>
+							<li><a href="/mods/">Mods</a></li>
+							<li><a href="/seeds/">Seeds</a></li>
+							<li><a href="/faq.html">FAQ</a></li>
+						</ul>
+					</div>
+				</div>
+				<div class="footer__row">
+					<div class="footer__col">
+						<div class="social social--indent-internal-null">
+							<a class="sc__item sc__item--youtube" href="https://www.youtube.com/channel/UCFx8x3HcZaZTghwn7FAMLIA" target="_blank" aria-label="ModBay on YouTube">
+								<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="none">
+									<rect width="31" height="31" x=".5" y=".5" fill="#fff" rx="5.5"></rect>
+									<path fill="#1A1B35" d="M23.652 12.613c-.184-.61-.586-1.128-1.276-1.29C21.128 11.027 16 11 16 11s-5.127.027-6.376.323c-.69.162-1.09.68-1.276 1.29C8.014 13.719 8 16 8 16s.014 2.281.348 3.387c.184.61.586 1.128 1.276 1.29C10.873 20.973 16 21 16 21s5.127-.027 6.377-.323c.689-.162 1.091-.68 1.275-1.29C23.986 18.281 24 16 24 16s-.014-2.281-.348-3.387Z"></path>
+									<path fill="#fff" d="m18.588 16.001-4.235-2.083v4.167"></path>
+									<rect width="31" height="31" x=".5" y=".5" stroke="#E4ECF1" rx="5.5"></rect>
+								</svg>
+							</a>
+							<a class="sc__item sc__item--twitter" href="https://x.com/modbay_" target="_blank" aria-label="ModBay on X">
+								<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="none">
+									<rect width="31" height="31" x=".5" y=".5" fill="#fff" rx="5.5"></rect>
+									<path fill="#1A1B35" d="M 11.902344 8.464844 L 19.347656 0 L 17.582031 0 L 11.117188 7.347656 L 5.957031 0 L 0 0 L 7.808594 11.113281 L 0 19.988281 L 1.765625 19.988281 L 8.589844 12.226562 L 14.042969 19.988281 L 20 19.988281 Z M 9.484375 11.210938 L 8.695312 10.105469 L 2.398438 1.300781 L 5.109375 1.300781 L 10.191406 8.40625 L 10.980469 9.511719 L 17.585938 18.75 L 14.875 18.75 Z M 9.484375 11.210938" style="transform: translate(6px, 6px);"></path>
+									<rect width="31" height="31" x=".5" y=".5" stroke="#E4ECF1" rx="5.5"></rect>
+								</svg>
+							</a>
+							<a class="sc__item sc__item--discord" href="https://discord.com/invite/DpNJ5fApJM" target="_blank" aria-label="ModBay on Discord">
+								<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="none">
+									<rect width="31" height="31" x=".5" y=".5" fill="#fff" rx="5.5"></rect>
+									<path fill="#1A1B35" d="M22.664 9.887c-1.22-.568-2.54-.98-3.914-1.219a.083.083 0 0 0-.064.028 12.47 12.47 0 0 0-.486.999 14.75 14.75 0 0 0-4.4 0 9.214 9.214 0 0 0-.495-1c-.01-.018-.037-.027-.064-.027-1.375.238-2.686.65-3.915 1.22-.009 0-.018.008-.027.018-2.493 3.73-3.18 7.36-2.842 10.954 0 .018.01.036.028.046a15.926 15.926 0 0 0 4.803 2.429c.028.009.055 0 .064-.019.367-.504.697-1.035.981-1.595.018-.036 0-.073-.037-.082a11.274 11.274 0 0 1-1.503-.715c-.037-.018-.037-.073-.01-.101.102-.073.203-.156.303-.23a.057.057 0 0 1 .065-.008c3.153 1.439 6.554 1.439 9.67 0a.056.056 0 0 1 .065.009c.1.082.201.156.302.238.037.028.037.083-.01.101-.476.284-.98.513-1.502.715-.037.01-.046.055-.037.082.293.56.623 1.091.98 1.596.028.009.056.018.083.009a15.863 15.863 0 0 0 4.813-2.43.05.05 0 0 0 .027-.045c.404-4.153-.669-7.755-2.841-10.954-.01-.01-.019-.019-.037-.019ZM12.81 18.67c-.944 0-1.733-.871-1.733-1.944 0-1.072.77-1.943 1.733-1.943.971 0 1.741.88 1.732 1.944 0 1.072-.77 1.943-1.732 1.943Zm6.389 0c-.944 0-1.733-.871-1.733-1.944 0-1.072.77-1.943 1.733-1.943.972 0 1.742.88 1.732 1.944 0 1.072-.76 1.943-1.732 1.943Z"></path>
+									<rect width="31" height="31" x=".5" y=".5" stroke="#E4ECF1" rx="5.5"></rect>
+								</svg>
+							</a>
+						</div>
+					</div>
+					<div class="footer__col">
+						<p class="footer__text footer__text--indent-bottom-mobile">This site is&nbsp;not affiliated with Mojang Studios</p>
+						<div class="footer__link-wrapper"><a class="footer__link" href="/terms.html">Terms</a><a class="footer__link" href="/privacy.html">Privacy</a></div>
+					</div>
+				</div>
+			</footer>
+		</div>
+	</div>
+	<div class="overlay"></div>
+	<script>
+$(function(){
+	xcore_configs({home_url: 'https://modbay.org/'});
+	xcore_langs({
+		lang: 'en',
+		err: 'Error',
+		errdata: 'Data error',
+		info: 'Information'
+	});
+});
+function ge(i) { return document.getElementById(i); }
+</script><script>function MenuXModerBuild(e,o){var t=[];return t[0]='<a href="/editnews'+e+'.html">Edit news</a>',""!=dle_admin&&(t[1]='<a href="'+dle_root+dle_admin+"?mod=editnews&action=editnews&id="+e+'" target="_blank">'+menu_full+"</a>"),allow_dle_delete_news&&(t[2]="<a onclick=\"sendNotice ('"+e+'\'); return false;" href="#">'+dle_notice+"</a>",t[3]="<a onclick=\"dle_news_delete ('"+e+'\'); return false;" href="#">'+dle_del_news+"</a>"),t}</script><script>
+<!--
+var dle_root       = '/';
+var dle_admin      = '';
+var dle_login_hash = '6bf5b6f361b6710df35b25c3f28dc9b38bef69f6';
+var dle_group      = 5;
+var dle_skin       = 'Modbay2';
+var dle_wysiwyg    = '-1';
+var quick_wysiwyg  = '2';
+var dle_min_search = '3';
+var dle_act_lang   = ["Yes", "No", "Enter", "Cancel", "Save", "Delete", "Loading. Please, wait..."];
+var menu_short     = 'Quick edit';
+var menu_full      = 'Full edit';
+var menu_profile   = 'View profile';
+var menu_send      = 'Send message';
+var menu_uedit     = 'Admin Center';
+var dle_info       = 'Information';
+var dle_confirm    = 'Confirm';
+var dle_prompt     = 'Enter the information';
+var dle_req_field  = ["Fill the name field", "Fill the message field", "Fill the field with the subject of the message"];
+var dle_del_agree  = 'Are you sure you want to delete it? This action cannot be undone';
+var dle_spam_agree = 'Are you sure you want to mark the user as a spammer? This will remove all his comments';
+var dle_c_title    = 'Send a complaint';
+var dle_complaint  = 'Enter the text of your complaint to the Administration:';
+var dle_mail       = 'Your e-mail:';
+var dle_big_text   = 'Highlighted section of text is too large.';
+var dle_orfo_title = 'Enter a comment to the detected error on the page for Administration ';
+var dle_p_send     = 'Send';
+var dle_p_send_ok  = 'Notification has been sent successfully ';
+var dle_save_ok    = 'Changes are saved successfully. Refresh the page?';
+var dle_reply_title= 'Reply to the comment';
+var dle_tree_comm  = '0';
+var dle_del_news   = 'Delete article';
+var dle_sub_agree  = 'Do you really want to subscribe to this article’s comments?';
+var dle_unsub_agree  = 'Do you really want to unsubscribe from comments on this publication?';
+var dle_captcha_type  = '3';
+var dle_share_interesting  = ["Share a link to the selected text", "Twitter", "Facebook", "Вконтакте", "Direct Link:", "Right-click and select «Copy Link»"];
+var DLEPlayerLang     = {prev: 'Previous',next: 'Next',play: 'Play',pause: 'Pause',mute: 'Mute', unmute: 'Unmute', settings: 'Settings', enterFullscreen: 'Enable full screen mode', exitFullscreen: 'Disable full screen mode', speed: 'Speed', normal: 'Normal', quality: 'Quality', pip: 'PiP mode'};
+var allow_dle_delete_news   = false;
+
+//-->
+</script>
+	<script src="/templates/Modbay2/js/libs.min.js?1.02"></script>
+	<script src="/templates/Modbay2/js/modbay.min.js?3"></script>
+	<script src="/templates/Modbay2/js/project_run.min.js?4"></script>
+	<script src="/templates/Modbay2/js/minimalanalytics.js?1.00" defer></script>
+	<script>
+	window.minimalAnalytics = {
+		trackingId: 'G-S97DJ4RD87',
+		autoTrack: true,
+	};
+	</script>
+
+<img id="licnt563E" width="1" height="1" style="border:0" 
+title="LiveInternet"
+src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAEALAAAAAABAAEAAAIBTAA7"
+alt=""/><script>(function(d,s){d.getElementById("licnt563E").src=
+"https://counter.yadro.ru/hit?t45.5;r"+escape(d.referrer)+
+((typeof(s)=="undefined")?"":";s"+s.width+"*"+s.height+"*"+
+(s.colorDepth?s.colorDepth:s.pixelDepth))+";u"+escape(d.URL)+
+";h"+escape(d.title.substring(0,150))+";"+Math.random()})
+(document,screen)</script>
+<script src="/engine/fcsh/js/lozad.js"></script>
+<script>
+   let LazyImages = document.querySelectorAll("img.loaded");
+   $(window).resize(function() {
+       LazyImages.forEach(function(img){
+           img.style.height = "auto";
+       });
+    });
+    const observer = lozad(".lozad");
+    observer.observe();
+</script><script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon='{"version":"2024.11.0","token":"b70f4676332348638faa47654237b473","r":1,"spa":2}' crossorigin="anonymous"></script>
+</body>
+</html>

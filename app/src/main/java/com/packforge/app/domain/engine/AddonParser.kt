@@ -92,6 +92,7 @@ object AddonParser {
             var minEngineVersion = listOf(1, 20, 0)
             var rawManifest = ""
             var iconPath: String? = null
+            var author: String? = null
 
             // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
             val cachedFiles = DirIndexCache.index(parseTempDir).allFiles
@@ -166,6 +167,10 @@ object AddonParser {
                             h.optJSONArray("version")?.let { v -> version = "${v.optInt(0)}.${v.optInt(1)}.${v.optInt(2)}" }
                             h.optJSONArray("min_engine_version")?.let { v -> minEngineVersion = listOf(v.optInt(0, 1), v.optInt(1, 20), v.optInt(2, 0)) }
                         }
+                        // Extraer autor del manifest: puede estar como array "authors" o string "author"
+                        author = json.optJSONArray("authors")?.let { arr ->
+                            (0 until arr.length()).mapNotNull { i -> arr.optString(i).takeIf { s -> s.isNotBlank() } }
+                        }?.joinToString(", ") ?: json.optString("author").takeIf { it.isNotBlank() }
                     } catch (e: Exception) {}
                 }
 
@@ -200,7 +205,8 @@ object AddonParser {
                 manifestUuid = manifestUuid,
                 rawManifest = rawManifest,
                 iconPath = iconPath,
-                sourceFilePath = internalFile.absolutePath
+                sourceFilePath = internalFile.absolutePath,
+                author = author
             )
         } catch (e: Exception) {
             null

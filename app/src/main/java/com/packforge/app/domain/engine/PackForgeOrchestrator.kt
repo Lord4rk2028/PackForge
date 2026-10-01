@@ -103,13 +103,12 @@ object PackForgeOrchestrator {
     }
 
     /**
-     * Fase 1: Copia rápida de todos los addons al directorio de salida usando buffers.
+     * FASE 1B — Copia de todos los addons al directorio de salida usando buffers.
      * NO hace parsing JSON.
      * OPTIMIZACIÓN: Usa DirIndexCache en lugar de walkTopDown() (3-10x más rápido).
      *
-     * ⭐ REQ-B: Cuando detecta una colisión y renombra un archivo, registra el par
-     * (original → mutada) en el ResourcePathRegistry global para que el pipeline
-     * de remapeo posterior actualice las referencias internas en los JSONs.
+     * ⭐ REQ-B: consume el plan de [planSourceMutations], de modo que la ruta
+     * física de cada archivo y las referencias de sus JSONs quedan consistentes.
      */
     private suspend fun fastMergeAllSources(
         sourceDirs: List<String>,
@@ -118,36 +117,99 @@ object PackForgeOrchestrator {
         resourceRegistry: ResourcePathRegistry
     ) {
         targetDir.mkdirs()
-        
+
         sourceDirs.forEachIndexed { index, sourcePath ->
             val sourceFile = File(sourcePath)
             progressCallback?.onProgress("Copiando addon ${index + 1}/${sourceDirs.size}: ${sourceFile.name}...")
-            
+
+            // Mutaciones ya planificadas para ESTA fuente.
+            val renames = resourceRegistry.mutationsFor(sourceFile)
+
             // ⭐ OPTIMIZACIÓN: Usar índice cacheado en lugar de walkTopDown()
             val cachedFiles = DirIndexCache.index(sourceFile).allFiles
             for ((fileIndex, file) in cachedFiles.withIndex()) {
                 if (fileIndex % 32 == 0) coroutineContext.ensureActive()
                 val relativePath = file.relativeTo(sourceFile).path
-                val targetFile = File(targetDir, relativePath)
-                
-                var finalTarget = targetFile
-                if (finalTarget.exists()) {
-                    val nameWithoutExt = finalTarget.nameWithoutExtension
-                    val ext = finalTarget.extension
-                    val mutatedFile = File(finalTarget.parentFile, "${nameWithoutExt}_pf_${System.currentTimeMillis()}.$ext")
-                    // ⭐ REQ-B: Registrar mutación para remapeo posterior de referencias JSON
-                    resourceRegistry.registerMutation(relativePath, mutatedFile.relativeTo(targetDir).path)
-                    finalTarget = mutatedFile
-                }
-                
-                finalTarget.parentFile?.mkdirs()
+                val key = relativePath.replace('\\', '/')
+                val targetRel = renames[key] ?: key
+                val targetFile = File(targetDir, targetRel)
+
+                targetFile.parentFile?.mkdirs()
                 file.inputStream().use { input ->
-                    finalTarget.outputStream().use { output ->
+                    targetFile.outputStream().use { output ->
                         input.copyTo(output, bufferSize = 16384)
                     }
                 }
             }
         }
+    }
+
+    /**
+     * FASE 1A — PLAN de mutaciones (sin tocar disco).
+     *
+     * Recorre las MISMAS fuentes en el MISMOS orden que la copia, simulando qué
+     * rutas quedarían ocupadas, y registra en [resourceRegistry] la ruta mutada
+     * de cada colisión ASOCIADA A SU FUENTE.
+     *
+     * Existe como fase separada porque las mutaciones deben estar conocidas
+     * ANTES de copiar: solo así se pueden reescribir los JSONs de cada fuente
+     * con SU PROPIO mapa. Si se detectara la colisión durante la copia, los
+     * JSONs quedarían ya copiados en el destino y se perdería el vínculo
+     * archivo→addon, obligando a un mapa global (que se machaca entre fuentes).
+     *
+     * Además sustituye al `System.currentTimeMillis()` original, que generaba
+     * el mismo nombre destino para dos colisiones dentro del mismo milisegando.
+     */
+    private fun planSourceMutations(
+        sourceDirs: List<String>,
+        targetDir: File,
+        resourceRegistry: ResourcePathRegistry
+    ) {
+        targetDir.mkdirs()
+        val occupied = HashSet<String>()
+        DirIndexCache.index(targetDir).allFiles.forEach {
+            occupied.add(it.relativeTo(targetDir).path.replace('\\', '/'))
+        }
+        // Secuencia compartida por ruta: dos fuentes distintas que colisionen en
+        // la misma ruta reciben sufijos distintos.
+        val seqByPath = HashMap<String, Int>()
+
+        for (sourcePath in sourceDirs) {
+            val sourceFile = File(sourcePath)
+            if (!sourceFile.isDirectory) continue
+            for (file in DirIndexCache.index(sourceFile).allFiles) {
+                val rel = file.relativeTo(sourceFile).path.replace('\\', '/')
+                if (occupied.add(rel)) continue // ruta libre: no hay colisión
+
+                var seq = seqByPath.getOrPut(rel) { 0 } + 1
+                val targetFile = File(targetDir, rel)
+                val parent = targetFile.parentFile
+                val stem = targetFile.nameWithoutExtension
+                val ext = targetFile.extension
+                var mutated = buildMutatedName(parent, stem, ext, seq)
+                while (occupied.contains(mutated.relativeTo(targetDir).path.replace('\\', '/'))) {
+                    seq += 1
+                    mutated = buildMutatedName(parent, stem, ext, seq)
+            }
+                seqByPath[rel] = seq
+                val mutatedRel = mutated.relativeTo(targetDir).path.replace('\\', '/')
+                occupied.add(mutatedRel)
+            }
+        }
+        // El plan no copia nada: la caché del destino quedó obsoleta.
+        DirIndexCache.invalidate(targetDir)
+    }
+
+    /**
+     * Construye el nombre físico mutado de forma DETERMINISTA y única:
+     * `nombre_pf<seq>.<ext>`. Sustituye al `System.currentTimeMillis()` original,
+     * que podía generar el mismo destino para dos colisiones concurrentes.
+     *
+     * [dir] admite null (un File sin padre) devolviendo un nombre relativo.
+     */
+    private fun buildMutatedName(dir: File?, stem: String, ext: String, seq: Int): File {
+        val name = if (ext.isEmpty()) "${stem}_pf$seq" else "${stem}_pf$seq.$ext"
+        return if (dir != null) File(dir, name) else File(name)
     }
 
     /**
@@ -357,7 +419,32 @@ object PackForgeOrchestrator {
             val mergedBpDir = File(tempDir, "merged_bp")
             val mergedRpDir = File(tempDir, "merged_rp")
             
-            // FASE 1: Copia Eager - Solo copia de bytes con buffer de 16KB
+            // ══ FASE 1A: PLAN DE MUTACIONES DE RECURSOS ══
+            // Detecta colisiones de ruta SIN copiar, asociando cada renombrado a
+            // su addon de origen. Debe ir antes de la copia y de la reescritura.
+            planSourceMutations(bpDirs, mergedBpDir, resourceRegistry)
+            planSourceMutations(rpDirs, mergedRpDir, resourceRegistry)
+
+            // ══ FASE 1B: REESCRITURA DE REFERENCIAS POR FUENTE ══
+            // ⭐ REQ-B: cada JSON de origen se actualiza con las rutas mutadas de
+            // SU PROPIO addon antes de copiarse. Así terrain_texture.json,
+            // item_texture.json y description.textures del addon N apuntan a los
+            // archivos que N realmente dejó en el pack fusionado.
+            if (resourceRegistry.hasGlobalMutations()) {
+                progressCallback?.onProgress("Actualizando referencias de recursos...")
+                val tRewriteStart = System.currentTimeMillis()
+                val rewritten = resourceRegistry.applySourceRewrites(
+                    bpDirs.map { File(it) } + rpDirs.map { File(it) }
+                )
+                PackForgeLog.d(
+                    "PackForge_Export",
+                    "🔄 Fase 1B: $rewritten JSONs reescritos (${resourceRegistry.totalMutations()} mutaciones, ${System.currentTimeMillis() - tRewriteStart}ms)"
+                )
+                // Los JSONs cambiaron en disco: invalidar para releer contenido fresco.
+                DirIndexCache.clear()
+            }
+
+            // FASE 1C: Copia Eager - Solo copia de bytes con buffer de 16KB
             progressCallback?.onProgress("Copiando archivos (Fase 1 - Rápida)...")
             val tEagerStart = System.currentTimeMillis()
             fastMergeAllSources(bpDirs, mergedBpDir, progressCallback, resourceRegistry)
@@ -421,17 +508,23 @@ object PackForgeOrchestrator {
                     PackForgeLog.w("PackForge_Export", "Validación de cobertura no bloqueante: ${e.message}")
                 }
 
-                // ══ FASE 3C: REMAPEO GLOBAL DE MUTACIONES DE RECURSOS ══
-                // ⭐ REQ-B: Actualizar todas las referencias internas en JSONs que apunten
-                // a rutas de recursos que fueron renombradas durante fastMergeAllSources
-                // para evitar colisiones. Esto incluye terrain_texture.json, item_texture.json,
-                // definiciones de entidades (description.textures) y cualquier otra referencia
-                // a texturas/geometrías/sounds que hayan sido mutadas.
-                if (resourceRegistry.hasGlobalMutations()) {
-                    progressCallback?.onProgress("Remapeando referencias de recursos mutados...")
-                    val tRewriteStart = System.currentTimeMillis()
-                    val rewritten = resourceRegistry.applyGlobalRewrites(listOf(mergedBpDir, mergedRpDir))
-                    PackForgeLog.d("PackForge_Export", "🔄 Fase 3C: $rewritten archivos con referencias actualizadas (${(System.currentTimeMillis() - tRewriteStart)}ms)")
+                // === FASE 3D: RESOLUCION DE DEPENDENCIAS DE ENTIDADES ===
+                // Recupera geometrias/texturas/animaciones/RCs faltantes clasificando
+                // por CONTENIDO (duck typing), crea alias de variantes y restaura la
+                // geometria canonica si el deepmerge la muto. Va DESPUES de la Fase 3
+                // para ver los archivos ya fusionados.
+                if (rpDirs.isNotEmpty()) {
+                    try {
+                        progressCallback?.onProgress("Resolviendo dependencias de entidades...");
+                        dependencyNotes = EntityDependencyResolver.resolve(
+                            rpDirs.map { File(it) }, mergedRpDir
+                        );
+                    } catch (e: Exception) {
+                        PackForgeLog.w(
+                            "PackForge_Export",
+                            "Resolucion de dependencias no bloqueante: ${e.message}"
+                        );
+                    }
                 }
             }
             coroutineContext.ensureActive()

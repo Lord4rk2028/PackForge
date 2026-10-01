@@ -1,0 +1,1 @@
+(window.webpackJsonp=window.webpackJsonp||[]).push([[13],{749:function(n,e,t){"use strict";t.r(e);var u={components:{SearchPage:t(574).default},head:function(){return{title:"Addons | MCPEDL"}}},a=t(5),c=Object(a.a)(u,(function(){return(0,this._self._c)("search-page")}),[],!1,null,null,null);e.default=c.exports}}]);

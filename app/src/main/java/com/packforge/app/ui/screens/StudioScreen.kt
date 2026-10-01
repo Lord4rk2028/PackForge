@@ -38,6 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -57,8 +59,11 @@ import com.packforge.app.ui.components.MorphingFabItem
 import com.packforge.app.ui.components.SiteSelector
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.domain.model.OperationProgress
-import com.packforge.app.domain.model.SavedModpack
+import com.packforge.app.domain.model.SavedModpackSummary
 import com.packforge.app.domain.model.Addon
+import com.packforge.app.domain.model.AddonUpdateState
+import com.packforge.app.domain.model.ModpackUpdateReport
+import com.packforge.app.domain.model.UpdatePhase
 import com.packforge.app.ui.viewmodel.PackForgeViewModel
 import com.packforge.app.ui.viewmodel.ThemeViewModel
 import java.io.File
@@ -71,12 +76,12 @@ import java.util.Locale
 fun StudioScreen(
     viewModel: PackForgeViewModel,
     themeViewModel: ThemeViewModel,
-    savedModpacks: List<SavedModpack>,
+    savedModpacks: List<SavedModpackSummary>,
     isImporting: Boolean,
     importProgress: OperationProgress,
     webImportError: String?,
     onDeleteModpack: (String) -> Unit,
-    onLoadModpack: (SavedModpack) -> Unit,
+    onLoadModpack: (SavedModpackSummary) -> Unit,
     onImportFromUrl: (String, String, String) -> Unit,
     onClearError: () -> Unit
 ) {
@@ -85,6 +90,17 @@ fun StudioScreen(
     val showMyModpacks by viewModel.showMyModpacks.collectAsStateWithLifecycle()
     val showThemeSettings by viewModel.showThemeSettings.collectAsStateWithLifecycle()
     val webImportSuccess by viewModel.webImportSuccess.collectAsStateWithLifecycle()
+    // Estado del centro de actualizaciones
+    val isCheckingUpdates by viewModel.isCheckingUpdates.collectAsStateWithLifecycle()
+    val checkingUpdatesForId by viewModel.checkingUpdatesForId.collectAsStateWithLifecycle()
+    val updateTargetModpack by viewModel.updateTargetModpack.collectAsStateWithLifecycle()
+    val updateReport by viewModel.updateReport.collectAsStateWithLifecycle()
+    val isApplyingUpdate by viewModel.isApplyingUpdate.collectAsStateWithLifecycle()
+    val resolvingAddonId by viewModel.resolvingAddonId.collectAsStateWithLifecycle()
+    val justUpdatedAddonId by viewModel.justUpdatedAddonId.collectAsStateWithLifecycle()
+    // Contexto de la app (no de la Activity): lo necesita el ViewModel para
+    // descargar y analizar el addon actualizado.
+    val appContext = LocalContext.current.applicationContext
 
     // Interceptar gesto de atrás para cerrar sub-pantallas y evitar que NavHost retroceda a ImportScreen
     BackHandler(enabled = showMyModpacks || showThemeSettings) {
@@ -93,7 +109,7 @@ fun StudioScreen(
     }
 
     // Confirmation dialog for modpack regeneration
-    var modpackToRegenerate by remember { mutableStateOf<SavedModpack?>(null) }
+    var modpackToRegenerate by remember { mutableStateOf<SavedModpackSummary?>(null) }
 
     // Manejo de navegadores internos con persistencia
     activeWebSource?.let { source ->
@@ -149,7 +165,13 @@ fun StudioScreen(
             onRegenerate = { modpack ->
                 modpackToRegenerate = modpack
             },
-            onImportModpack = { uri -> viewModel.importModpackFromFile(uri) }
+            onImportModpack = { uri -> viewModel.importModpackFromFile(uri) },
+            onCheckUpdates = { modpackId ->
+                val mp = savedModpacks.firstOrNull { it.id == modpackId }
+                if (mp != null) viewModel.checkModpackUpdates(mp)
+            },
+            isCheckingUpdates = isCheckingUpdates,
+            checkingUpdatesForId = checkingUpdatesForId
         )
         modpackToRegenerate?.let { target ->
             AlertDialog(
@@ -176,11 +198,37 @@ fun StudioScreen(
                 }
             )
         }
+        // ═══ CENTRO DE ACTUALIZACIONES ═══
+        // El diálogo se abre en cuanto se pulsa el botón (para que el usuario
+        // vea el progreso) y PERMANECE abierto cuando la búsqueda termina,
+        // aunque no haya nada nuevo: solo se cierra si el usuario toca fuera
+        // de la ventana o pulsa la X.
+        updateTargetModpack?.let { targetPack ->
+            val packAddons = remember(targetPack.id) { decodeModpackAddons(targetPack.addonsJson) }
+            val effectiveReport = updateReport
+                ?: ModpackUpdateReport(targetPack.id, packAddons.map { AddonUpdateState(addonId = it.id) })
+            UpdateCenterDialog(
+                modpackName = targetPack.name,
+                addons = packAddons,
+                report = effectiveReport,
+                isChecking = isCheckingUpdates,
+                applyingAddonId = isApplyingUpdate,
+                resolvingAddonId = resolvingAddonId,
+                justUpdatedAddonId = justUpdatedAddonId,
+                onOpenSource = { site, url ->
+                    viewModel.openAddonSource(site, url)
+                },
+                onApplyUpdate = { addonId, site, downloadUrl ->
+                    viewModel.applyAddonUpdate(appContext, targetPack, addonId, site, downloadUrl)
+                },
+                onResolveDownloads = { addonId -> viewModel.resolveSourceDownloads(addonId) },
+                onDismiss = { viewModel.closeUpdateDialog() }
+            )
+        }
         return
     }
 
     // File picker para importar modpacks desde StudioScreen principal
-    val appContext = LocalContext.current
     val importFileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -431,18 +479,21 @@ fun StudioCard(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MyModpacksScreen(
-    modpacks: List<SavedModpack>,
+    modpacks: List<SavedModpackSummary>,
     onBack: () -> Unit,
     onDelete: (String) -> Unit,
-    onLoad: (SavedModpack) -> Unit,
+    onLoad: (SavedModpackSummary) -> Unit,
     onOpenSources: () -> Unit = {},
     onOpenSource: (site: String, url: String) -> Unit = { _, _ -> },
-    onRegenerate: (SavedModpack) -> Unit = {},
-    onImportModpack: (Uri) -> Unit = {}
+    onRegenerate: (SavedModpackSummary) -> Unit = {},
+    onImportModpack: (Uri) -> Unit = {},
+    onCheckUpdates: (String) -> Unit = {},
+    isCheckingUpdates: Boolean = false,
+    checkingUpdatesForId: String? = null
 ) {
     val context = LocalContext.current
     val shareScope = rememberCoroutineScope()
-    var modpackToDelete by remember { mutableStateOf<SavedModpack?>(null) }
+    var modpackToDelete by remember { mutableStateOf<SavedModpackSummary?>(null) }
     var showShareDialog by remember { mutableStateOf(false) }
 
     // Diálogo con bordes de colores para compartir modpacks
@@ -519,7 +570,7 @@ fun MyModpacksScreen(
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                             modifier = Modifier.heightIn(max = 340.dp)
                         ) {
-                            items(modpacks) { modpack: SavedModpack ->
+                            items(modpacks) { modpack: SavedModpackSummary ->
                                 Surface(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -700,7 +751,8 @@ fun MyModpacksScreen(
                     val onDeleteThis = remember(modpack.id) { { modpackToDelete = modpack } }
                     val onShareThis = remember(modpack.id) { { shareModpack(context, modpack, shareScope) } }
                     val onRegenThis = remember(modpack.id) { { onRegenerate(modpack) } }
-                    val source = remember(modpack.id) { extractModpackSource(modpack.addonsJson) }
+                    val onCheckUpdatesThis = remember(modpack.id) { { onCheckUpdates(modpack.id) } }
+                    val source = remember(modpack.id) { extractModpackSource(modpack.sourceJsonHead) }
                     ModpackLibraryCard(
                         modpack = modpack,
                         modpackSource = source,
@@ -708,7 +760,9 @@ fun MyModpacksScreen(
                         onDelete = onDeleteThis,
                         onShare = onShareThis,
                         onRegenerate = onRegenThis,
-                        onOpenSource = { source?.let { onOpenSource(it.site, it.url) } }
+                        onOpenSource = { source?.let { onOpenSource(it.site, it.url) } },
+                        onCheckUpdates = onCheckUpdatesThis,
+                        isCheckingUpdates = isCheckingUpdates && checkingUpdatesForId == modpack.id
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -727,7 +781,7 @@ fun MyModpacksScreen(
     }
 }
 
-fun shareModpack(context: android.content.Context, modpack: SavedModpack, scope: CoroutineScope) {
+fun shareModpack(context: android.content.Context, modpack: SavedModpackSummary, scope: CoroutineScope) {
     // Intentar múltiples rutas posibles. PRIORIDAD: la copia permanente en el
     // almacenamiento interno de la app (filesDir/exports) creada al exportar,
     // que garantiza que "Compartir" funcione siempre aunque el fichero de
@@ -809,7 +863,7 @@ private fun shareNotFoundToast(context: android.content.Context) {
 }
 
 /** Lanza el Intent de compartir de un archivo ya resuelto (debe llamarse en hilo principal). */
-private fun launchShareIntent(context: android.content.Context, modpack: SavedModpack, file: File) {
+private fun launchShareIntent(context: android.content.Context, modpack: SavedModpackSummary, file: File) {
     try {
         // Verificar que el archivo tenga contenido
         if (file.length() == 0L) {
@@ -833,17 +887,103 @@ private fun launchShareIntent(context: android.content.Context, modpack: SavedMo
 }
 
 /**
+ * Acción compacta de la tarjeta del modpack: icono centrado con un label
+ * corto debajo. Agrupa las acciones en dos filas para que en pantallas
+ * estrechas los botones no queden apretados ni sin separación.
+ *
+ * Si [isSpinning] es true, el icono gira en bucle: es la señal de que la
+ * búsqueda de actualizaciones está en curso.
+ */
+@Composable
+private fun CompactCardAction(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    isDestructive: Boolean = false,
+    isHighlighted: Boolean = false,
+    isSpinning: Boolean = false
+) {
+    val rotation by if (isSpinning) {
+        val transition = rememberInfiniteTransition(label = "cardActionSpin")
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(900, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "cardActionSpinAngle"
+        )
+    } else {
+        remember { mutableFloatStateOf(0f) }
+    }
+
+    val containerColor by animateColorAsState(
+        targetValue = when {
+            isHighlighted -> MaterialTheme.colorScheme.primaryContainer
+            else -> MaterialTheme.colorScheme.surfaceContainerHighest
+        },
+        animationSpec = tween(200),
+        label = "cardActionContainer"
+    )
+    val contentColor = when {
+        isDestructive -> MaterialTheme.colorScheme.error
+        isHighlighted -> MaterialTheme.colorScheme.onPrimaryContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    Surface(
+        onClick = onClick,
+        enabled = !isSpinning,
+        shape = RoundedCornerShape(12.dp),
+        color = containerColor,
+        modifier = modifier
+            .height(52.dp)
+            .bounceClick(scaleDown = 0.9f) { onClick() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = contentColor,
+                modifier = Modifier
+                    .size(18.dp)
+                    .graphicsLayer { rotationZ = rotation }
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 9.sp,
+                color = contentColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/**
  * Tarjeta tipo Steam: portada grande 16:9, nombre, fecha y nº de addons.
  */
 @Composable
 fun ModpackLibraryCard(
-    modpack: SavedModpack,
+    modpack: SavedModpackSummary,
     onLoad: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
     onRegenerate: () -> Unit = {},
     modpackSource: ModpackSource? = null,
-    onOpenSource: () -> Unit = {}
+    onOpenSource: () -> Unit = {},
+    onCheckUpdates: () -> Unit = {},
+    isCheckingUpdates: Boolean = false
 ) {
     val coverPath = modpack.coverUriString
     // Coil necesita un File (no un String de ruta absoluta) para cargar la
@@ -988,43 +1128,63 @@ fun ModpackLibraryCard(
                 )
             }
 
-            // ── Acciones: fila uniforme de 4 botones (estable en vertical) ──
-            Row(
+            // ── Acciones compactas ────────────────────────────
+            // Cinco botones en una sola fila se veían amontonados en móvil.
+            // Se reparten en dos filas: las tres acciones principales (editar,
+            // actualizar, regenerar) arriba y las dos secundarias (compartir,
+            // borrar) abajo, cada una con su label corto para que se entienda
+            // de un vistazo sin apretar los iconos.
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(start = 8.dp, end = 8.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                FilledTonalIconButton(
-                    onClick = onLoad,
-                    modifier = Modifier.weight(1f).height(38.dp).bounceClick(scaleDown = 0.88f) { onLoad() }
+                // Fila 1: acciones principales
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.cd_edit), modifier = Modifier.size(17.dp))
-                }
-                FilledTonalIconButton(
-                    onClick = onShare,
-                    modifier = Modifier.weight(1f).height(38.dp).bounceClick(scaleDown = 0.88f) { onShare() }
-                ) {
-                    Icon(Icons.Default.Share, contentDescription = stringResource(R.string.cd_share), modifier = Modifier.size(17.dp))
-                }
-                // Re-fusionar con el motor actual (anti-obsolescencia)
-                FilledTonalIconButton(
-                    onClick = onRegenerate,
-                    modifier = Modifier.weight(1f).height(38.dp).bounceClick(scaleDown = 0.88f) { onRegenerate() }
-                ) {
-                    Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.cd_regenerate_engine), modifier = Modifier.size(17.dp))
-                }
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.weight(1f).height(38.dp).bounceClick(scaleDown = 0.88f) { onDelete() }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = stringResource(R.string.common_delete),
-                        modifier = Modifier.size(18.dp),
-                        tint = MaterialTheme.colorScheme.error
+                    CompactCardAction(
+                        icon = Icons.Default.Edit,
+                        label = "Editar",
+                        onClick = onLoad,
+                        modifier = Modifier.weight(1f)
                     )
+                    CompactCardAction(
+                        icon = Icons.Default.Autorenew,
+                        label = "Actualizar",
+                        isSpinning = isCheckingUpdates,
+                        isHighlighted = isCheckingUpdates,
+                        onClick = onCheckUpdates,
+                        modifier = Modifier.weight(1f)
+                    )
+                    CompactCardAction(
+                        icon = Icons.Default.Refresh,
+                        label = "Regenerar",
+                        onClick = onRegenerate,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                // Fila 2: acciones secundarias (se completa con un hueco)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    CompactCardAction(
+                        icon = Icons.Default.Share,
+                        label = "Compartir",
+                        onClick = onShare,
+                        modifier = Modifier.weight(1f)
+                    )
+                    CompactCardAction(
+                        icon = Icons.Default.Delete,
+                        label = "Borrar",
+                        onClick = onDelete,
+                        isDestructive = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
 
@@ -1083,18 +1243,55 @@ data class ModpackSource(
 )
 
 /**
+ * Deserializa la lista de addons guardada en un modpack, para pintarlos
+ * dentro del centro de actualizaciones (portada, tamaño y sitio de origen).
+ */
+fun decodeModpackAddons(addonsJson: String): List<Addon> {
+    if (addonsJson.isBlank()) return emptyList()
+    return try {
+        val type = object : com.google.gson.reflect.TypeToken<List<Addon>>() {}.type
+        com.google.gson.Gson().fromJson<List<Addon>>(addonsJson, type) ?: emptyList()
+    } catch (e: Exception) {
+        emptyList()
+    }
+}
+
+/**
  * Extrae el ORIGEN WEB del primer addon que tenga sourceUrl+sourceSite
  * persistidos en el addonsJson del modpack. Devuelve null si ninguno vino
  * del WebView interno (p. ej. importado por share externo o por archivo).
+ *
+ * Recibe el addonsJson COMPLETO o solo el head truncado (64 KB) de la lista
+ * ligera: si el fragmento no se puede parsear por estar cortado a mitad de
+ * JSON, se escanea el texto para localizar el primer "sourceSite" y su addon.
  */
 fun extractModpackSource(addonsJson: String): ModpackSource? {
     if (addonsJson.isBlank()) return null
-    return try {
+    // 1) Ruta rápida: JSON completo (modpacks cortos o sin truncar)
+    try {
         val type = object : com.google.gson.reflect.TypeToken<List<Addon>>() {}.type
         val addons: List<Addon> = com.google.gson.Gson().fromJson(addonsJson, type)
             ?: emptyList()
         addons.firstOrNull { !it.sourceUrl.isNullOrBlank() && !it.sourceSite.isNullOrBlank() }
-            ?.let { ModpackSource(it.sourceSite!!, it.sourceUrl!!, it.name) }
+            ?.let { return ModpackSource(it.sourceSite!!, it.sourceUrl!!, it.name) }
+    } catch (_: Exception) { /* fragmento truncado: usar escaneo por texto */ }
+
+    // 2) Fallback para el HEAD truncado: localizar el primer "sourceSite" y
+    //    reconstruir su addon con su name y sourceUrl (Gson serializa los
+    //    campos en orden de declaración: ... name ... sourceUrl sourceSite).
+    return try {
+        val siteIdx = addonsJson.indexOf("\"sourceSite\"")
+        if (siteIdx < 0) return null
+        val site = Regex("\"sourceSite\"\\s*:\\s*\"([^\"]+)\"")
+            .find(addonsJson, siteIdx)?.groupValues?.get(1) ?: return null
+        val urlRe = Regex("\"sourceUrl\"\\s*:\\s*\"([^\"]+)\"")
+        val urlMatch = urlRe.findAll(addonsJson).lastOrNull { it.range.first < siteIdx }
+        val url = urlMatch?.groupValues?.get(1) ?: return null
+        val nameRe = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"")
+        val name = nameRe.findAll(addonsJson)
+            .lastOrNull { it.range.first < urlMatch.range.first }
+            ?.groupValues?.get(1) ?: ""
+        ModpackSource(site, url, name)
     } catch (e: Exception) {
         null
     }

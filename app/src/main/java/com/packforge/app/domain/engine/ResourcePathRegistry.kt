@@ -32,14 +32,22 @@ import java.util.Locale
  * (Bedrock vincula entidades/items/bloques POR RUTA de carpeta; renombrarlos
  * rompería el auto-binding).
  *
- * ══ REGISTRO GLOBAL DE MUTACIONES ══
- * Cuando fastMergeAllSources detecta una colisión y renombra un archivo
- * binario/recurso, registra el par (original → mutada) en el registro
- * global. Antes del empaquetado final en ZIP, se recorre recursivamente
- * el directorio fusionado y se actualizan TODAS las cadenas de texto en
- * JSONs que coincidan con el mapa de mutación, usando JsonValueRewriter.
- * Esto garantiza que las referencias internas (terrain_texture, item_texture,
- * entity textures, etc.) apunten a los nombres efectivos de los archivos.
+ * ══ REGISTRO DE MUTACIONES POR FUENTE ══
+ * Cuando fastMergeAllSources detecta una colisión física y renombra un
+ * archivo (ej. `textures/entity/steve.png` → `textures/entity/steve_pf1.png`),
+ * el par (original → mutada) se registra ASOCIADO A LA FUENTE que lo produjo.
+ *
+ * ⚠️ Por qué POR FUENTE y no como mapa global plano: con 3+ addons que colisionan
+ * en la misma ruta, un mapa global acumularía primero `steve.png → steve_pf1.png`
+ * y después `steve.png → steve_pf2.png`, MACHACANDO el primer par. La reescritura
+ * global posterior apuntaría entonces las referencias del 2º addon al archivo
+ * del 3º (referencias cruzadas + archivos huérfanos). El registro por fuente
+ * conserva la identidad de cada addon y permite reescribir sus JSONs sin ambigüedad.
+ *
+ * El renombrado físico y la reescritura de referencias quedan acoplados: el mismo
+ * mapa `fileRenames` que decide el nombre en disco genera las variantes de
+ * referencia (`sin extensión`, `sin prefijo textures/`) que Bedrock usa en
+ * terrain_texture.json, item_texture.json y description.textures.
  */
 class ResourcePathRegistry {
 
@@ -50,97 +58,166 @@ class ResourcePathRegistry {
     val aliasLog = mutableListOf<String>()
 
     /**
-     * Registro GLOBAL de mutaciones de rutas durante la sesión de fusión.
-     * Clave: ruta relativa original (ej: "textures/entity/steve.png")
-     * Valor: ruta relativa mutada efectiva (ej: "textures/entity/steve_pf_174000.png")
+     * ══ REGISTRO DE MUTACIONES POR FUENTE ══
      *
-     * Incluye tanto la forma CON extensión como SIN extensión, porque
-     * Bedrock referencia texturas sin extensión en terrain_texture.json,
-     * item_texture.json y en las definiciones de entidad (description.textures).
+     * Clave: ruta absoluta del directorio fuente (addon) que origina el renombrado.
+     * Valor: mapa rutaOriginal → rutaMutada (solo rutas físicas, sin variantes).
+     *
+     * Aislar por fuente es lo que hace CORRECTA la reescritura: sin este
+     * aislamiento, N colisiones sobre la misma ruta colapsarían en una sola
+     * entrada y las referencias de un addon apuntarían al archivo de otro.
      */
-    private val globalMutationRegistry = mutableMapOf<String, String>()
+    private val sourceMutations = LinkedHashMap<String, MutableMap<String, String>>()
 
     /**
-     * Registra una mutación de ruta cuando fastMergeAllSources renombra
-     * un archivo para evitar colisión de sobreescritura.
+     * Registra que [sourceRoot] renombra [originalRelPath] a [mutatedRelPath]
+     * en el destino por colisión física.
      *
-     * @param originalRelPath Ruta relativa original (ej: "textures/blocks/dirt.png")
-     * @param mutatedRelPath Ruta efectiva tras el renombre (ej: "textures/blocks/dirt_pf_174000.png")
+     * @param sourceRoot directorio fuente (addon) dueño del renombrado
+     * @param originalRelPath ruta relativa original (ej: "textures/entity/steve.png")
+     * @param mutatedRelPath ruta efectiva tras el renombre
      */
-    fun registerMutation(originalRelPath: String, mutatedRelPath: String) {
-        globalMutationRegistry[originalRelPath] = mutatedRelPath
-        // Registrar también la variante sin extensión (referencias de atlas Bedrock)
-        val origDot = originalRelPath.lastIndexOf('.')
-        val mutDot = mutatedRelPath.lastIndexOf('.')
-        if (origDot > 0 && mutDot > 0) {
-            val origNoExt = originalRelPath.substring(0, origDot)
-            val mutNoExt = mutatedRelPath.substring(0, mutDot)
-            if (origNoExt != mutNoExt) {
-                globalMutationRegistry[origNoExt] = mutNoExt
-            }
-        }
-        PackForgeLog.d(TAG, "📝 Mutación registrada: $originalRelPath → $mutatedRelPath")
+    fun registerSourceMutation(
+        sourceRoot: File,
+        originalRelPath: String,
+        mutatedRelPath: String
+    ) {
+        if (originalRelPath == mutatedRelPath) return
+        val map = sourceMutations.getOrPut(sourceRoot.absolutePath) { LinkedHashMap() }
+        map[originalRelPath] = mutatedRelPath
+        PackForgeLog.d(TAG, "📝 Mutación[${sourceRoot.name}]: $originalRelPath → $mutatedRelPath")
     }
 
-    /**
-     * Devuelve el mapa global de mutaciones para uso externo (reportes, etc).
-     */
-    fun getGlobalRewriteMap(): Map<String, String> = globalMutationRegistry.toMap()
+    /** Mapa de mutaciones de una fuente concreta (vacío si no renombró nada). */
+    fun mutationsFor(sourceRoot: File): Map<String, String> =
+        sourceMutations[sourceRoot.absolutePath]?.toMap() ?: emptyMap()
 
-    /**
-     * Indica si hay mutaciones registradas.
-     */
-    fun hasGlobalMutations(): Boolean = globalMutationRegistry.isNotEmpty()
+    /** Mapa de mutaciones de todas las fuentes, aplanado (uso externo/reportes). */
+    fun getGlobalRewriteMap(): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        sourceMutations.values.forEach { out.putAll(it) }
+        return out
+    }
 
-    /**
-     * Limpia el registro global de mutaciones (llamar al inicio de cada sesión de fusión).
-     */
+    /** Indica si alguna fuente registró mutaciones. */
+    fun hasGlobalMutations(): Boolean = sourceMutations.values.any { it.isNotEmpty() }
+
+    /** Número total de archivos renombrados en la sesión. */
+    fun totalMutations(): Int = sourceMutations.values.sumOf { it.size }
+
+    /** Limpia el registro de mutaciones (llamar al inicio de cada sesión de fusión). */
     fun clearGlobalMutations() {
-        globalMutationRegistry.clear()
+        sourceMutations.clear()
     }
 
     /**
-     * ══ APLICACIÓN DE MUTACIONES GLOBALES A DIRECTORIOS ══
+     * ══ REESCRITURA DE REFERENCIAS POR FUENTE ══
      *
-     * Recorre recursivamente todos los archivos JSON en [rootDirs] y aplica
-     * el mapa global de mutaciones para actualizar internamente todas las
-     * cadenas de texto correspondientes a rutas de recursos renombradas.
+     * Para cada fuente con mutaciones, recorre sus JSON UNA sola vez en memoria,
+     * aplica [JsonValueRewriter.replaceValues] con todas las variantes de
+     * referencia de SUS PROPIOS renombres y escribe solo si el contenido cambió.
      *
-     * Política Zero-Excess I/O: cada archivo JSON se lee UNA sola vez en
-     * memoria (String), se analiza y reescribe si hubo reemplazos. No se
-     * realizan múltiples operaciones de disco sobre el mismo archivo.
+     * Se ejecuta ANTES de copiar la fuente al destino, de modo que los JSONs
+     * llegan ya coherentes con los nombres físicos mutados y las fases
+     * posteriores (merge de críticos, validación) heredan esa coherencia.
      *
-     * @return Número total de archivos JSON reescritos con mutaciones aplicadas.
+     * Política Zero-Excess I/O: una lectura por archivo, escritura condicional,
+     * volcado con OutputStreamWriter + StandardCharsets.UTF_8.
+     *
+     * @return número de archivos JSON reescritos.
      */
-    fun applyGlobalRewrites(rootDirs: List<File>): Int {
-        if (globalMutationRegistry.isEmpty()) return 0
-        val rewriteMap = globalMutationRegistry.toMap()
+    fun applySourceRewrites(sourceRoots: List<File>): Int {
+        if (sourceMutations.isEmpty()) return 0
         var rewritten = 0
+        // Caché LOCAL de esta pasada: evita releer cada JSON una vez por clave,
+        // y se libera al terminar (no arrastra memoria entre fusiones).
+        val cache = HashMap<String, String>()
 
-        for (rootDir in rootDirs) {
-            if (!rootDir.isDirectory) continue
-            val cachedFiles = DirIndexCache.index(rootDir).jsonFiles
-            for (file in cachedFiles) {
-                try {
-                    // Zero-Excess I/O: leer UNA vez en memoria, analizar, escribir solo si cambió
-                    val text = file.readText(StandardCharsets.UTF_8)
-                    val json = JSONObject(text)
-                    val changed = JsonValueRewriter.replaceValues(json, rewriteMap)
-                    if (changed) {
-                        OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8).use { writer ->
-                            writer.write(json.toString())
-                        }
-                        rewritten++
-                    }
-                } catch (_: Exception) {
-                    // JSONs malformados o binarios disfrazados de .json se ignoran silenciosamente
-                }
+        for (root in sourceRoots) {
+            val renames = sourceMutations[root.absolutePath] ?: continue
+            if (renames.isEmpty() || !root.isDirectory) continue
+
+            val rewriteMap = buildRewriteVariants(renames)
+            for (file in DirIndexCache.index(root).jsonFiles) {
+                // Filtro barato: si el texto no contiene ninguna clave, ni se parsea.
+                val text = readCached(cache, file)
+                if (text.isEmpty() || !rewriteMap.keys.any { text.contains(it) }) continue
+                if (rewriteJson(file, text, rewriteMap)) rewritten++
             }
         }
+        cache.clear()
+
         if (rewritten > 0) {
-            PackForgeLog.d(TAG, "🔄 Global rewrites aplicados: $rewritten archivos actualizados con ${rewriteMap.size} mutaciones")
+            PackForgeLog.d(
+                TAG,
+                "🔄 Referencias reescritas: $rewritten JSONs (${totalMutations()} mutaciones)"
+            )
         }
         return rewritten
+    }
+
+    /**
+     * Expande cada ruta física mutada a todas las formas en que Bedrock puede
+     * referenciarla:
+     *   1. ruta completa con extensión → "textures/entity/steve.png"
+     *   2. ruta completa sin extensión → "textures/entity/steve"
+     *   3. relativa a textures/ con ext → "entity/steve.png"
+     *   4. relativa a textures/ sin ext → "entity/steve"
+     *
+     * (3) y (4) son necesarias porque terrain_texture.json e item_texture.json
+     * referencian el atlas con rutas relativas a `textures/`. Solo se generan
+     * para imágenes: en el resto de binarios la forma con extensión es la única
+     * referenciada y `lastIndexOf('.')` sin cambio de directorio es válido.
+     */
+    private fun buildRewriteVariants(renames: Map<String, String>): Map<String, String> {
+        val out = LinkedHashMap<String, String>(renames.size * 4)
+        for ((original, mutated) in renames) {
+            out[original] = mutated
+
+            val oSlash = original.lastIndexOf('/')
+            val oDot = original.lastIndexOf('.')
+            // El punto debe estar en el NOMBRE del archivo, no en un directorio.
+            if (oDot <= oSlash + 1) continue
+            if (original.substring(oDot + 1).lowercase(Locale.ROOT) !in IMAGE_EXTS) continue
+
+            val mDot = mutated.lastIndexOf('.')
+            if (mDot <= 0) continue
+
+            // (2) Sin extensión
+            out[original.substring(0, oDot)] = mutated.substring(0, mDot)
+
+            // (3)(4) Relativas a textures/
+            val oName = original.substring(oSlash + 1)
+            val mName = mutated.substring(mutated.lastIndexOf('/', mDot) + 1)
+            out[oName] = mName
+            val oNameDot = oName.lastIndexOf('.')
+            if (oNameDot > 0) out[oName.substring(0, oNameDot)] = mName.substring(0, mName.lastIndexOf('.'))
+        }
+        return out
+    }
+
+    /** Extensiones para las que tiene sentido generar variantes de referencia. */
+    private val IMAGE_EXTS = setOf("png", "jpg", "jpeg", "tga", "webp", "bmp", "gif")
+
+    /** Lee el texto una sola vez por archivo (caché local a esta pasada). */
+    private fun readCached(cache: HashMap<String, String>, file: File): String =
+        cache.getOrPut(file.absolutePath) {
+            try { file.readText(StandardCharsets.UTF_8) } catch (_: Exception) { "" }
+        }
+
+    /** Reescribe un JSON. Devuelve true solo si el contenido cambió en disco. */
+    private fun rewriteJson(file: File, text: String, rewriteMap: Map<String, String>): Boolean {
+        return try {
+            val json = JSONObject(text)
+            if (!JsonValueRewriter.replaceValues(json, rewriteMap)) return false
+            OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8).use { writer ->
+                writer.write(json.toString())
+            }
+            true
+        } catch (_: Exception) {
+            // JSONs malformados o binarios disfrazados de .json se ignoran.
+            false
+        }
     }
 
     /**

@@ -9,6 +9,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.packforge.app.data.PackForgeDatabase
 import com.packforge.app.data.download.AddonDownloadRepository
+import com.packforge.app.data.update.AddonUpdateSearcher
+import com.packforge.app.data.update.SearchHit
+import com.packforge.app.data.update.VersionComparator
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.domain.engine.AddonParser
 import com.packforge.app.domain.engine.AddonUriCache
@@ -18,6 +21,7 @@ import com.packforge.app.domain.engine.ModpackExporter
 import com.packforge.app.domain.engine.PackForgeOrchestrator
 import com.packforge.app.service.MergeForegroundService
 import com.packforge.app.service.MergeSession
+import com.packforge.app.ui.components.AddonSite
 import com.packforge.app.domain.model.*
 import com.google.gson.Gson
 import kotlinx.coroutines.*
@@ -84,7 +88,11 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
     val criticalConflictsCount = _criticalConflictsCount.asStateFlow()
 
     // ─── HISTORIAL ──────────────────────────────────────────
-    private val _savedModpacks = MutableStateFlow<List<SavedModpack>>(emptyList())
+    // La biblioteca consume la versión LIGERA (sin addonsJson/resolutionsJson):
+    // leer esas columnas de todas las filas desborda el CursorWindow de 2 MB
+    // y la biblioteca aparece vacía. El modpack completo se recupera con
+    // getById() al abrir o regenerar.
+    private val _savedModpacks = MutableStateFlow<List<SavedModpackSummary>>(emptyList())
     val savedModpacks = _savedModpacks.asStateFlow()
 
     // ─── ERRORES Y ESTADO DE NAVEGADOR ───────────────────────
@@ -105,6 +113,39 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
     fun setConflictStrategy(strategy: ConflictStrategy) {
         _conflictStrategy.value = strategy
     }
+
+    // ─── ACTUALIZACIONES DE ADDONS ───────────────────────────
+    // Estado global del "Centro de actualizaciones": qué modpack se está
+    // revisando, el informe por addon y el progreso de cada actualización.
+    private val _updateReport = MutableStateFlow<ModpackUpdateReport?>(null)
+    val updateReport = _updateReport.asStateFlow()
+
+    /** Modpack actualmente abierto en el diálogo de actualizaciones. */
+    private val _updateTargetModpack = MutableStateFlow<SavedModpack?>(null)
+    val updateTargetModpack = _updateTargetModpack.asStateFlow()
+
+    /** true mientras el motor comprueba versiones en las 3 fuentes. */
+    private val _isCheckingUpdates = MutableStateFlow(false)
+    val isCheckingUpdates = _isCheckingUpdates.asStateFlow()
+
+    /** ID del modpack cuya tarjeta debe mostrar la flecha girando. */
+    private val _checkingUpdatesForId = MutableStateFlow<String?>(null)
+    val checkingUpdatesForId = _checkingUpdatesForId.asStateFlow()
+
+    /** true mientras se descarga y reemplaza un addon. */
+    private val _isApplyingUpdate = MutableStateFlow<String?>(null)
+    val isApplyingUpdate = _isApplyingUpdate.asStateFlow()
+
+    /** Addon que acaba de actualizarse (para el brillo verde "ACTUALIZADO"). */
+    private val _justUpdatedAddonId = MutableStateFlow<String?>(null)
+    val justUpdatedAddonId = _justUpdatedAddonId.asStateFlow()
+
+    /**
+     * Addon cuyas URLs de descarga se están resolviendo en este momento.
+     * Las cajitas de fuente muestran un spinner mientras ocurre.
+     */
+    private val _resolvingAddonId = MutableStateFlow<String?>(null)
+    val resolvingAddonId = _resolvingAddonId.asStateFlow()
 
     /** 
      * Updates merge conflicts by combining from DeepMerger and ConflictRegistry.
@@ -1030,81 +1071,123 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun loadModpack(m: SavedModpack) {
-        viewModelScope.launch {
-            try {
-                val type = object : com.google.gson.reflect.TypeToken<List<Addon>>() {}.type
-                val restoredRaw: List<Addon> = Gson().fromJson(m.addonsJson, type)
-
-                // Recuperar iconos + verificar archivos en el hilo de IO (nunca Main):
-                // el archivo cacheado del icono puede haber desaparecido, pero el addon
-                // fuente (en almacenamiento interno) persiste. Re-extraemos el pack_icon.png
-                // para que la portada original siempre se muestre y no quede un color sólido.
-                val (restored, missingFiles) = withContext(Dispatchers.IO) {
-                    val recovered = restoredRaw.map { addon ->
-                        val iconStillExists = addon.iconPath != null &&
-                            runCatching { java.io.File(addon.iconPath).exists() }.getOrDefault(false)
-                        if (iconStillExists || addon.sourceFilePath.isBlank()) {
-                            addon
-                        } else {
-                            val rec = AddonParser.recoverIconFromSource(
-                                addon.sourceFilePath, addon.id, getApplication()
-                            )
-                            if (rec != null) addon.copy(iconPath = rec) else addon
-                        }
-                    }
-                    val missing = recovered.any { !java.io.File(it.sourceFilePath).exists() }
-                    recovered to missing
-                }
-
-                if (missingFiles) {
-                    _events.emit(PackForgeEvent.ShowSnackbar("Algunos archivos del modpack original se perdieron.", true))
-                }
-
-                editingModpackId = m.id
-
-                // CRÍTICO: normalizar/persistir la portada a almacenamiento interno AL CARGAR,
-                // para que no se pierda el permiso de content:// ni apunte a una ruta inválida.
-                val context = getApplication<Application>()
-                val persistentCover = withContext(Dispatchers.IO) {
-                    persistCoverToInternal(context, m.coverUriString, m.id)
-                }
-                if (persistentCover != null) {
-                    PackForgeLog.d("PackForge", "Portada cargada desde Studio: $persistentCover")
-                }
-
-                _addons.value = restored
-                _metadata.value = ModpackMetadata(
-                    name = m.name, 
-                    author = m.author, 
-                    version = m.version, 
-                    mcVersion = m.mcVersion, 
-                    description = m.description, 
-                    iconEmoji = "", 
-                    tags = m.tags.split(",").filter { it.isNotBlank() }, 
-                    coverUriString = persistentCover
-                )
-
-                // Restaurar resoluciones de conflictos y estrategia guardadas.
-                // Si el campo está vacío (modpacks antiguos), se queda el mapa vacío.
-                if (m.resolutionsJson.isNotBlank()) {
-                    try {
-                        val type = object : com.google.gson.reflect.TypeToken<Map<String, String>>() {}.type
-                        _resolutions.value = Gson().fromJson(m.resolutionsJson, type) ?: emptyMap()
-                    } catch (_: Exception) { _resolutions.value = emptyMap() }
-                } else {
-                    _resolutions.value = emptyMap()
-                }
-                // Restaurar estrategia de conflicto
-                try {
-                    _conflictStrategy.value = ConflictStrategy.valueOf(m.conflictStrategy)
-                } catch (_: Exception) { /* mantener KEEP_FIRST */ }
-                
-                recalculateConflicts()
-                _events.emit(PackForgeEvent.ShowSnackbar("Modpack '${m.name}' cargado para editar"))
-            } catch (e: Exception) {
-                _events.emit(PackForgeEvent.ShowSnackbar("Error al cargar modpack", true))
+    /**
+     * Carga un modpack desde la biblioteca para editarlo.
+     *
+     * La biblioteca solo tiene la versión LIGERA (SavedModpackSummary, sin las
+     * columnas pesadas), así que aquí se recupera la fila completa por id antes
+     * de hidratar el editor. Así se evita arrastrar addonsJson de todas las
+     * filas y reventar el CursorWindow de SQLite.
+     */
+    fun loadModpack(summary: SavedModpackSummary) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val db = database ?: PackForgeDatabase.getInstance(getApplication())
+            val full = db.savedModpackDao().getById(summary.id)
+            if (full == null) {
+                _events.emit(PackForgeEvent.ShowSnackbar("Modpack no encontrado", true))
+                return@launch
             }
+            withContext(Dispatchers.Main) { hydrateModpackForEditing(full) }
+        }
+    }
+
+    /**
+     * Rellena el editor con el contenido completo de un modpack.
+     *
+     * Es `suspend` y NO lanza una coroutine interna: hacerlo creaba un timing
+     * issue donde `loadModpack` retornaba antes de que `_addons.value` se
+     * seteara, y la navegación a ImportScreen ocurría con la lista vacía.
+     */
+    private suspend fun hydrateModpackForEditing(m: SavedModpack) {
+        try {
+            // Diagnóstico: verificar que el JSON no viene vacío.
+            PackForgeLog.d(
+                "PackForge",
+                "Cargando modpack '${m.name}' (${m.id}): addonsJson length=${m.addonsJson.length}"
+            )
+            if (m.addonsJson.isBlank()) {
+                PackForgeLog.e("PackForge", "addonsJson está vacío para modpack ${m.id}")
+                _events.emit(PackForgeEvent.ShowSnackbar("Este modpack no tiene addons guardados", true))
+                return
+            }
+            val type = object : com.google.gson.reflect.TypeToken<List<Addon>>() {}.type
+            val restoredRaw: List<Addon> = Gson().fromJson(m.addonsJson, type) ?: emptyList()
+            PackForgeLog.d("PackForge", "Decodificados ${restoredRaw.size} addons del modpack")
+
+            if (restoredRaw.isEmpty()) {
+                _events.emit(PackForgeEvent.ShowSnackbar("Este modpack no tiene addons guardados", true))
+                return
+            }
+
+            // Recuperar iconos + verificar archivos en el hilo de IO (nunca Main):
+            // el archivo cacheado del icono puede haber desaparecido, pero el addon
+            // fuente (en almacenamiento interno) persiste. Re-extraemos el pack_icon.png
+            // para que la portada original siempre se muestre y no quede un color sólido.
+            val (restored, missingFiles) = withContext(Dispatchers.IO) {
+                val recovered = restoredRaw.map { addon ->
+                    val iconStillExists = addon.iconPath != null &&
+                        runCatching { java.io.File(addon.iconPath).exists() }.getOrDefault(false)
+                    if (iconStillExists || addon.sourceFilePath.isBlank()) {
+                        addon
+                    } else {
+                        val rec = AddonParser.recoverIconFromSource(
+                            addon.sourceFilePath, addon.id, getApplication()
+                        )
+                        if (rec != null) addon.copy(iconPath = rec) else addon
+                    }
+                }
+                val missing = recovered.any { !java.io.File(it.sourceFilePath).exists() }
+                recovered to missing
+            }
+
+            if (missingFiles) {
+                _events.emit(PackForgeEvent.ShowSnackbar("Algunos archivos del modpack original se perdieron.", true))
+            }
+
+            editingModpackId = m.id
+
+            // CRÍTICO: normalizar/persistir la portada a almacenamiento interno AL CARGAR,
+            // para que no se pierda el permiso de content:// ni apunte a una ruta inválida.
+            val context = getApplication<Application>()
+            val persistentCover = withContext(Dispatchers.IO) {
+                persistCoverToInternal(context, m.coverUriString, m.id)
+            }
+            if (persistentCover != null) {
+                PackForgeLog.d("PackForge", "Portada cargada desde Studio: $persistentCover")
+            }
+
+            _addons.value = restored
+            _metadata.value = ModpackMetadata(
+                name = m.name,
+                author = m.author,
+                version = m.version,
+                mcVersion = m.mcVersion,
+                description = m.description,
+                iconEmoji = "",
+                tags = m.tags.split(",").filter { it.isNotBlank() },
+                coverUriString = persistentCover
+            )
+
+            // Restaurar resoluciones de conflictos y estrategia guardadas.
+            // Si el campo está vacío (modpacks antiguos), se queda el mapa vacío.
+            if (m.resolutionsJson.isNotBlank()) {
+                try {
+                    val resType = object : com.google.gson.reflect.TypeToken<Map<String, String>>() {}.type
+                    _resolutions.value = Gson().fromJson(m.resolutionsJson, resType) ?: emptyMap()
+                } catch (_: Exception) { _resolutions.value = emptyMap() }
+            } else {
+                _resolutions.value = emptyMap()
+            }
+            // Restaurar estrategia de conflicto
+            try {
+                _conflictStrategy.value = ConflictStrategy.valueOf(m.conflictStrategy)
+            } catch (_: Exception) { /* mantener KEEP_FIRST */ }
+
+            recalculateConflicts()
+            _events.emit(PackForgeEvent.ShowSnackbar("Modpack '${m.name}' cargado para editar"))
+        } catch (e: Exception) {
+            PackForgeLog.e("PackForge", "Error cargando modpack: ${e.message}")
+            _events.emit(PackForgeEvent.ShowSnackbar("Error al cargar modpack", true))
         }
     }
 
@@ -1141,6 +1224,326 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 _events.emit(PackForgeEvent.ShowSnackbar("Error al conectar con la base de datos", true))
             }
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  CENTRO DE ACTUALIZACIONES
+    // ══════════════════════════════════════════════════════════════
+
+    private val updateSearcher by lazy { AddonUpdateSearcher() }
+    private val versionComparator by lazy { VersionComparator() }
+
+    /** Evita comprobaciones simultáneas si el usuario toca el botón varias veces. */
+    private val updateMutex = kotlinx.coroutines.sync.Mutex()
+
+    fun checkModpackUpdates(summary: SavedModpackSummary) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val db = database ?: PackForgeDatabase.getInstance(getApplication())
+            db.savedModpackDao().getById(summary.id)?.let { fullModpack ->
+                checkModpackUpdates(fullModpack)
+            } ?: run {
+                _events.emit(PackForgeEvent.ShowSnackbar("Modpack no encontrado en base de datos"))
+            }
+        }
+    }
+
+    /**
+     * Abre el diálogo de actualizaciones para un modpack y lanza la
+     * comprobación en las 3 fuentes. El botón gira mientras dura el análisis.
+     */
+    fun checkModpackUpdates(modpack: SavedModpack) {
+        viewModelScope.launch {
+            updateMutex.lock()
+            try {
+                _updateTargetModpack.value = modpack
+                _checkingUpdatesForId.value = modpack.id
+                val addons = decodeAddons(modpack.addonsJson)
+                if (addons.isEmpty()) {
+                    _isCheckingUpdates.value = false
+                    _checkingUpdatesForId.value = null
+                    _events.emit(PackForgeEvent.ShowSnackbar("Este modpack no tiene addons"))
+                    return@launch
+                }
+                _isCheckingUpdates.value = true
+                _updateReport.value = ModpackUpdateReport(
+                    modpackId = modpack.id,
+                    states = addons.map { AddonUpdateState(addonId = it.id, localVersion = it.version) }
+                )
+
+                var found = 0
+                for ((index, addon) in addons.withIndex()) {
+                    // Publicar el progreso addon a addon para que la lista se
+                    // llene progresivamente en vez de aparecer de golpe.
+                    val state = try {
+                        checkSingleAddon(addon)
+                    } catch (e: OutOfMemoryError) {
+                        // Un addon con portada corrupta o un HTML enorme no
+                        // pueden tumbar la app: se marca como "no encontrado"
+                        // y la revisión continúa con el siguiente.
+                        PackForgeLog.e("PackForge", "OOM revisando '${addon.name}'")
+                        AddonUpdateState(
+                            addonId = addon.id,
+                            phase = UpdatePhase.NoMatch,
+                            localVersion = addon.version
+                        )
+                    } catch (e: Exception) {
+                        PackForgeLog.d("PackForge", "Fallo revisando '${addon.name}': ${e.message}")
+                        AddonUpdateState(
+                            addonId = addon.id,
+                            phase = UpdatePhase.NoMatch,
+                            localVersion = addon.version
+                        )
+                    }
+                    if (state.hasUpdate) found++
+                    _updateReport.value = _updateReport.value?.let { report ->
+                        report.copy(states = report.states.toMutableList().also { it[index] = state })
+                    }
+                }
+
+                _isCheckingUpdates.value = false
+                _checkingUpdatesForId.value = null
+                if (found == 0) {
+                    // Sin novedades: se avisa, pero el diálogo NO se cierra.
+                    // El usuario sigue dentro y decide cuándo salir (X o tocar
+                    // fuera), tal como se pidió.
+                    _events.emit(PackForgeEvent.ShowSnackbar("No hay actualizaciones"))
+                } else {
+                    _events.emit(PackForgeEvent.ShowSnackbar("$found addon(s) con actualización disponible"))
+                }
+            } catch (e: Exception) {
+                _isCheckingUpdates.value = false
+                _checkingUpdatesForId.value = null
+                PackForgeLog.e("PackForge", "Error comprobando actualizaciones: ${e.message}")
+                _events.emit(PackForgeEvent.ShowSnackbar("Error al buscar actualizaciones", true))
+            } finally {
+                updateMutex.unlock()
+            }
+        }
+    }
+
+    /**
+     * Busca UN addon en las 3 fuentes y decide si hay versión superior.
+     *
+     * La fuente RECOMENDADA es aquella de donde se importó el addon
+     * (addon.sourceSite), porque actualizar desde el mismo origen garantiza
+     * que el contenido es idéntico al que el autor publica.
+     */
+    private suspend fun checkSingleAddon(addon: Addon): AddonUpdateState {
+        val localVersion = addon.version
+        val hits = updateSearcher.searchAll(
+            sourceHint = AddonSite.fromSourceKey(addon.sourceSite),
+            addonName = addon.name
+        )
+        if (hits.isEmpty()) {
+            return AddonUpdateState(
+                addonId = addon.id,
+                phase = UpdatePhase.NoMatch,
+                localVersion = localVersion
+            )
+        }
+
+        // Convertir cada hit en un SourceMatch con su versión web.
+        val matches = hits.values.mapNotNull { hit ->
+            val remote = hit.version
+            if (remote.isBlank()) {
+                // Sin versión legible en la web: no podemos afirmar que hay
+                // actualización, pero sí registrar dónde está el addon.
+                SourceMatch(site = hit.site, version = "", pageUrl = hit.pageUrl, downloadUrl = hit.downloadUrl)
+            } else {
+                SourceMatch(site = hit.site, version = remote, pageUrl = hit.pageUrl, downloadUrl = hit.downloadUrl)
+            }
+        }
+
+        // Solo cuentan como actualización los que tienen versión superior.
+        val upgrades = matches.filter { m ->
+            m.version.isNotBlank() && versionComparator.isNewer(m.version, localVersion)
+        }
+
+        if (upgrades.isEmpty()) {
+            return AddonUpdateState(
+                addonId = addon.id,
+                phase = UpdatePhase.UpToDate,
+                localVersion = localVersion,
+                matches = matches
+            )
+        }
+
+        // La versión más alta entre las fuentes con actualización.
+        // No se puede usar maxByOrNull con parse() porque devuelve un
+        // List<Int>: Kotlin no sabe comparar listas numéricas de forma
+        // natural, así que delegamos en el comparador de versiones.
+        val best = upgrades.maxWithOrNull(
+            compareBy { versionComparator.compare(it.version, "0.0.0") }
+        ) ?: upgrades.first()
+        // Recomendación: el origen real del addon, si también ofrece upgrade.
+        val originKey = addon.sourceSite
+        val originUpgrade = upgrades.firstOrNull { it.site == originKey }
+        val recommended = originUpgrade ?: best
+
+        return AddonUpdateState(
+            addonId = addon.id,
+            phase = UpdatePhase.UpdateAvailable,
+            localVersion = localVersion,
+            remoteVersion = best.version,
+            recommendedSite = recommended.site,
+            recommendedUrl = recommended.pageUrl,
+            matches = upgrades,
+            error = null
+        )
+    }
+
+    /**
+     * Resuelve las URLs de descarga de las fuentes de un addon, bajo demanda.
+     *
+     * No se hace durante la comprobación inicial a propósito: resolver una
+     * descarga exige descargar la página de detalle y seguir sus
+     * redirecciones, y hacerlo para cada addon × cada fuente triplicaría el
+     * tiempo de espera del usuario. Se resuelve solo cuando expande la lista
+     * de fuentes, que es justo cuando va a actuar sobre una.
+     */
+    fun resolveSourceDownloads(addonId: String) {
+        val report = _updateReport.value ?: return
+        val state = report.states.firstOrNull { it.addonId == addonId } ?: return
+        // Si ya se resolvió alguna, no se repite: cada resolución es un viaje
+        // de red que el usuario no espera ver dos veces.
+        if (state.matches.any { !it.downloadUrl.isNullOrBlank() }) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            _resolvingAddonId.value = addonId
+            try {
+                val resolved = state.matches.map { match ->
+                    val hit = SearchHit(
+                        site = match.site,
+                        pageUrl = match.pageUrl,
+                        name = addonId,
+                        version = match.version
+                    )
+                    // Un fallo aquí no rompe nada: la cajita conserva la URL de la
+                    // página, y al tocarla se abrirá el WebView como antes.
+                    val download = runCatching { updateSearcher.resolveDownloadUrl(hit) }.getOrNull()
+                    match.copy(downloadUrl = download)
+                }
+                _updateReport.value = report.copy(
+                    states = report.states.map { s ->
+                        if (s.addonId == addonId) s.copy(matches = resolved) else s
+                    }
+                )
+            } finally {
+                _resolvingAddonId.value = null
+            }
+        }
+    }
+
+    /**
+     * Descarga la versión nueva de un addon y la REEMPLAZA dentro del
+     * modpack guardado, sin pasar por la pantalla de importación.
+     *
+     * El addon antiguo (BP/RP + archivo) se elimina por completo: el
+     * modpack queda con el contenido nuevo y al regenerar usa eso.
+     */
+    fun applyAddonUpdate(context: Context, modpack: SavedModpack, addonId: String, site: String, downloadUrl: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isApplyingUpdate.value = addonId
+            try {
+                val targetSite = AddonSite.fromSourceKey(site)
+                val progressName = downloadUrl.substringBefore('?').substringAfterLast('/')
+                    .takeIf { it.contains(".") } ?: "update.mcaddon"
+
+                addonDownloadRepository.downloadToCache(context, downloadUrl, progressName) { p ->
+                    _importProgress.value = OperationProgress.Loading("Actualizando...", p)
+                }.onSuccess { uri ->
+                    val parsed = AddonParser.parseFromUri(context, uri)
+                    if (parsed == null) {
+                        _events.emit(PackForgeEvent.ShowSnackbar("No se pudo leer el addon descargado", true))
+                        return@onSuccess
+                    }
+
+                    val db = database ?: PackForgeDatabase.getInstance(context)
+                    val oldAddons = decodeAddons(modpack.addonsJson)
+                    val oldAddon = oldAddons.firstOrNull { it.id == addonId }
+                    val newAddons = oldAddons.map { existing ->
+                        if (existing.id == addonId) {
+                            // Reemplazo completo: contenido, versión, nombre,
+                            // portada y tamaño del addon NUEVO, conservando
+                            // el id para no romper las resoluciones guardadas.
+                            parsed.copy(
+                                id = existing.id,
+                                priority = existing.priority,
+                                sourceUrl = site,
+                                sourceSite = site
+                            )
+                        } else {
+                            existing
+                        }
+                    }
+
+                    // Borrar el material antiguo del addon reemplazado.
+                    oldAddon?.sourceFilePath?.let { path ->
+                        runCatching { File(path).takeIf { it.isDirectory }?.deleteRecursively() }
+                    }
+                    AddonUriCache.clear()
+
+                    // Reescribir el modpack con los addons nuevos.
+                    val updatedPack = modpack.copy(
+                        addonsJson = Gson().toJson(
+                            newAddons.map {
+                                it.copy(
+                                    rawManifest = "",
+                                    entityIdentifiers = emptyList(),
+                                    itemIdentifiers = emptyList(),
+                                    recipeIdentifiers = emptyList()
+                                )
+                            }
+                        ),
+                        addonCount = newAddons.count { it.enabled },
+                        addonNames = Gson().toJson(newAddons.filter { it.enabled }.map { it.name })
+                    )
+                    db.savedModpackDao().insert(updatedPack)
+
+                    // Reflejar el cambio en el informe abierto.
+                    _updateReport.value = _updateReport.value?.let { report ->
+                        report.copy(states = report.states.map { st ->
+                            if (st.addonId == addonId) {
+                                st.copy(phase = UpdatePhase.Updated, remoteVersion = parsed.version)
+                            } else {
+                                st
+                            }
+                        })
+                    }
+                    _justUpdatedAddonId.value = addonId
+                    _events.emit(PackForgeEvent.ShowSnackbar("${parsed.name} actualizado a v${parsed.version}"))
+
+                    // El brillo verde es temporal.
+                    viewModelScope.launch {
+                        kotlinx.coroutines.delay(4000)
+                        _justUpdatedAddonId.value = null
+                    }
+                }.onFailure {
+                    _events.emit(PackForgeEvent.ShowSnackbar("Error al descargar la actualización", true))
+                }
+            } catch (e: Exception) {
+                PackForgeLog.e("PackForge", "Error aplicando actualización: ${e.message}")
+                _events.emit(PackForgeEvent.ShowSnackbar("Error al aplicar la actualización", true))
+            } finally {
+                _isApplyingUpdate.value = null
+                _importProgress.value = OperationProgress.Idle
+            }
+        }
+    }
+
+    /** Cierra el diálogo de actualizaciones. */
+    fun closeUpdateDialog() {
+        _updateTargetModpack.value = null
+        _updateReport.value = null
+    }
+
+    /** Deserializa el addonsJson de un modpack. */
+    private fun decodeAddons(json: String): List<Addon> {
+        if (json.isBlank()) return emptyList()
+        return runCatching {
+            val type = object : com.google.gson.reflect.TypeToken<List<Addon>>() {}.type
+            Gson().fromJson<List<Addon>>(json, type) ?: emptyList()
+        }.getOrDefault(emptyList())
     }
 
     override fun onCleared() {

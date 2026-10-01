@@ -1,6 +1,8 @@
 package com.packforge.app.data
 
 import android.content.Context
+import android.database.CursorWindow
+import android.os.Build
 import androidx.annotation.VisibleForTesting
 import androidx.room.Database
 import androidx.room.Room
@@ -58,6 +60,22 @@ abstract class PackForgeDatabase : RoomDatabase() {
                 .addMigrations(MIGRATION_2_3)
                 .build()
                 INSTANCE = instance
+                // Aumentar el tamaño del CursorWindow: Room/SQLite usa por defecto 2 MB por ventana.
+                // Los modpacks con addonsJson grande (manifests completos de versiones anteriores)
+                // pueden superar ese límite y provocar "Row too big to fit into CursorWindow",
+                // que hacía fallar la lectura de la biblioteca entera y parecer que los modpacks
+                // se habían borrado cuando en realidad seguían en la base de datos.
+                // setCursorWindowSize existe desde API 28 (P), pero no siempre es visible en el
+                // SDK público (API restringida en compilaciones recientes), así que se
+                // invoca por reflexión. Si falla no es crítico: la compactación de filas
+                // gigantes en el ViewModel evita que el cursor de 2 MB se desborde.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    try {
+                        val method = CursorWindow::class.java
+                            .getMethod("setCursorWindowSize", Long::class.javaPrimitiveType)
+                        method.invoke(null, 64L * 1024 * 1024) // 64 MB
+                    } catch (_: Throwable) { /* ignorar si la API no lo permite */ }
+                }
                 instance
             }
         }

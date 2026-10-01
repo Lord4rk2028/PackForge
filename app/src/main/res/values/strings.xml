@@ -111,6 +111,7 @@
     <string name="studio_delete_message">¿Eliminar \'%1$s\'? Se borrará del historial de PackForge.</string>
     <string name="cd_cover_of">Portada de %1$s</string>
     <string name="cd_regenerate_engine">Regenerar con el motor actual</string>
+    <string name="cd_check_updates">Comprobar actualizaciones</string>
 
     <!-- ThemeSettingsScreen -->
     <string name="theme_primary">Primario</string>
