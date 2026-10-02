@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -248,21 +249,87 @@ fun StudioScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp)
         ) {
+            // ── Header hero con gradiente ────────────────────
             item {
-                Column(modifier = Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "Centro de Modpacks",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                                        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f),
+                                        Color.Transparent
+                                    )
+                                )
+                            )
+                            .padding(20.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(54.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.Workspaces,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = "Centro de Modpacks",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Gestiona tus creaciones y fuentes de contenido",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Fila de estadísticas rápidas ─────────────────
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    StatChip(
+                        value = if (savedModpacks.isNotEmpty()) "${savedModpacks.size}" else "—",
+                        label = "Modpacks",
+                        icon = Icons.Default.Folder,
+                        modifier = Modifier.weight(1f)
                     )
-                    Text(
-                        text = "Gestiona tus creaciones y fuentes de contenido",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    StatChip(
+                        value = "${savedModpacks.sumOf { it.addonCount }}",
+                        label = "Addons",
+                        icon = Icons.Outlined.Extension,
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatChip(
+                        value = "3",
+                        label = "Fuentes",
+                        icon = Icons.Default.Public,
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
@@ -412,6 +479,52 @@ fun StudioScreen(
                 .align(Alignment.BottomEnd)
                 .padding(end = 20.dp, bottom = 16.dp)
         )
+    }
+}
+
+/**
+ * Cápsula de estadística rápida del Studio: valor grande + etiqueta corta
+ * con icono. Da contexto de un vistazo (cuántos modpacks/addons hay).
+ */
+@Composable
+private fun StatChip(
+    value: String,
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 9.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -738,15 +851,13 @@ fun MyModpacksScreen(
                 }
             }
         } else {
-            // ── GRID 2 columnas tipo Steam ───────────────────
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+            // ── LISTA VERTICAL: una tarjeta horizontal por fila, ancho completo ──
+            LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                contentPadding = PaddingValues(16.dp)
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp)
             ) {
-                gridItems(modpacks, key = { it.id }, contentType = { "modpack" }) { modpack ->
+                items(modpacks, key = { it.id }, contentType = { "modpack" }) { modpack ->
                     val onLoadThis = remember(modpack.id) { { onLoad(modpack); onBack() } }
                     val onDeleteThis = remember(modpack.id) { { modpackToDelete = modpack } }
                     val onShareThis = remember(modpack.id) { { shareModpack(context, modpack, shareScope) } }
@@ -765,7 +876,7 @@ fun MyModpacksScreen(
                         isCheckingUpdates = isCheckingUpdates && checkingUpdatesForId == modpack.id
                     )
                 }
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item {
                     Spacer(modifier = Modifier.height(72.dp))
                 }
             }
@@ -887,91 +998,77 @@ private fun launchShareIntent(context: android.content.Context, modpack: SavedMo
 }
 
 /**
- * Acción compacta de la tarjeta del modpack: icono centrado con un label
- * corto debajo. Agrupa las acciones en dos filas para que en pantallas
- * estrechas los botones no queden apretados ni sin separación.
- *
- * Si [isSpinning] es true, el icono gira en bucle: es la señal de que la
- * búsqueda de actualizaciones está en curso.
+ * Acción directa de la tarjeta: píldora compacta de icono + label. Ocupa
+ * menos que un IconButton cuadrado y se lee sin ambigüedad.
  */
 @Composable
-private fun CompactCardAction(
+private fun DirectCardAction(
     icon: ImageVector,
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    isDestructive: Boolean = false,
-    isHighlighted: Boolean = false,
-    isSpinning: Boolean = false
+    isSpinning: Boolean = false,
+    isHighlighted: Boolean = false
 ) {
-    val rotation by if (isSpinning) {
-        val transition = rememberInfiniteTransition(label = "cardActionSpin")
-        transition.animateFloat(
-            initialValue = 0f,
-            targetValue = 360f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(900, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "cardActionSpinAngle"
-        )
-    } else {
-        remember { mutableFloatStateOf(0f) }
-    }
-
     val containerColor by animateColorAsState(
-        targetValue = when {
-            isHighlighted -> MaterialTheme.colorScheme.primaryContainer
-            else -> MaterialTheme.colorScheme.surfaceContainerHighest
-        },
+        targetValue = if (isHighlighted)
+            MaterialTheme.colorScheme.primaryContainer
+        else
+            MaterialTheme.colorScheme.surfaceContainerHighest,
         animationSpec = tween(200),
-        label = "cardActionContainer"
+        label = "directActionContainer"
     )
-    val contentColor = when {
-        isDestructive -> MaterialTheme.colorScheme.error
-        isHighlighted -> MaterialTheme.colorScheme.onPrimaryContainer
-        else -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
+    val contentColor = if (isHighlighted)
+        MaterialTheme.colorScheme.onPrimaryContainer
+    else
+        MaterialTheme.colorScheme.onSurfaceVariant
 
     Surface(
         onClick = onClick,
         enabled = !isSpinning,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(10.dp),
         color = containerColor,
         modifier = modifier
-            .height(52.dp)
+            .height(34.dp)
             .bounceClick(scaleDown = 0.9f) { onClick() }
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(vertical = 6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+                .padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = label,
                 tint = contentColor,
-                modifier = Modifier
-                    .size(18.dp)
-                    .graphicsLayer { rotationZ = rotation }
+                modifier = Modifier.size(14.dp)
             )
-            Spacer(Modifier.height(2.dp))
+            Spacer(Modifier.width(3.dp))
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
                 fontSize = 9.sp,
+                fontWeight = FontWeight.SemiBold,
                 color = contentColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                maxLines = 1
             )
         }
     }
 }
 
 /**
- * Tarjeta tipo Steam: portada grande 16:9, nombre, fecha y nº de addons.
+ * Tarjeta HORIZONTAL de la biblioteca: portada cuadrada a la izquierda,
+ * contenido y acciones a la derecha.
+ *
+ * Diseño optimizado para móvil: en lugar de apilar portada + metadata + dos
+ * filas de botones (tarjetas altísimas que obligan a scrollear de a una),
+ * todo cabe en una fila compacta. Más tarjetas visibles, menos scroll.
+ *
+ * Las acciones se reparten en botones directos (Editar, Actualizar,
+ * Regenerar) y un menú desplegable (⋮) para las secundarias (Compartir,
+ * Abrir origen, Borrar), para no amontonar cinco botones.
  */
 @Composable
 fun ModpackLibraryCard(
@@ -985,6 +1082,7 @@ fun ModpackLibraryCard(
     onCheckUpdates: () -> Unit = {},
     isCheckingUpdates: Boolean = false
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     val coverPath = modpack.coverUriString
     // Coil necesita un File (no un String de ruta absoluta) para cargar la
     // portada persistida en almacenamiento interno; un content:// se pasa tal cual.
@@ -995,163 +1093,194 @@ fun ModpackLibraryCard(
         else -> coverPath
     }
 
+    // La flecha de "Actualizar" gira mientras el motor revisa las 3 fuentes.
+    val spinAngle by if (isCheckingUpdates) {
+        val transition = rememberInfiniteTransition(label = "updateSpin")
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(900, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "updateSpinAngle"
+        )
+    } else {
+        remember { mutableFloatStateOf(0f) }
+    }
+
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
-            .bounceClick(scaleDown = 0.98f) { onLoad() },
-        shape = RoundedCornerShape(20.dp),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp),
+            .bounceClick(scaleDown = 0.97f) { onLoad() },
+        shape = RoundedCornerShape(18.dp),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         )
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            // ── Portada 16:9 ─────────────────────────────────
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // ── Portada grande con badges superpuestos ─────────────────
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
-                    .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center
+                    .size(118.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 when {
-                    coverModel != null -> {
-                        CachedAsyncImage(
-                            model = coverModel,
-                            contentDescription = stringResource(R.string.cd_cover_of, modpack.name),
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    }
-                    else -> {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                Icons.Default.Extension,
-                                null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                modifier = Modifier.size(28.dp)
-                            )
-                            Text(
-                                text = modpack.name.take(12),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
+                    coverModel != null -> CachedAsyncImage(
+                        model = coverModel,
+                        contentDescription = stringResource(R.string.cd_cover_of, modpack.name),
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                    else -> Icon(
+                        Icons.Default.Extension,
+                        null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                        modifier = Modifier.align(Alignment.Center).size(30.dp)
+                    )
                 }
 
-                // Badge de nº de addons con vector dinámico
+                // Contador de addons, abajo sobre la portada.
                 Surface(
                     shape = RoundedCornerShape(50),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp)
+                        .align(Alignment.BottomCenter)
+                        .padding(5.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Extension,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Text(
-                            text = "${modpack.addonCount} addons",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
+                    Text(
+                        text = "${modpack.addonCount} addons",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
                 }
 
-                // ⭐ Badge de ORIGEN WEB (si alguno de sus addons se descargó
-                // desde el WebView interno, con acceso a la página del addon)
+                // Badge de ORIGEN WEB (arriba-izquierda): el addon vino de
+                // MCPEDL/CurseForge/ModBay y su página sigue accesible.
                 if (modpackSource != null) {
                     Surface(
                         shape = RoundedCornerShape(50),
                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
                         modifier = Modifier
                             .align(Alignment.TopStart)
-                            .padding(8.dp)
+                            .padding(5.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Link,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(11.dp)
-                            )
-                            Text(
-                                text = modpackSource.site,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
+                        Text(
+                            text = modpackSource.site,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                        )
                     }
                 }
             }
 
-            // ── Metadatos ────────────────────────────────────
+            // ── Contenido + acciones ─────────────────────────────────
             Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                modifier = Modifier
+                    .weight(1f)
+                    .height(118.dp),
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = modpack.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    // Menú de acciones secundarias: mantiene la fila limpia.
+                    Box {
+                        Surface(
+                            onClick = { menuOpen = true },
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest
+                        ) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = "Más opciones",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(4.dp).size(16.dp)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuOpen,
+                            onDismissRequest = { menuOpen = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Compartir") },
+                                leadingIcon = { Icon(Icons.Default.Share, null, Modifier.size(18.dp)) },
+                                onClick = { menuOpen = false; onShare() }
+                            )
+                            if (modpackSource != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Abrir origen (${modpackSource.site})") },
+                                    leadingIcon = {
+                                        Icon(Icons.AutoMirrored.Filled.OpenInNew, null, Modifier.size(18.dp))
+                                    },
+                                    onClick = { menuOpen = false; onOpenSource() }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("Borrar", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Delete, null,
+                                        Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                },
+                                onClick = { menuOpen = false; onDelete() }
+                            )
+                        }
+                    }
+                }
+
+                // Versión + fecha en una sola línea.
                 Text(
-                    text = modpack.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
+                    text = buildString {
+                        append("v")
+                        append(modpack.version)
+                        append(" · MC ")
+                        append(modpack.mcVersion)
+                        val date = formatModpackDate(modpack.createdAt)
+                        if (date.isNotBlank()) {
+                            append(" · ")
+                            append(date)
+                        }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = "v${modpack.version} · MC ${modpack.mcVersion}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = formatModpackDate(modpack.createdAt),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                )
-            }
 
-            // ── Acciones compactas ────────────────────────────
-            // Cinco botones en una sola fila se veían amontonados en móvil.
-            // Se reparten en dos filas: las tres acciones principales (editar,
-            // actualizar, regenerar) arriba y las dos secundarias (compartir,
-            // borrar) abajo, cada una con su label corto para que se entienda
-            // de un vistazo sin apretar los iconos.
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 8.dp, end = 8.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                // Fila 1: acciones principales
+                // Acciones directas: las tres más frecuentes.
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    CompactCardAction(
+                    DirectCardAction(
                         icon = Icons.Default.Edit,
                         label = "Editar",
                         onClick = onLoad,
                         modifier = Modifier.weight(1f)
                     )
-                    CompactCardAction(
+                    DirectCardAction(
                         icon = Icons.Default.Autorenew,
                         label = "Actualizar",
                         isSpinning = isCheckingUpdates,
@@ -1159,67 +1288,12 @@ fun ModpackLibraryCard(
                         onClick = onCheckUpdates,
                         modifier = Modifier.weight(1f)
                     )
-                    CompactCardAction(
+                    DirectCardAction(
                         icon = Icons.Default.Refresh,
                         label = "Regenerar",
                         onClick = onRegenerate,
                         modifier = Modifier.weight(1f)
                     )
-                }
-                // Fila 2: acciones secundarias (se completa con un hueco)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    CompactCardAction(
-                        icon = Icons.Default.Share,
-                        label = "Compartir",
-                        onClick = onShare,
-                        modifier = Modifier.weight(1f)
-                    )
-                    CompactCardAction(
-                        icon = Icons.Default.Delete,
-                        label = "Borrar",
-                        onClick = onDelete,
-                        isDestructive = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                }
-            }
-
-            // ── Acción "Abrir origen del addon" (si se importó desde el WebView) ──
-            if (modpackSource != null) {
-                Surface(
-                    onClick = onOpenSource,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
-                        .bounceClick(scaleDown = 0.97f) { onOpenSource() },
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = "Abrir origen: ${modpackSource.addonName} (${modpackSource.site})",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
                 }
             }
         }

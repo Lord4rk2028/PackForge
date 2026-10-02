@@ -1381,144 +1381,19 @@ object BedrockCriticalFilesMerger {
     }
 
     // =====================================================================
-    // 17. RESOLVER DEPENDENCIAS FALTANTES POR IDENTIFICADOR BEDROCK (CRÍTICO)
-    //     Usa BedrockIdentifierIndex para copiar archivos faltantes referenciados
-    //     por .entity.json (geometrías, animaciones, render_controllers) que no
-    //     fueron fusionados por la fase genérica. Preserva texturas PNG existentes
-    //     y resuelve recursivamente dependencias de los archivos copiados.
-    // =====================================================================
-    fun resolveMissingDependencies(
-        identifierIndex: BedrockIdentifierIndex,
-        mergedRpDir: File,
-        rpDirs: List<File>
-    ) {
-        val destEntityDir = File(mergedRpDir, "entity")
-        if (!destEntityDir.isDirectory) return
-
-        var resolved = 0
-        var missing = 0
-
-        destEntityDir.listFiles()?.filter { it.extension.equals("json", ignoreCase = true) }?.forEach { entityFile ->
-            try {
-                val json = JSONObject(entityFile.readText(Charsets.UTF_8))
-                val clientEntity = json.optJSONObject("minecraft:client_entity") ?: json
-                val desc = clientEntity.optJSONObject("description") ?: json.optJSONObject("description")
-
-                // 1) Geometrías referenciadas
-                val geometryRefs = mutableListOf<String>()
-                val geoRaw = desc?.opt("geometry") ?: clientEntity.opt("geometry")
-                when (geoRaw) {
-                    is String -> geometryRefs.add(geoRaw)
-                    is JSONObject -> geoRaw.keys().forEach { geometryRefs.add(geoRaw.optString(it)) }
-                    is JSONArray -> for (i in 0 until geoRaw.length()) geoRaw.optString(i)?.takeIf { it.isNotBlank() }?.let { geometryRefs.add(it) }
-                }
-
-                for (geoId in geometryRefs) {
-                    val clean = geoId.trim()
-                    if (clean.isBlank() || BedrockIdentifierIndex.isVanilla(clean)) continue
-                    val exists = File(mergedRpDir, "models/entity/${clean.substringAfterLast(".")}.geo.json").exists() ||
-                        File(mergedRpDir, "models/blocks/${clean.substringAfterLast(".")}.geo.json").exists()
-                    if (exists) continue
-
-                    val source = identifierIndex.resolve(clean)
-                    if (source != null) {
-                        // Copiar preservando subruta relativa (entity vs blocks)
-                        val rel = source.name
-                        val subDir = if (source.invariantSeparatorsPath.contains("models/blocks")) "models/blocks" else "models/entity"
-                        val dest = File(mergedRpDir, "$subDir/$rel")
-                        dest.parentFile?.mkdirs()
-                        source.copyTo(dest, overwrite = true)
-                        resolved++
-                        PackForgeLog.d("PackForge_MergeDeps", "🔧 Geometría resuelta: $clean → ${dest.relativeTo(mergedRpDir).invariantSeparatorsPath}")
-                        // Recursivo: el .geo copiado puede referenciar animaciones/texturas adicionales
-                        resolveDependenciesOfFile(source, identifierIndex, mergedRpDir)
-                    } else {
-                        missing++
-                        PackForgeLog.w("PackForge_MergeDeps", "❌ Geometría no encontrada: $clean (no es vanilla ni está en addons)")
-                    }
-                }
-
-                // 2) Animaciones referenciadas
-                val animRefs = mutableListOf<String>()
-                val animsObj = desc?.optJSONObject("animations") ?: clientEntity.optJSONObject("animations")
-                animsObj?.let { obj ->
-                    obj.keys().forEach { animRefs.add(obj.optString(it).trim()) }
-                }
-                // scripts/animate también puede contener referencias
-                val scriptsObj = desc?.optJSONObject("scripts") ?: clientEntity.optJSONObject("scripts")
-                (scriptsObj?.opt("animate") as? JSONArray)?.let { arr ->
-                    for (i in 0 until arr.length()) arr.optString(i)?.takeIf { it.isNotBlank() }?.let { animRefs.add(it.trim()) }
-                }
-                (scriptsObj?.opt("animate") as? JSONObject)?.let { animateObj ->
-                    animateObj.keys().forEach { animRefs.add(animateObj.optString(it).trim()) }
-                }
-
-                for (animId in animRefs) {
-                    if (animId.isBlank() || BedrockIdentifierIndex.isVanilla(animId)) continue
-                    val exists = DirIndexCache.index(mergedRpDir).allFiles.any { it.name.contains(animId.substringAfterLast(".")) }
-                    if (exists) continue
-                    val source = identifierIndex.resolve(animId)
-                    if (source != null) {
-                        val dest = File(mergedRpDir, "animations/${source.name}")
-                        dest.parentFile?.mkdirs()
-                        source.copyTo(dest, overwrite = true)
-                        resolved++
-                        PackForgeLog.d("PackForge_MergeDeps", "🔧 Animación resuelta: $animId → ${dest.name}")
-                    }
-                }
-
-                // 3) Render controllers referenciados
-                val rcRefs = mutableListOf<String>()
-                val rcObj = desc?.optJSONObject("render_controllers") ?: clientEntity.optJSONObject("render_controllers")
-                rcObj?.keys()?.forEach { rcRefs.add(rcObj.optString(it).trim()) }
-                for (rcId in rcRefs) {
-                    if (rcId.isBlank() || BedrockIdentifierIndex.isVanilla(rcId)) continue
-                    val exists = File(mergedRpDir, "render_controllers/${rcId.substringAfterLast(".")}.json").exists() ||
-                        DirIndexCache.index(mergedRpDir).allFiles.any { it.name.contains(rcId.substringAfterLast(".")) }
-                    if (exists) continue
-                    val source = identifierIndex.resolve(rcId)
-                    if (source != null) {
-                        val dest = File(mergedRpDir, "render_controllers/${source.name}")
-                        dest.parentFile?.mkdirs()
-                        source.copyTo(dest, overwrite = true)
-                        resolved++
-                        PackForgeLog.d("PackForge_MergeDeps", "🔧 Render controller resuelto: $rcId → ${dest.name}")
-                    }
-                }
-            } catch (e: Exception) {
-                PackForgeLog.w("PackForge_MergeDeps", "Error resolviendo deps de ${entityFile.name}: ${e.message}")
-            }
-        }
-
-        if (resolved > 0 || missing > 0) {
-            PackForgeLog.d("PackForge_MergeDeps", "✅ Dependencias resueltas: $resolved copiadas, $missing faltantes")
-        }
-    }
-
-    private fun resolveDependenciesOfFile(source: File, identifierIndex: BedrockIdentifierIndex, mergedRpDir: File) {
-        try {
-            val json = JSONObject(source.readText(Charsets.UTF_8))
-            // Un .geo.json puede tener animaciones embebidas o referencias a texturas
-            json.optJSONObject("animations")?.keys()?.forEach { animId ->
-                if (!BedrockIdentifierIndex.isVanilla(animId)) {
-                    identifierIndex.resolve(animId)?.let { animFile ->
-                        val dest = File(mergedRpDir, "animations/${animFile.name}")
-                        if (!dest.exists()) {
-                            dest.parentFile?.mkdirs()
-                            animFile.copyTo(dest, overwrite = true)
-                            PackForgeLog.d("PackForge_MergeDeps", "🔧 Dependencia recursiva animación: $animId")
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-    }
-
-    // =====================================================================
-    // 18. ATTACHABLES - RP/attachables/*.json declaran minecraft:attachable.
+    // 17. ATTACHABLES - RP/attachables/*.json declaran minecraft:attachable.
     //     Fusiona por nombre de archivo deduplicando por clave raíz (ej.
     //     "minecraft:attachable"). Si el archivo ya existe en destino, se
     //     fusiona en profundidad; si no, se copia limpio.
+    //
+    // ⚠️ La resolución de dependencias de entidades (geometrías, animaciones y
+    //     render_controllers ausentes) NO vive aquí: la hace
+    //     EntityDependencyResolver.resolve(), que clasifica por CONTENIDO
+    //     (duck typing) y además crea alias de variantes y restaura la
+    //     geometría canónica cuando el deepmerge la mutó. El antiguo
+    //     resolveMissingDependencies() de este objeto quedó sin uso al
+    //     dejar de construirse el BedrockIdentifierIndex masivo, y se
+    //     eliminó para no dejar dos resolutores divergentes.
     // =====================================================================
     fun mergeAttachables(rpDirs: List<File>, destDir: File) {
         val destAttachDir = File(destDir, "attachables")
@@ -1561,3 +1436,4 @@ object BedrockCriticalFilesMerger {
         PackForgeLog.d("PackForge_Attach", "✅ attachables fusionados")
     }
 }
+

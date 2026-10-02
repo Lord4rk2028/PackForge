@@ -183,23 +183,37 @@ class ResourcePathRegistry {
             val mDot = mutated.lastIndexOf('.')
             if (mDot <= 0) continue
 
-            // (2) Sin extensión
+     // (2) Ruta completa sin extensión.
             out[original.substring(0, oDot)] = mutated.substring(0, mDot)
 
-            // (3)(4) Relativas a textures/
+    // (3)(4) Relativas a `textures/`: Bedrock referencia el atlas como
+     // "entity/steve" o "entity/steve.png", NO como "textures/entity/steve".
+        // Se conserva el directorio padre, no solo el basename.
+        if (oSlash > 0 && original.startsWith(TEXTURES_PREFIX)) {
+   // Directorio relativo a `textures/` (ej. "textures/entity/" -> "entity/").
+     val relDir = original.substring(0, oSlash + 1).removePrefix(TEXTURES_PREFIX)
+    // Directorio del mutado en la misma forma relativa (ej. "entity/").
+            val mDir = mutated.substring(0, mutated.lastIndexOf('/', mDot) + 1)
+              .removePrefix(TEXTURES_PREFIX)
             val oName = original.substring(oSlash + 1)
-            val mName = mutated.substring(mutated.lastIndexOf('/', mDot) + 1)
-            out[oName] = mName
-            val oNameDot = oName.lastIndexOf('.')
-            if (oNameDot > 0) out[oName.substring(0, oNameDot)] = mName.substring(0, mName.lastIndexOf('.'))
+      val mName = mutated.substring(mutated.lastIndexOf('/', mDot) + 1)
+
+   out["$relDir$oName"] = "$mDir$mName"
+     val oNameDot = oName.lastIndexOf('.')
+            if (oNameDot > 0) {
+       out["$relDir${oName.substring(0, oNameDot)}"] =
+            "$mDir${mName.substring(0, mName.lastIndexOf('.'))}"
+      }
+        }
         }
         return out
     }
 
+
     /** Extensiones para las que tiene sentido generar variantes de referencia. */
     private val IMAGE_EXTS = setOf("png", "jpg", "jpeg", "tga", "webp", "bmp", "gif")
-
-    /** Lee el texto una sola vez por archivo (caché local a esta pasada). */
+    /** Prefijo desde el que Bedrock resuelve rutas de atlas (terrain_texture/item_texture). */
+    private val TEXTURES_PREFIX = "textures/"
     private fun readCached(cache: HashMap<String, String>, file: File): String =
         cache.getOrPut(file.absolutePath) {
             try { file.readText(StandardCharsets.UTF_8) } catch (_: Exception) { "" }
@@ -303,3 +317,11 @@ class ResourcePathRegistry {
         }
     }
 }
+
+
+
+
+
+
+
+

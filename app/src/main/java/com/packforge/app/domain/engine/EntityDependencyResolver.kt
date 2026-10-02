@@ -188,18 +188,68 @@ object EntityDependencyResolver {
     // ── SANDBOX ────────────────────────────────────────────────────────────
 
     /** Resuelve rel dentro de base rechazando traversal (".."), absolutos y unidades de disco. */
+    /**
+     * Resuelve una ruta de referencia Bedrock contra [base] respetando el
+     * sandbox (sin escapes fuera del directorio ni rutas absolutas).
+     *
+     * Bedrock referencia las texturas SIN extensión ("textures/entity/steve")
+     * mientras el archivo real es "textures/entity/steve.png". Por eso, si la
+     * ruta literal no existe, se prueban las extensiones de imagen soportadas
+     * antes de darla por ausente (mismo criterio que validateMerge, pero aquí en
+     * disco en lugar del ZIP).
+     *
+     * @return el File real que existe, o la ruta literal si está dentro del
+     *   sandbox pero aún no existe (para que el llamante pueda crearlo).
+     */
     private fun safeResolve(base: File, rel: String): File? {
         val clean = rel.replace("\\", "/").trimStart('/')
         if (clean.isBlank()) return null
         if (clean.split('/').any { it == ".." }) return null
         if (clean.contains(':')) return null
-        val f = File(base, clean)
-        return if (f.canonicalFile.path.startsWith(base.canonicalFile.path + File.separator)) f else null
+
+        val sandbox = base.canonicalFile.path + File.separator
+
+        fun inSandbox(f: File): Boolean =
+            f.canonicalFile.path.startsWith(sandbox)
+
+        val literal = File(base, clean)
+        if (inSandbox(literal)) {
+            if (literal.exists()) return literal
+
+            // La referencia no trae extensión: probar los formatos de Bedrock.
+            val lastSlash = clean.lastIndexOf('/')
+            val lastDot = clean.lastIndexOf('.')
+            if (lastDot <= lastSlash + 1) {
+                for (ext in SUPPORTED_TEX_EXTS) {
+                    val candidate = File(base, "$clean.$ext")
+                    if (inSandbox(candidate) && candidate.exists()) return candidate
+                }
+            }
+            // Ruta válida dentro del sandbox pero aún ausente: el llamante decide.
+            return literal
+        }
+        return null
     }
 
     // ── FASE DIRS: RESOLUCIÓN + RECUPERACIÓN ──────────────────────────────
 
     /**
+     * RESUELVE las dependencias de entidades ausentes tras la fusión:
+     * geometrías, texturas, animaciones y render controllers.
+     *
+     * Es el ÚNICO resolutor del pipeline. Sustituye al antiguo
+     * `BedrockCriticalFilesMerger.resolveMissingDependencies()`, que quedó sin
+     * uso al dejar de construirse el `BedrockIdentifierIndex` masivo y fue
+     * eliminado para no mantener dos implementaciones divergentes.
+     *
+     * Ventajas frente a aquel:
+     *  - Clasifica por CONTENIDO (duck typing), no por extensión de archivo:
+     *    encuentra geometrías en `.fT.json` igual que en `x.geo.json`.
+     *  - Indexa por identificador de Bedrock, no por assumed path.
+     *  - Crea alias de variantes si dos addons definen la misma geometría con
+     *    contenidos distintos, y restaura la canónica si el deepmerge la mutó.
+     *  - Reporta a ConflictRegistry (pantalla de Conflictos), no solo al log.
+     *
      * @return notas legibles para el reporte de fusión.
      */
     fun resolve(rpDirs: List<File>, mergedRpDir: File): List<String> {
@@ -472,30 +522,84 @@ object EntityDependencyResolver {
         }
     }
 
-    // ── FASE ZIP: VALIDACIÓN DEL PAQUETE FINAL (validateMerge) ────────────
+    // ══ FASE ZIP: VALIDACIÓN DEL PAQUETE FINAL (validateMerge) ════════════
+    //
+    // ⚠️ Tolerancia a extensiones: Bedrock referencia las texturas SIN extensión
+    // ("textures/entity/steve") mientras que el ZIP guarda el archivo real con su
+    // extensión ("textures/entity/steve.png"). Un match estricto reportaba cada mob
+    // como "textura ausente" (falsos positivos) aunque el binario estuviera presente.
+    //
+
+    /** Extensiones binarias de imagen que Bedrock admite como textura empaquetada. */
+    private val SUPPORTED_TEX_EXTS = listOf("png", "jpg", "jpeg", "tga", "webp", "bmp")
 
     /**
-     * Abre el .mcaddon terminado y verifica que cada entidad cliente referencie
-     * geometrías/texturas/anims/RCs que existan físicamente como entradas del ZIP.
-     * @return líneas de error (vacío = válido).
-     */
+    * Abre el .mcaddon terminado y verifica que cada entidad cliente referencie
+    * geometrías/texturas/anims/RCs que existan físicamente como entradas del ZIP.
+    * @return líneas de error (vacío = válido).
+    */
     fun validateMerge(outputPath: String): List<String> {
         val errors = mutableListOf<String>()
         try {
             ZipFile(File(outputPath)).use { zip ->
-                val entries = zip.entries().toList()
-                val entryNames = entries.map { it.name.replace("\\", "/") }
+             val entries = zip.entries().toList()
+   val entryNames = entries.map { it.name.replace("\\", "/") }
                 val entrySet = HashSet(entryNames)
-                val suffixMemo = HashMap<String, Boolean>() // memo por ruta única
+    // Memo por prefijoDeCarpeta|ruta: la misma textura puede consultarse desde
+     // entidades en carpetas distintas y la respuesta no siempre coincide.
+    val suffixMemo = HashMap<String, Boolean>()
 
-                fun zipHasTexture(folderPrefix: String, path: String): Boolean {
-                    suffixMemo[path]?.let { return it }
-                    val result = entrySet.contains("$folderPrefix/$path") ||
-                        entryNames.any { it.endsWith("/$path") }
-                    suffixMemo[path] = result
-                    return result
-                }
+      /**
+     * ¿Existe la textura [path] dentro del ZIP, tolerando la ausencia de extensión
+    * en la referencia? [path] llega sin extensión desde los JSONs de Bedrock.
+         */
+          fun zipHasTexture(folderPrefix: String, path: String): Boolean {
+          val cleanPath = path.replace("\\", "/").trimStart('/')
+      suffixMemo[cleanPath]?.let { return it }
 
+      fun miss(): Boolean {
+          suffixMemo[cleanPath] = false
+    return false
+     }
+
+       // 1) Coincidencia exacta (por si la referencia YA trae extensión).
+          if (entrySet.contains("$folderPrefix/$cleanPath") || entrySet.contains(cleanPath)) {
+            suffixMemo[cleanPath] = true
+       return true
+             }
+
+      // 2) La referencia NO trae extensión: probar cada formato válido.
+    val lastSlash = cleanPath.lastIndexOf('/')
+  val lastDot = cleanPath.lastIndexOf('.')
+      val hasExt = lastDot > lastSlash + 1 &&
+        cleanPath.substring(lastDot + 1).lowercase(Locale.ROOT) in SUPPORTED_TEX_EXTS
+
+                if (!hasExt) {
+       for (ext in SUPPORTED_TEX_EXTS) {
+       val withExt = "$cleanPath.$ext"
+ if (entrySet.contains("$folderPrefix/$withExt") ||
+      entrySet.contains(withExt) ||
+   entrySet.contains("textures/$withExt")) {
+        suffixMemo[cleanPath] = true
+        return true
+  }
+    }
+            }
+
+    // 3) Fallback tolerante: la entrada puede estar en otra subcarpeta o
+       //    prefijo. Solo se acepta si es una IMAGEN con extensión soportada:
+    //    comparar solo el nombre base aceptaría un .ogg como si fuera textura.
+        val cleanNoExt = if (hasExt) cleanPath.substring(0, lastDot) else cleanPath
+        val result = entryNames.any { entry ->
+  val eDot = entry.lastIndexOf('.')
+            if (eDot <= entry.lastIndexOf('/') + 1) return@any false
+  if (entry.substring(eDot + 1).lowercase(Locale.ROOT) !in SUPPORTED_TEX_EXTS) return@any false
+    entry.substring(0, eDot).endsWith(cleanNoExt)
+        }
+
+    suffixMemo[cleanPath] = result
+    return result
+    }
                 val geoIds = mutableSetOf<String>()
                 val animRcIds = mutableSetOf<String>()
                 // ⭐ DUCK TYPING: Escanear TODOS los .json del ZIP para detectar geometrías,
@@ -570,3 +674,6 @@ object EntityDependencyResolver {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 }
+
+
+

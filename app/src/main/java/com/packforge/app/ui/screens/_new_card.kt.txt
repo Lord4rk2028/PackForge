@@ -1,0 +1,163 @@
+/**
+ * Tarjeta HORIZONTAL de la biblioteca: una tarjeta por fila, ancho completo.
+ *
+ * Estructura: portada grande a la izquierda, contenido y acciones a la
+ * derecha. La lista (LazyColumn) permite scrollear hacia arriba y abajo
+ * de forma natural, sin grid amontonado.
+ *
+ * Acciones: 4 píldoras directas (Editar, Actualizar, Regenerar, Compartir)
+ * más menú ⋮ para Borrar y Abrir origen. La flecha de Actualizar gira
+ * mientras la búsqueda de versiones está en curso.
+ */
+@Composable
+fun ModpackLibraryCard(
+    modpack: SavedModpackSummary,
+    onLoad: () -> Unit,
+    onDelete: () -> Unit,
+    onShare: () -> Unit,
+    onRegenerate: () -> Unit = {},
+    modpackSource: ModpackSource? = null,
+    onOpenSource: () -> Unit = {},
+    onCheckUpdates: () -> Unit = {},
+    isCheckingUpdates: Boolean = false
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val coverPath = modpack.coverUriString
+    // Coil necesita un File (no un String de ruta absoluta) para cargar la
+    // portada persistida en almacenamiento interno; un content:// se pasa tal cual.
+    val coverModel: Any? = when {
+        coverPath == null -> null
+        coverPath.startsWith("/") -> File(coverPath)
+        coverPath.startsWith("file://") -> try { File(java.net.URI(coverPath)) } catch (e: Exception) { coverPath }
+        else -> coverPath
+    }
+
+    // La flecha de "Actualizar" gira mientras el motor revisa las 3 fuentes.
+    val spinAngle by if (isCheckingUpdates) {
+        val transition = rememberInfiniteTransition(label = "updateSpin")
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(900, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "updateSpinAngle"
+        )
+    } else {
+        remember { mutableFloatStateOf(0f) }
+    }
+
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .bounceClick(scaleDown = 0.97f) { onLoad() },
+        shape = RoundedCornerShape(20.dp),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // ── Portada grande con badges superpuestos ─────────────────
+            Box(
+                modifier = Modifier
+                    .size(118.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                when {
+                    coverModel != null -> CachedAsyncImage(
+                        model = coverModel,
+                        contentDescription = stringResource(R.string.cd_cover_of, modpack.name),
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                    else -> Icon(
+                        Icons.Default.Extension,
+                        null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                        modifier = Modifier.align(Alignment.Center).size(30.dp)
+                    )
+                }
+
+                // Contador de addons, abajo sobre la portada.
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(5.dp)
+                ) {
+                    Text(
+                        text = "${modpack.addonCount} addons",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
+
+                // Badge de ORIGEN WEB (arriba-izquierda).
+                if (modpackSource != null) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(5.dp)
+                    ) {
+                        Text(
+                            text = modpackSource.site,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+
+            // ── Contenido + acciones ─────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(118.dp),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Fila superior: nombre + menú
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = modpack.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Box {
+                        Surface(
+                            onClick = { menuOpen = true },
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest
+                        ) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = "Más opciones",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(4.dp).size(16.dp)
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuOpen,
+                            onDismissRequest = { menuOpen = false }
+                        ) {
+                            if (modpackSource != null) {
+                                Dropdown

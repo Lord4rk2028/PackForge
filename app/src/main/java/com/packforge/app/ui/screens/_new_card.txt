@@ -1,0 +1,77 @@
+/**
+ * Tarjeta HORIZONTAL de la biblioteca: una tarjeta por fila, ancho completo.
+ *
+ * Estructura: portada grande a la izquierda, contenido y acciones a la
+ * derecha. La lista (LazyColumn) permite scrollear hacia arriba y abajo
+ * de forma natural, sin grid amontonado.
+ *
+ * Acciones: tres píldoras directas (Editar, Actualizar, Regenerar) más el
+ * menú ⋮ para Compartir, Abrir origen y Borrar. La flecha de Actualizar
+ * gira mientras la búsqueda de versiones está en curso.
+ */
+@Composable
+fun ModpackLibraryCard(
+    modpack: SavedModpackSummary,
+    onLoad: () -> Unit,
+    onDelete: () -> Unit,
+    onShare: () -> Unit,
+    onRegenerate: () -> Unit = {},
+    modpackSource: ModpackSource? = null,
+    onOpenSource: () -> Unit = {},
+    onCheckUpdates: () -> Unit = {},
+    isCheckingUpdates: Boolean = false
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val coverPath = modpack.coverUriString
+    // Coil necesita un File (no un String de ruta absoluta) para cargar la
+    // portada persistida en almacenamiento interno; un content:// se pasa tal cual.
+    val coverModel: Any? = when {
+        coverPath == null -> null
+        coverPath.startsWith("/") -> File(coverPath)
+        coverPath.startsWith("file://") -> try { File(java.net.URI(coverPath)) } catch (e: Exception) { coverPath }
+        else -> coverPath
+    }
+
+    // La flecha de "Actualizar" gira mientras el motor revisa las 3 fuentes.
+    val spinAngle by if (isCheckingUpdates) {
+        val transition = rememberInfiniteTransition(label = "updateSpin")
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(900, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "updateSpinAngle"
+        )
+    } else {
+        remember { mutableFloatStateOf(0f) }
+    }
+
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .bounceClick(scaleDown = 0.97f) { onLoad() },
+        shape = RoundedCornerShape(20.dp),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // ── Portada grande con badges superpuestos ─────────────────
+            Box(
+                modifier = Modifier
+                    .size(118.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                when {
+                    coverModel != null -> CachedAsyncImage(
+                        model = coverModel,
+                        contentDescription
