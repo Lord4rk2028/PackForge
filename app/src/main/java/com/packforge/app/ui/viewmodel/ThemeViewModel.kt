@@ -25,8 +25,15 @@ private val DARK_MODE_KEY = booleanPreferencesKey("dark_mode")
 private val AMOLED_MODE_KEY = booleanPreferencesKey("amoled_mode")
 private val ACCENT_HEX_KEY = stringPreferencesKey("accent_hex")
 private val VIVID_COLORS_KEY = booleanPreferencesKey("vivid_colors")
-private val EXPRESSIVE_MOTION_KEY = booleanPreferencesKey("expressive_motion")
+private val REDUCE_MOTION_KEY = booleanPreferencesKey("reduce_motion")
 private val VERBOSE_FILE_LOGS_KEY = booleanPreferencesKey("verbose_file_logs")
+
+/**
+ * Clave heredada "Animaciones expresivas" (activada = animar), sustituida por
+ * "reduce_motion" (activada = no animar). Se conserva solo para migrar: quien la
+ * tenía desactivada pidió explícitamente no ver movimiento y debe mantenerlo.
+ */
+private val LEGACY_EXPRESSIVE_MOTION_KEY = booleanPreferencesKey("expressive_motion")
 
 private fun Preferences.toThemePreferences(): ThemePreferences {
     val verbose = this[VERBOSE_FILE_LOGS_KEY] ?: false
@@ -36,7 +43,8 @@ private fun Preferences.toThemePreferences(): ThemePreferences {
         amoledMode = this[AMOLED_MODE_KEY] ?: false,
         accentHex = this[ACCENT_HEX_KEY] ?: "#2ECC71",
         vividColors = this[VIVID_COLORS_KEY] ?: true,
-        expressiveMotion = this[EXPRESSIVE_MOTION_KEY] ?: true,
+        reduceMotion = this[REDUCE_MOTION_KEY]
+            ?: (this[LEGACY_EXPRESSIVE_MOTION_KEY]?.not() ?: false),
         verboseFileLogs = verbose
     )
 }
@@ -59,7 +67,12 @@ private fun loadCachedPreferences(context: Context): ThemePreferences {
         amoledMode = sp.getBoolean("amoled_mode", false),
         accentHex = sp.getString("accent_hex", "#2ECC71") ?: "#2ECC71",
         vividColors = sp.getBoolean("vivid_colors", true),
-        expressiveMotion = sp.getBoolean("expressive_motion", true),
+        reduceMotion = if (sp.contains("reduce_motion")) {
+            sp.getBoolean("reduce_motion", false)
+        } else {
+            // Migración desde "Animaciones expresivas": activada significaba animar.
+            !sp.getBoolean("expressive_motion", true)
+        },
         verboseFileLogs = verbose
     )
 }
@@ -70,7 +83,7 @@ private fun saveCachedPreferences(context: Context, prefs: ThemePreferences) {
         .putBoolean("amoled_mode", prefs.amoledMode)
         .putString("accent_hex", prefs.accentHex)
         .putBoolean("vivid_colors", prefs.vividColors)
-        .putBoolean("expressive_motion", prefs.expressiveMotion)
+        .putBoolean("reduce_motion", prefs.reduceMotion)
         .putBoolean("verbose_file_logs", prefs.verboseFileLogs)
         .apply()
 }
@@ -108,8 +121,8 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { dataStore.edit { it[VIVID_COLORS_KEY] = enabled } }
     }
 
-    fun setExpressiveMotion(enabled: Boolean) {
-        viewModelScope.launch { dataStore.edit { it[EXPRESSIVE_MOTION_KEY] = enabled } }
+    fun setReduceMotion(enabled: Boolean) {
+        viewModelScope.launch { dataStore.edit { it[REDUCE_MOTION_KEY] = enabled } }
     }
 
     fun setVerboseFileLogs(enabled: Boolean) {

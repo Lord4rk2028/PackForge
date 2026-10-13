@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.AddonType
+import com.packforge.app.util.AddonStorageManager
 import com.packforge.app.util.FileUtils
 import com.packforge.app.util.PackForgeLog
 import org.json.JSONArray
@@ -13,11 +14,24 @@ import org.json.JSONObject
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
 object AddonParser {
+
+    /**
+     * Nombres base aceptados como icono de un addon.
+     *
+     * `pack_icon` es el estándar de Minecraft, pero no todos los addons del
+     * catálogo lo respetan: algunos usan `icon.png`. Al no contemplarlos, esos
+     * addons se quedaban sin portada en el editor y en el visor.
+     */
+    private val ICON_BASE_NAMES = setOf("pack_icon", "icon")
+
+    /** Extensiones de imagen aceptadas para el icono. */
+    private val ICON_EXTENSIONS = setOf("png", "jpg", "jpeg", "webp")
 
     fun parseFromUri(context: Context, uri: Uri): Addon? {
         return try {
@@ -41,14 +55,66 @@ object AddonParser {
             }
 
             val addonId = UUID.randomUUID().toString()
-            
+
             // 2. GUARDAR COPIA PERMANENTE EN ALMACENAMIENTO INTERNO (Solución al error 22B)
+            //
+            // Se copia a un archivo temporal calculando su SHA-256 y, si ya hay un addon
+            // idéntico guardado, se REUTILIZA ese archivo en lugar de dejar otra copia.
+            // Antes cada importación creaba una copia con un UUID nuevo y nada las borraba:
+            // eso acumuló 270 archivos y 2.2 GB para 8 modpacks (hasta 23 copias del mismo
+            // addon de 32 MB).
             val addonsDir = File(context.filesDir, "addons").apply { mkdirs() }
-            val internalFile = File(addonsDir, "${addonId}_$fileName")
-            
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(internalFile).use { output ->
-                    input.copyTo(output)
+            val incoming = File(addonsDir, "${AddonStorageManager.INCOMING_PREFIX}${addonId}_$fileName")
+
+            val input = context.contentResolver.openInputStream(uri)
+            if (input == null) {
+                incoming.delete()
+                return null
+            }
+
+            var copiedBytes = 0L
+            val digest = MessageDigest.getInstance("SHA-256")
+            try {
+                input.use { source ->
+                    FileOutputStream(incoming).use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            val read = source.read(buffer)
+                            if (read <= 0) break
+                            digest.update(buffer, 0, read)
+                            output.write(buffer, 0, read)
+                            copiedBytes += read
+                        }
+                    }
+                }
+            } catch (_: Throwable) {
+                incoming.delete()
+                return null
+            }
+
+            if (copiedBytes <= 0L) {
+                incoming.delete()
+                return null
+            }
+
+            val contentHash = digest.digest().joinToString("") { "%02x".format(it) }
+            val alreadyStored = AddonStorageManager.findIdenticalAddon(
+                addonsDir, fileName, copiedBytes, contentHash
+            )
+            val internalFile: File
+            if (alreadyStored != null) {
+                incoming.delete()
+                internalFile = alreadyStored
+                PackForgeLog.d("AddonParser", "Addon idéntico ya guardado, se reutiliza: ${alreadyStored.name}")
+            } else {
+                val target = File(addonsDir, "${addonId}_$fileName")
+                internalFile = if (incoming.renameTo(target)) {
+                    target
+                } else {
+                    // renameTo puede fallar según el sistema de archivos; copiar es el respaldo.
+                    incoming.copyTo(target, overwrite = true)
+                    incoming.delete()
+                    target
                 }
             }
 
@@ -95,6 +161,13 @@ object AddonParser {
             var author: String? = null
 
             // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+            // Se invalida antes de indexar: `resolveAddonInfo` → `classify()` pudo
+            // haber extraído .mcpacks anidados (nested_BP, nested_RP) a
+            // parseTempDir DESPUÉS de la primera indexación, y el índice cacheado
+            // no los conocería. Sin esto, el pack_icon.png de un addon cuyos
+            // packs vienen anidados (caso de "Nature's Touch" y "More Tools")
+            // nunca se encontraba y la tarjeta quedaba con el icono genérico.
+            DirIndexCache.invalidate(parseTempDir)
             val cachedFiles = DirIndexCache.index(parseTempDir).allFiles
 
             // CRÍTICO: Detectar si es un modpack de PackForge ANTES del loop
@@ -107,25 +180,35 @@ object AddonParser {
 
                 // Extraer icono → filesDir en lugar de cacheDir para que no se
                 // pierda si el sistema limpia la caché.
-                if (entryName.lowercase().endsWith("pack_icon.png") && iconPath == null) {
-                    // Si es modpack de PackForge, solo aceptar el pack_icon.png de la raíz
-                    // (BP_PackForge/pack_icon.png o RP_PackForge/pack_icon.png) —
-                    // NO los de addons individuales anidados dentro.
-                    if (isPackForgeModpack) {
-                        val isRootIcon = entryName == "BP_PackForge/pack_icon.png" ||
+                //
+                // Se acepta tanto `pack_icon.png` como las variantes que usan
+                // varios addons del catálogo: `pack_icon.jpg/.jpeg` y nombres
+                // alternativos como `icon.png`. Antes solo se buscaba el nombre
+                // exacto `pack_icon.png`, así que cualquier addon con el icono
+                // en otro formato se quedaba sin portada y mostraba el icono
+                // genérico de la pieza sobre el color del tema.
+                val lowerEntry = entryName.lowercase()
+                val iconFileName = lowerEntry.substringAfterLast('/')
+                val isIconCandidate = iconPath == null &&
+                    iconFileName.substringBeforeLast('.') in ICON_BASE_NAMES &&
+                    iconFileName.substringAfterLast('.', "") in ICON_EXTENSIONS
+
+                if (isIconCandidate) {
+                    // En modpacks de PackForge solo vale el icono de la RAÍZ del
+                    // modpack, no el de los addons individuales anidados.
+                    val accept = if (isPackForgeModpack) {
+                        entryName == "BP_PackForge/pack_icon.png" ||
                             entryName == "RP_PackForge/pack_icon.png"
-                        if (isRootIcon) {
-                            try {
-                                val iconDir = File(context.filesDir, "addon_icons").apply { mkdirs() }
-                                val iconFile = File(iconDir, "${addonId}_pack_icon.png")
-                                FileUtils.fastCopy(file, iconFile)
-                                iconPath = iconFile.absolutePath
-                            } catch (e: Exception) {}
-                        }
                     } else {
+                        true
+                    }
+                    if (accept) {
                         try {
                             val iconDir = File(context.filesDir, "addon_icons").apply { mkdirs() }
-                            val iconFile = File(iconDir, "${addonId}_pack_icon.png")
+                            // La extensión se conserva: copiar un .jpg con nombre
+                            // .png confundiría a Coil en la decodificación.
+                            val ext = iconFileName.substringAfterLast('.', "png")
+                            val iconFile = File(iconDir, "${addonId}_pack_icon.$ext")
                             FileUtils.fastCopy(file, iconFile)
                             iconPath = iconFile.absolutePath
                         } catch (e: Exception) {}
@@ -240,6 +323,18 @@ object AddonParser {
     fun recoverIconFromSource(sourceFilePath: String, addonId: String, context: Context): String? {
         val src = File(sourceFilePath)
         if (!src.exists()) return null
+
+        // ⚡ VÍA RÁPIDA: leer SOLO la entrada pack_icon.png del ZIP.
+        // Antes se llamaba a AddonExtractor.extractAddon(), que descomprime el
+        // addon COMPLETO en un directorio temporal para luego buscar un único
+        // PNG. Con addons de decenas de MB eso son cientos de ms de disco por
+        // addon, y era la causa de que "Editar" tardara varios segundos.
+        // Recorrer el índice del ZIP y descomprimir esa sola entrada cuesta
+        // milisegundos y no escribe nada en disco salvo el icono final.
+        readIconStraightFromZip(src, addonId, context)?.let { return it }
+
+        // VÍA LENTA (respaldo): addons cuyo icono no está en la raíz ni con el
+        // nombre exacto, o ZIPs con estructura anidada que exigen extraer.
         val tempDir = File(context.cacheDir, "icon_recover_$addonId")
         tempDir.mkdirs()
         val extracted = AddonExtractor.extractAddon(src.absolutePath, tempDir.absolutePath) ?: run {
@@ -261,6 +356,53 @@ object AddonParser {
         }
         tempDir.deleteRecursively()
         return iconPath
+    }
+
+    /**
+     * Extrae `pack_icon.png` recorriendo el índice del ZIP, sin descomprimir
+     * ninguna otra entrada.
+     *
+     * Se acepta la primera coincidencia por nombre, que es la que MC usa como
+     * icono del paquete. Devuelve `null` para que el llamador use la vía lenta
+     * si el ZIP no tiene el icono con ese nombre exacto.
+     */
+    private fun readIconStraightFromZip(src: File, addonId: String, context: Context): String? {
+        return try {
+            java.util.zip.ZipFile(src).use { zip ->
+                // Se recorren las entradas buscando el primer nombre aceptado.
+                // `pack_icon.*` tiene prioridad sobre `icon.*` porque es el
+                // estándar: si un addon trae ambos, el correcto es el primero.
+                val entries = zip.entries().asSequence()
+                    .filter { !it.isDirectory }
+                    .mapNotNull { entry ->
+                        val fileName = entry.name.substringAfterLast('/').lowercase()
+                        val base = fileName.substringBeforeLast('.', "")
+                        val ext = fileName.substringAfterLast('.', "")
+                        if (base in ICON_BASE_NAMES && ext in ICON_EXTENSIONS) {
+                            Triple(entry, base, ext)
+                        } else {
+                            null
+                        }
+                    }
+                    .sortedBy { if (it.second == "pack_icon") 0 else 1 }
+                    .toList()
+
+                val (entry, _, ext) = entries.firstOrNull() ?: return null
+
+                val iconDir = File(context.filesDir, "addon_icons").apply { mkdirs() }
+                val dest = File(iconDir, "${addonId}_pack_icon.$ext")
+                // Copia por streaming de una sola entrada: no pasa por memoria
+                // ni crea directorios temporales.
+                zip.getInputStream(entry).use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                }
+                dest.absolutePath
+            }
+        } catch (_: Throwable) {
+            // ZIP corrupto, protegido con contraseña o entrada ilegible:
+            // se deja que el respaldo lento lo intente.
+            null
+        }
     }
 
     fun detectAndFixAddonFormat(actualFile: File): String {

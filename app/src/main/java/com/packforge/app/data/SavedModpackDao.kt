@@ -38,6 +38,16 @@ interface SavedModpackDao {
     @Query("SELECT * FROM saved_modpacks WHERE id = :id")
     suspend fun getById(id: String): SavedModpack?
 
+    /**
+     * Todas las filas COMPLETAS, incluyendo `addonsJson`.
+     *
+     * Pensada para el mantenimiento de almacenamiento, que necesita leer las rutas
+     * (`sourceFilePath`) de cada addon antes de borrar nada. Al no ser un Flow ni
+     * alimentar la biblioteca, el CursorWindow grande no supone un problema aquí.
+     */
+    @Query("SELECT * FROM saved_modpacks")
+    suspend fun getAllFull(): List<SavedModpack>
+
     @Query("DELETE FROM saved_modpacks WHERE id = :id")
     suspend fun deleteById(id: String)
 }

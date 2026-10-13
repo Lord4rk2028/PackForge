@@ -8,7 +8,11 @@ import android.net.Uri
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -49,6 +53,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import com.packforge.app.domain.model.OperationProgress
@@ -72,6 +77,9 @@ fun McpedlSearchScreen(
     var query by remember { mutableStateOf("") }
     var isLoadingPage by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    // Menú que MCPEDL abre con window.open(): se dibuja superpuesto sobre la
+    // página de resultados en lugar de reemplazarla.
+    var popupWebView by remember { mutableStateOf<WebView?>(null) }
     val onImportFromUrlState by rememberUpdatedState(onImportFromUrl)
 
     fun buildSearchUrl(searchQuery: String): String {
@@ -270,7 +278,69 @@ fun McpedlSearchScreen(
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.loadsImagesAutomatically = true
-                        settings.setSupportMultipleWindows(false)
+                        // Mismo arreglo que en el navegador principal: MCPEDL
+                        // abre su menú con window.open(), y sin estas dos
+                        // opciones el toque en el icono de tres rayitas no hacía
+                        // nada y la web quedaba congelada.
+                        settings.javaScriptCanOpenWindowsAutomatically = true
+                        settings.setSupportMultipleWindows(true)
+                        settings.useWideViewPort = true
+                        settings.loadWithOverviewMode = true
+                        // User-Agent sin la marca "wv": algunos sitios sirven una
+                        // variante sin menú si detectan un WebView.
+                        settings.userAgentString = settings.userAgentString
+                            ?.replace("; wv", "")
+                            ?.replace(Regex("Version/\\d+\\.\\d+ "), "")
+                        android.webkit.CookieManager.getInstance().setAcceptCookie(true)
+                        android.webkit.CookieManager.getInstance()
+                            .setAcceptThirdPartyCookies(this, true)
+
+                        // Menú emergente de la web (window.open): se carga en un
+                        // WebView hijo que se dibuja superpuesto, para no perder
+                        // la página de resultados de búsqueda.
+                        webChromeClient = object : android.webkit.WebChromeClient() {
+                            override fun onCreateWindow(
+                                view: WebView?,
+                                isDialog: Boolean,
+                                isUserGesture: Boolean,
+                                resultMsg: android.os.Message?
+                            ): Boolean {
+                                val host = view ?: return false
+                                val popup = WebView(host.context)
+                                popup.settings.apply {
+                                    javaScriptEnabled = true
+                                    domStorageEnabled = true
+                                    javaScriptCanOpenWindowsAutomatically = true
+                                    setSupportMultipleWindows(true)
+                                    useWideViewPort = true
+                                    loadWithOverviewMode = true
+                                }
+                                android.webkit.CookieManager.getInstance()
+                                    .setAcceptThirdPartyCookies(popup, true)
+                                popup.webViewClient = object : WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(
+                                        childView: WebView?,
+                                        request: WebResourceRequest?
+                                    ): Boolean {
+                                        val url = request?.url?.toString() ?: return false
+                                        if (isAddonDownloadUrl(url)) {
+                                            onImportFromUrlState(
+                                                url,
+                                                webViewRef?.url ?: MCPEDL_HOME,
+                                                "MCPEDL"
+                                            )
+                                            return true
+                                        }
+                                        host.loadUrl(url)
+                                        return true
+                                    }
+                                }
+                                (resultMsg?.obj as? WebView.WebViewTransport)?.webView = popup
+                                resultMsg?.sendToTarget()
+                                popupWebView = popup
+                                return true
+                            }
+                        }
 
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(
@@ -316,6 +386,26 @@ fun McpedlSearchScreen(
                     webViewRef = webView
                 }
             )
+
+            // Menú emergente superpuesto: se cierra al tocar fuera, igual que
+            // en el navegador principal.
+            popupWebView?.let { popup ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { popupWebView = null }
+                ) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { popup },
+                        update = { }
+                    )
+                }
+            }
         }
     }
 }

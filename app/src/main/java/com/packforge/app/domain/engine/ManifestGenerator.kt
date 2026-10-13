@@ -206,14 +206,13 @@ object ManifestGenerator {
         if (capabilities.isNotEmpty()) {
             manifest.getJSONObject("header").put("capabilities", JSONArray(capabilities.toList()))
         }
-        // ⭐ Soporte iluminación dinámica: inyectar capability si hay scripts
-        if (hasScriptsFolder) {
-            val h = manifest.getJSONObject("header")
-            val arr = h.optJSONArray("capabilities") ?: JSONArray().also { h.put("capabilities", it) }
-            var hasDyn = false
-            for (i in 0 until arr.length()) if (arr.optString(i) == "dynamic_light") { hasDyn = true; break }
-            if (!hasDyn) arr.put("dynamic_light")
-        }
+        // B2 (auditoría CORE): NO inyectar capabilities a ciegas. ANTES se
+        // agregaba `dynamic_light` a todo pack con scripts/, incluso si ningún
+        // addon lo pedía (dynamic_light cambia el render de iluminación del
+        // cliente y exigía la capability en todos los jugadores de la sesión).
+        // Ahora solo se PROPAGA lo que los manifests originales ya traían
+        // (REGLA 7 arriba), que es la semántica correcta: los capabilities son
+        // declaración del autor, no decisión del fusor.
 
         // LOG OBLIGATORIO: manifiesto del BP completo
         Log.d(MANIFEST_TAG, "=== BP MANIFEST FINAL ===")
@@ -241,28 +240,26 @@ object ManifestGenerator {
             JSONArray()
         }
         
-        // ⭐ AGREGAR CAPACIDAD ILUMINACIÓN DINÁMICA si hay scripts
+        // ⭐ AGREGAR CAPACIDADES EXPERIMENTALES solo si algún addon las pedía
+        // B2 (auditoría CORE): ANTES se inyectaba `dynamic_light` a TODO pack
+        // con scripts aunque ningún addon lo declarara. Eso cambia el render
+        // de iluminación y obliga la capability a todos los jugadores.
+        // Ahora se PROPAGA solo lo detectado en manifests/header originales
+        // (los capabilities ya vienen en `capabilitiesBuilder` vía REGLA 7).
+        // Se MANTIENE la heurística de custom_ui (los custom UI no se declaran
+        // en el manifest, pero sin la capability la UI custom de scripts no
+        // carga en el cliente).
         if (hasScripts) {
-            // Verificar si algún addon trae iluminación dinámica
-            var hasDynamicLight = false
+            // Verificar si algún addon trae UI custom compleja
             var hasCustomUi = false
             if (dependencies != null) {
                 for (i in 0 until dependencies.length()) {
                     val dep = dependencies.optJSONObject(i) ?: continue
-                    val depName = dep.optString("name", "") + dep.optString("module_name", "")
                     val depStr = dep.toString().lowercase()
-                    if (depStr.contains("light") || depStr.contains("dynamic")) {
-                        hasDynamicLight = true
-                    }
                     if (depStr.contains("ui") || depStr.contains("customui") || depStr.contains("inventory")) {
                         hasCustomUi = true
                     }
                 }
-            }
-            // Siempre agregar dynamic_light si hay scripts (mejora compatibilidad)
-            if (!isCapabilityPresent(capabilitiesBuilder, "dynamic_light")) {
-                capabilitiesBuilder.put("dynamic_light")
-                PackForgeLog.d(MANIFEST_TAG, "⭐ Capacidad dynamic_light agregada automáticamente")
             }
             
             // Capacidad UI custom si hay scripts complejos
@@ -349,17 +346,15 @@ object ManifestGenerator {
                     }
                 }
 
-                // Conservar dependencias @minecraft/* (tanto "name" como "module_name").
+                // Conservar dependencias @minecraft/* (tanto "name" como "module_name"),
+                // Y dependencias por UUID/nombre a otros packs (B3, auditoría CORE:
+                // el BP las conserva todas pero el RP antes descartaba las no
+                // @minecraft/*, rompiendo cadenas de dependencia RP→RP de terceros).
                 json.optJSONArray("dependencies")?.let { deps ->
                     for (i in 0 until deps.length()) {
                         val dep = deps.optJSONObject(i) ?: continue
                         val depKey = dependencyKey(dep)
                         if (depKey.isEmpty()) continue
-                        val isMinecraft = dep.optString("name", "")
-                            .startsWith("@minecraft/") ||
-                            dep.optString("module_name", "")
-                                .startsWith("@minecraft/")
-                        if (!isMinecraft) continue
                         if (seenDeps.add(depKey)) {
                             normalizeVersion(dep.opt("version"))?.let {
                                 dep.put("version", it)
@@ -415,15 +410,23 @@ object ManifestGenerator {
 
     /**
      * ═══════════════════════════════════════════
-     * GENERADOR EXACTO DEL MANIFEST DEL BP
+     * GENERADOR LEGACY DEL MANIFEST DEL BP — CÓDIGO MUERTO
      * ═══════════════════════════════════════════
-     * min_engine_version OBLIGATORIO (default alto [1,21,0], nunca [1,0,0]),
-     * módulo data + módulo script SOLO si hasScripts (entry scripts/main.js),
-     * dependencies RP + @minecraft/server + @minecraft/server-ui
-     * (solo si hasScripts).
      *
-     * @param hasScripts true si el BP fusionado contiene archivos .js
+     * B1 (auditoría CORE): este generador hardcodea `@minecraft/server` a
+     * "2.7.0" y `@minecraft/server-ui` a "2.0.0" (L479-488), por lo que un
+     * modpack cuyos addons requieren una versión MAYOR de la API de scripting
+     * perdería esas funciones al cargar. Además NO tiene NINGÚN caller en el
+     * pipeline: la ruta real es [buildMergedBpManifest], que preserva las
+     * dependencias de los manifests originales y maximiza sus versiones.
+     *
+     * Se conserva (deprecado) solo como referencia histórica; NO usar.
      */
+    @Deprecated(
+        message = "Código muerto con versiones hardcodeadas de @minecraft/*. " +
+            "Usar buildMergedBpManifest, que preserva y maximiza las versiones originales.",
+        level = DeprecationLevel.WARNING
+    )
     fun generateBpManifest(
         packName: String,
         rpHeaderUuid: String,
@@ -495,8 +498,9 @@ object ManifestGenerator {
                 put("uuid", bpHeaderUuid)
                 put("version", JSONArray(listOf(1, 0, 0)))
                 put("min_engine_version", minEngine)  // ⭐ OBLIGATORIO
-                // ⭐ Soporte iluminación dinámica (System Dynamic Light)
-                if (hasScripts) put("capabilities", JSONArray().apply { put("dynamic_light") })
+                // B2: sin inyección ciega de capabilities — el legacy ya es
+                // código muerto (ver @Deprecated arriba); si alguien lo usa,
+                // debe reflejar lo que los addons pedían, no inventar flags.
             })
             put("modules", modules)
             put("dependencies", dependencies)

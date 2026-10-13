@@ -1,5 +1,6 @@
 package com.packforge.app.ui.components
 
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -15,6 +16,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -27,6 +29,9 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import com.packforge.app.ui.theme.LocalMotionLevel
+import com.packforge.app.ui.theme.MotionLevel
+import com.packforge.app.ui.theme.MotionTimings
 
 // Constantes de animación para transiciones de pantalla consistentes (300ms + easing suave)
 val FADE_SLOW_SPEC = tween<Float>(
@@ -47,22 +52,56 @@ val EXPAND_SLOW_SPEC = tween<IntSize>(
 /**
  * Añade un efecto táctil de compresión elástica ("bounce") al presionar cualquier elemento.
  * Se escala suavemente a [scaleDown] y rebota al soltar, con soporte opcional de vibración háptica.
+ *
+ * El gesto se adapta automáticamente al [MotionLevel] activo:
+ * - FULL: rebote elástico actual, sin cambio de comportamiento.
+ * - MODERATE / MINIMAL: mismo gesto, sin overshoot y más rápido (equipos antiguos y Android 8-9).
+ * - NONE: sin animación de escala; el clic y el háptico siguen funcionando.
  */
 fun Modifier.bounceClick(
     scaleDown: Float = 0.95f,
     hapticFeedback: Boolean = true,
+    onPressChanged: ((Boolean) -> Unit)? = null,
     onClick: (() -> Unit)? = null
 ): Modifier = composed {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val haptic = LocalHapticFeedback.current
+    val motionLevel = LocalMotionLevel.current
 
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) scaleDown else 1f,
-        animationSpec = spring(
+    // Permite a la tarjeta reaccionar al tacto (p. ej. ajustar su elevación).
+    if (onPressChanged != null) {
+        LaunchedEffect(isPressed) { onPressChanged(isPressed) }
+    }
+
+    // El tipo se declara explícitamente: sin él Kotlin no puede inferir 'T' al
+    // mezclar ramas que devuelven spring(...) con otras que devuelven tween(...).
+    val animationSpec: AnimationSpec<Float> = when (motionLevel) {
+        MotionLevel.FULL -> spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessLow
-        ),
+        )
+        MotionLevel.MODERATE -> spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        )
+        MotionLevel.MINIMAL -> tween(
+            durationMillis = MotionTimings.shortDuration(motionLevel),
+            easing = FastOutSlowInEasing
+        )
+        MotionLevel.NONE -> tween(durationMillis = 0)
+    }
+
+    // Con "Reducir Movimiento" el elemento no se deforma: solo responde al toque.
+    val pressedScale = when (motionLevel) {
+        MotionLevel.NONE -> 1f
+        MotionLevel.MINIMAL -> 1f - (1f - scaleDown) * 0.5f
+        else -> scaleDown
+    }
+
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) pressedScale else 1f,
+        animationSpec = animationSpec,
         label = "bounceScale"
     )
 
@@ -90,12 +129,22 @@ fun Modifier.bounceClick(
 
 /**
  * Efecto shimmer suave y brillante para placeholders y estados de carga.
+ *
+ * Con "Reducir Movimiento" el brillo no recorre la tarjeta indefinidamente: se
+ * queda en un color plano, eliminando una animación infinita —el mayor coste
+ * continuo de batería y fotogramas de esta pantalla— sin alterar el layout.
  */
 fun Modifier.shimmerLoading(
     baseColor: Color = Color.LightGray.copy(alpha = 0.2f),
     highlightColor: Color = Color.White.copy(alpha = 0.45f),
     durationMillis: Int = 1200
 ): Modifier = composed {
+    val motionLevel = LocalMotionLevel.current
+
+    if (motionLevel == MotionLevel.NONE) {
+        return@composed this.background(baseColor)
+    }
+
     val transition = rememberInfiniteTransition(label = "shimmerTransition")
     val translateAnim by transition.animateFloat(
         initialValue = -500f,

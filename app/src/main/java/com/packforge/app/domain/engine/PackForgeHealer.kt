@@ -1,5 +1,6 @@
 package com.packforge.app.domain.engine
 
+import org.json.JSONArray
 import com.packforge.app.domain.model.ConflictSeverity
 import com.packforge.app.util.PackForgeLog
 import org.json.JSONObject
@@ -209,20 +210,24 @@ object PackForgeHealer {
         for (file in cachedFiles) {
             try {
                 val json = JSONObject(file.readText(StandardCharsets.UTF_8))
-                json.optJSONObject("render_controllers")?.keys()?.forEachRemaining { rcKey ->
-                    val rcDef = json.optJSONObject("render_controllers")?.opt(rcKey)
-                    if (rcDef is JSONObject) {
-                        val arrays = rcDef.opt("arrays")
-                        if (arrays is JSONObject) {
-                            arrays.optJSONObject("textures")?.keys()?.forEachRemaining { texKey ->
-                                val texVal = arrays.optJSONObject("textures")?.optString(texKey) ?: return@forEachRemaining
-                                checkTextureReference(texVal, file.name, inventory, fuzzy, unresolved)
-                            }
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-        }
+    json.optJSONObject("render_controllers")?.keys()?.forEachRemaining { rcKey ->
+        val rcDef = json.optJSONObject("render_controllers")?.opt(rcKey)
+   if (rcDef is JSONObject) {
+       val arrays = rcDef.opt("arrays")
+          if (arrays is JSONObject) {
+   arrays.optJSONObject("textures")?.keys()?.forEachRemaining { texKey ->
+    // TICKET-CORE-003 Parte 3: el valor puede ser un ARRAY de KEYS de
+         // textura ("texture.destroy_stage_0"), NO una ruta de archivo.
+        // Hacer optString() sobre un JSONArray devuelve su toString()
+   // y genera basura del tipo: Referencia '["texture.x",...]' sin origen.
+   val texVal = arrays.optJSONObject("textures")?.opt(texKey)
+      collectTextureCandidates(texVal, file.name, inventory, fuzzy, unresolved)
+     }
+          }
+  }
+     }
+     } catch (_: Exception) {}
+  }
     }
 
     private fun checkEntityTextures(rpDir: File, inventory: Set<String>, fuzzy: MutableList<FuzzyMatch>, unresolved: MutableList<UnresolvedRef>) {
@@ -268,7 +273,85 @@ object PackForgeHealer {
 
     // ── HELPERS ────────────────────────────────────────────────────────
 
+    /**
+ * TICKET-CORE-003 (Partes 1 y 3) — Extrae candidatos de textura de un valor
+ * JSON heterogéneo.
+ *
+ * En `render_controllers.*.arrays.textures.*` el valor puede ser:
+ *  - String    → "textures/mob/custom"      (ruta: se valida)
+ *  - JSONArray → ["texture.stage_0", ...] (KEYS internas: se ignoran)
+ *  - JSONObject→ {"texture": "..."}       (se recorre)
+ *
+ * Reglas aplicadas en [validateCandidate]:
+ *  1. Un elemento sin "/" es una KEY del mapa `textures` del client entity, no
+ *     una ruta: ignorarlo evita basura del tipo
+ *     Referencia '["texture.destroy_stage_9",...]' sin origen.
+ *  2. Se descartan prefijos de placeholder de Molang (texture., variable.,
+ *     array., query., geometry., material.), sin importar el caso.
+ *  3. Un asset VANILLA no se valida: el juego lo resuelve en runtime.
+ */
+    private fun collectTextureCandidates(
+        raw: Any?,
+        fileName: String,
+        inventory: Set<String>,
+        fuzzy: MutableList<FuzzyMatch>,
+        unresolved: MutableList<UnresolvedRef>
+    ) {
+        when (raw) {
+            null -> return
+            is String -> validateCandidate(raw, fileName, inventory, fuzzy, unresolved)
+            is JSONArray -> {
+                for (i in 0 until raw.length()) {
+                    when (val element = raw.opt(i)) {
+                        is String -> validateCandidate(element, fileName, inventory, fuzzy, unresolved)
+                        is JSONObject, is JSONArray ->
+                            collectTextureCandidates(element, fileName, inventory, fuzzy, unresolved)
+                        else -> Unit
+                    }
+                }
+            }
+            is JSONObject -> {
+                val keys = raw.keys()
+                while (keys.hasNext()) {
+                    collectTextureCandidates(raw.opt(keys.next()), fileName, inventory, fuzzy, unresolved)
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    /** Filtra key interna / placeholder Molang / asset vanilla antes de validar. */
+    private fun validateCandidate(
+        candidate: String,
+        fileName: String,
+        inventory: Set<String>,
+        fuzzy: MutableList<FuzzyMatch>,
+        unresolved: MutableList<UnresolvedRef>
+    ) {
+        val ref = candidate.trim()
+        if (ref.isEmpty()) return
+
+        // Sin "/" es una KEY interna ("texture.destroy_stage_0"), no una ruta.
+        if (!ref.contains('/')) return
+
+        // Placeholders y keys de Molang: nunca son rutas de archivo.
+        val lower = ref.lowercase()
+        if (MOLANG_PREFIXES.any { lower.startsWith(it) }) return
+
+        // TICKET-CORE-003 Parte 1: asset vanilla, lo resuelve el juego.
+        if (VanillaAssets.isVanillaTexture(ref)) return
+
+        checkTextureReference(ref, fileName, inventory, fuzzy, unresolved)
+    }
+
+    /** Prefijos de keys/placeholder de Molang que nunca son rutas de textura. */
+    private val MOLANG_PREFIXES = listOf(
+        "texture.", "variable.", "array.", "query.", "geometry.", "material."
+    )
+
     private fun checkTextureReference(texRef: String, fileName: String, inventory: Set<String>, fuzzy: MutableList<FuzzyMatch>, unresolved: MutableList<UnresolvedRef>) {
+        // TICKET-CORE-003 Parte 1: un asset vanilla lo resuelve el juego en runtime.
+    if (VanillaAssets.isVanillaTexture(texRef)) return
         // Referencias dinámicas de render controllers, no rutas de archivos.
         if (texRef.startsWith("Array.") || texRef.startsWith("variable.") || texRef.startsWith("query.")) return
         if (fuzzy.size + unresolved.size >= MAX_REFERENCE_REPORTS) return
@@ -352,3 +435,7 @@ object PackForgeHealer {
         return 1.0 - dp[lenA][lenB].toDouble() / maxLen
     }
 }
+
+
+
+

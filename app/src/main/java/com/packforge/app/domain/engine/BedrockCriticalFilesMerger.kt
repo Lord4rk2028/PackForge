@@ -1,6 +1,7 @@
 package com.packforge.app.domain.engine
 
 import com.packforge.app.util.PackForgeLog
+import com.packforge.app.domain.model.ConflictSeverity
 import com.packforge.app.util.logFile
 import org.json.JSONArray
 import org.json.JSONObject
@@ -1381,6 +1382,84 @@ object BedrockCriticalFilesMerger {
     }
 
     // =====================================================================
+    // 19. DETECCIÓN DE client_entity DUPLICADO (TICKET-CORE-003 Parte 5)
+    //     Bedrock usa el ÚLTIMO `minecraft:client_entity` con un identifier
+    //     dado y descarta el resto en silencio: al fusionar dos addons de
+    //     entidades, uno de los dos simplemente deja de funcionar sin aviso.
+    //     Nunca se resuelve en silencio: siempre pasa por ConflictRegistry.
+    // =====================================================================
+    fun detectDuplicateClientEntities(mergedRpDir: File) {
+        val entityDir = File(mergedRpDir, "entity")
+        if (!entityDir.isDirectory) return
+
+        // identifier -> archivos que lo declaran (en orden de ruta: estable).
+        val byId = LinkedHashMap<String, MutableList<File>>()
+        val allFiles = DirIndexCache.index(entityDir).allFiles
+        for (file in allFiles) {
+            if (!file.extension.equals("json", ignoreCase = true)) continue
+            val json = try {
+                JSONObject(file.readText(Charsets.UTF_8))
+            } catch (_: Exception) {
+                continue
+            }
+            // Duck typing: solo cuenta si declara un client_entity con identifier.
+            val id = json.optJSONObject("minecraft:client_entity")
+                ?.optJSONObject("description")?.optString("identifier")
+                ?.trim()?.takeIf { it.isNotEmpty() } ?: continue
+            byId.getOrPut(id) { mutableListOf() }.add(file)
+        }
+
+        for ((identifier, files) in byId) {
+            if (files.size <= 1) continue
+
+            // El ganador es el primero por orden de ruta (determinismo).
+            val winner = files.first()
+            val losers = files.drop(1)
+            val isVanilla = identifier.startsWith("minecraft:")
+
+            val severity = if (isVanilla) {
+                ConflictSeverity.MEDIUM
+            } else {
+                ConflictSeverity.CRITICAL
+            }
+            val kind = if (isVanilla) "ENTITY_DUPLICATE_VANILLA" else "ENTITY_DUPLICATE_CUSTOM"
+
+            ConflictRegistry.logConflict(
+                severity = severity,
+                type = kind,
+                file = "entity/${winner.name}",
+                addon1 = "ganador: $identifier",
+                addon2 = losers.joinToString(", ") { it.name },
+                description = if (isVanilla) {
+                    "El identifier VANILLA '$identifier' está declarado en ${files.size} archivos. " +
+                        "Bedrock usará solo el ganador (${winner.name}); los demás quedan inutilizados. " +
+                        VanillaAssets.VANILLA_NOTE
+                } else {
+                    "El identifier CUSTOM '$identifier' está declarado en ${files.size} archivos: " +
+                        "Bedrock descartará ${losers.size} en silencio. Revisa si ambos addons son necesarios."
+                }
+            )
+
+            if (isVanilla) {
+                // Duplicado vanilla: se aparta a .shadow/ para que Bedrock no lo
+                // cargue y el conflicto quede visible pero sin romper el pack.
+                for (loser in losers) {
+                    val shadowDir = File(entityDir, ".shadow/$identifier")
+                    val target = File(shadowDir, loser.name)
+                    try {
+                        shadowDir.mkdirs()
+                        loser.renameTo(target)
+                    } catch (_: Exception) {
+                        // Si no se puede mover, se deja: el conflicto ya está reportado.
+                    }
+                }
+            }
+            // Duplicado custom: NO se mueve nada. La decisión es del usuario
+            // en la pantalla de Conflictos (regla: nunca resolver en silencio).
+        }
+    }
+
+    // =====================================================================
     // 17. ATTACHABLES - RP/attachables/*.json declaran minecraft:attachable.
     //     Fusiona por nombre de archivo deduplicando por clave raíz (ej.
     //     "minecraft:attachable"). Si el archivo ya existe en destino, se
@@ -1436,4 +1515,5 @@ object BedrockCriticalFilesMerger {
         PackForgeLog.d("PackForge_Attach", "✅ attachables fusionados")
     }
 }
+
 

@@ -164,8 +164,8 @@ class ValidateMergeTextureExtensionTest {
         // "textures/mobs/custom/steve.png" NO satisface "textures/entity/steve":
         // un fallback por solo-basenamewould dar por buena una textura ajena.
         val entries = mutableMapOf<String, ByteArray>()
-        basePack(entries, "golem.entity.json", "textures/entity/steve")
-        entries["RP_pack/textures/mobs/custom/steve.png"] = pngEntry()
+        basePack(entries, "golem.entity.json", "textures/entity/miaddon/golem")
+     entries["RP_pack/textures/otro/golem.png"] = pngEntry()
 
         val errs = textureErrors(buildAddon("wrong_folder", entries))
         assertTrue(
@@ -279,5 +279,48 @@ class ValidateMergeTextureExtensionTest {
 
         assertFalse("Sin entidades no debe haber errores de textura", all.any { it.contains("textura") })
     }
-}
 
+
+// ── TICKET-CORE-003 Parte 1: assets VANILLA ──────────────────────
+
+    @Test
+    fun vanillaTextureAbsentFromPack_isNotReported() {
+    val entries = mutableMapOf<String, ByteArray>()
+     basePack(entries, "golem.entity.json", "textures/entity/steve")
+        // No se empaqueta textures/entity/steve.png: es vanilla.
+
+        val errs = textureErrors(buildAddon("vanilla_tex", entries))
+        assertTrue(
+     "Un asset VANILLA ausente no debe reportarse. Errores: $errs",
+       errs.isEmpty()
+     )
+    }
+
+    @Test
+    fun vanillaGeometryAnimationAndRenderController_areNotReported() {
+      val entries = mutableMapOf<String, ByteArray>()
+        entries["RP_pack/entity/vanilla.json"] = jsonEntry(
+            """
+            {
+              "format_version": "1.10.0",
+           "minecraft:client_entity": {
+         "description": {
+        "identifier": "pack:usa_vanilla",
+   "geometry": { "default": "geometry.humanoid.custom" },
+"textures": { "default": "textures/entity/steve" },
+        "animations": { "idle": "animation.humanoid.base_pose" },
+"render_controllers": ["controller.render.default"],
+    "materials": { "default": "entity" }
+     }
+              }
+            }
+            """.trimIndent()
+        )
+
+  val errors = EntityDependencyResolver.validateMerge(buildAddon("vanilla_all", entries).absolutePath)
+        assertTrue(
+     "Geometría/animación/render controller/textura VANILLA no deben reportarse: $errors",
+    errors.isEmpty()
+        )
+    }
+}

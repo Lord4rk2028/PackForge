@@ -73,6 +73,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.packforge.app.ui.components.bounceClick
+import com.packforge.app.ui.theme.currentMotionLevel
+import com.packforge.app.ui.theme.describe
 import com.packforge.app.ui.viewmodel.ThemeViewModel
 
 @Composable
@@ -83,6 +85,11 @@ fun ThemeSettingsScreen(
     val prefs by viewModel.preferences.collectAsStateWithLifecycle()
     var hexInput by remember(prefs.accentHex) { mutableStateOf(prefs.accentHex) }
     val scope = rememberCoroutineScope()
+
+    // Nivel de movimiento vigente: lo publica PackForgeTheme y ya tiene en cuenta
+    // "Reducir Movimiento", la accesibilidad del sistema, el ahorro de batería y
+    // la gama del dispositivo. Se muestra aquí solo como información.
+    val motionLevel = currentMotionLevel
 
     fun updateHex(newHex: String) {
         val sanitized = if (newHex.startsWith("#")) newHex else "#$newHex"
@@ -376,10 +383,14 @@ fun ThemeSettingsScreen(
                     )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                     ThemeSwitchItem(
-                        label = "Animaciones expresivas",
-                        description = "Física de rebote suave en transiciones y botones",
-                        checked = prefs.expressiveMotion,
-                        onCheckedChange = { viewModel.setExpressiveMotion(it) }
+                        label = "Reducir Movimiento",
+                        description = if (prefs.reduceMotion) {
+                            "Sin animaciones, solo transiciones instantáneas"
+                        } else {
+                            "Estado actual: ${motionLevel.describe().lowercase()}"
+                        },
+                        checked = prefs.reduceMotion,
+                        onCheckedChange = { viewModel.setReduceMotion(it) }
                     )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                     ThemeSwitchItem(

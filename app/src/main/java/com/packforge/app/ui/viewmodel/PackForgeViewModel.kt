@@ -12,7 +12,10 @@ import com.packforge.app.data.download.AddonDownloadRepository
 import com.packforge.app.data.update.AddonUpdateSearcher
 import com.packforge.app.data.update.SearchHit
 import com.packforge.app.data.update.VersionComparator
+import com.packforge.app.util.AddonStorageManager
+import com.packforge.app.util.CleanupReport
 import com.packforge.app.util.PackForgeLog
+import com.packforge.app.util.StorageSnapshot
 import com.packforge.app.domain.engine.AddonParser
 import com.packforge.app.domain.engine.AddonUriCache
 import com.packforge.app.domain.engine.ConflictEngine
@@ -265,9 +268,29 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
-                    setSupportMultipleWindows(false)
+                    // MCPEDL y CurseForge abren sus menús laterales y de pantalla
+                    // completa con window.open(). Estas dos opciones son las que
+                    // permiten que esa petición llegue a `onCreateWindow`; sin
+                    // ellas el toque en el icono de tres rayitas no hacía nada y
+                    // la web quedaba congelada.
+                    javaScriptCanOpenWindowsAutomatically = true
+                    setSupportMultipleWindows(true)
+                    loadsImagesAutomatically = true
+                    useWideViewPort = true
+                    loadWithOverviewMode = true
                     cacheMode = WebSettings.LOAD_DEFAULT
+                    mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                    // User-Agent sin la marca "wv": algunos sitios sirven una
+                    // variante reducida (sin menú) si detectan un WebView.
+                    userAgentString = userAgentString
+                        ?.replace("; wv", "")
+                        ?.replace(Regex("Version/\\d+\\.\\d+ "), "")
                 }
+                // Cookies de terceros: el estado del menú y la sesión de descarga
+                // de estos sitios dependen de ellas.
+                android.webkit.CookieManager.getInstance().setAcceptCookie(true)
+                android.webkit.CookieManager.getInstance()
+                    .setAcceptThirdPartyCookies(this, true)
             }
         }
     }
@@ -460,6 +483,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun removeAddon(id: String) {
+        val removed = _addons.value.firstOrNull { it.id == id }
         AddonUriCache.removeUri(id)
         val affected = _conflicts.value.filter { it.affectedAddonIds.contains(id) }.map { it.id }
         _addons.value = _addons.value.filter { it.id != id }.mapIndexed { i, a -> a.copy(priority = i) }
@@ -468,6 +492,21 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         }
         ConflictRegistry.removeConflictsFor(id)
         recalculateConflicts()
+
+        // Liberar el archivo del addon en disco si ya no lo referencia ningún modpack.
+        // Antes solo se quitaba de la lista en memoria: el archivo (hasta 150 MB) se
+        // quedaba para siempre en files/addons y ahí estaba el grueso de los 2.9 GB.
+        val releasedPath = removed?.sourceFilePath
+        if (!releasedPath.isNullOrBlank()) {
+            val sessionPaths = _addons.value.map { it.sourceFilePath }
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching {
+                    AddonStorageManager.deleteAddonFileIfUnreferenced(
+                        getApplication(), database, releasedPath, sessionPaths
+                    )
+                }
+            }
+        }
     }
 
     fun toggleAddon(id: String) {
@@ -1079,7 +1118,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
      * de hidratar el editor. Así se evita arrastrar addonsJson de todas las
      * filas y reventar el CursorWindow de SQLite.
      */
-    fun loadModpack(summary: SavedModpackSummary) {
+    fun loadModpack(summary: SavedModpackSummary, onReady: (() -> Unit)? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             val db = database ?: PackForgeDatabase.getInstance(getApplication())
             val full = db.savedModpackDao().getById(summary.id)
@@ -1088,6 +1127,9 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 return@launch
             }
             withContext(Dispatchers.Main) { hydrateModpackForEditing(full) }
+            // La hidratación ya terminó: es el momento correcto para navegar.
+            // Si se navega antes, el editor abre sin addons y parece colgado.
+            onReady?.let { withContext(Dispatchers.Main) { it() } }
         }
     }
 
@@ -1123,19 +1165,30 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             // el archivo cacheado del icono puede haber desaparecido, pero el addon
             // fuente (en almacenamiento interno) persiste. Re-extraemos el pack_icon.png
             // para que la portada original siempre se muestre y no quede un color sólido.
+            //
+            // ⚡ EN PARALELO: cada recuperación abre el ZIP del addon. Hacerlo en
+            // serie costaba ~un ZIP por addon encadenado, y con 10-15 addons eso
+            // eran varios segundos de espera antes de poder editar. Ahora se
+            // lanzan todos a la vez y basta con esperar al más lento.
             val (restored, missingFiles) = withContext(Dispatchers.IO) {
                 val recovered = restoredRaw.map { addon ->
-                    val iconStillExists = addon.iconPath != null &&
-                        runCatching { java.io.File(addon.iconPath).exists() }.getOrDefault(false)
-                    if (iconStillExists || addon.sourceFilePath.isBlank()) {
-                        addon
-                    } else {
-                        val rec = AddonParser.recoverIconFromSource(
-                            addon.sourceFilePath, addon.id, getApplication()
-                        )
-                        if (rec != null) addon.copy(iconPath = rec) else addon
+                    async {
+                        // `iconPath` ya se comprobó no-nulo arriba, así que se
+                        // captura en local: evita el `!!` y el warning.
+                        val cachedIcon = addon.iconPath
+                        val iconStillExists = cachedIcon != null &&
+                            runCatching { java.io.File(cachedIcon).exists() }
+                                .getOrDefault(false)
+                        if (iconStillExists || addon.sourceFilePath.isBlank()) {
+                            addon
+                        } else {
+                            val rec = AddonParser.recoverIconFromSource(
+                                addon.sourceFilePath, addon.id, getApplication()
+                            )
+                            if (rec != null) addon.copy(iconPath = rec) else addon
+                        }
                     }
-                }
+                }.awaitAll()
                 val missing = recovered.any { !java.io.File(it.sourceFilePath).exists() }
                 recovered to missing
             }
@@ -1224,6 +1277,107 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 _events.emit(PackForgeEvent.ShowSnackbar("Error al conectar con la base de datos", true))
             }
         }
+
+        // Mantenimiento de almacenamiento en segundo plano: no bloquea el arranque ni
+        // la interfaz, y es lo que impide que la basura vuelva a acumularse.
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { runStorageMaintenance(application) }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  ALMACENAMIENTO
+    // ══════════════════════════════════════════════════════════════
+
+    private val _storageSnapshot = MutableStateFlow<StorageSnapshot?>(null)
+    val storageSnapshot: StateFlow<StorageSnapshot?> = _storageSnapshot.asStateFlow()
+
+    private val _lastCleanupReport = MutableStateFlow<CleanupReport?>(null)
+    val lastCleanupReport: StateFlow<CleanupReport?> = _lastCleanupReport.asStateFlow()
+
+    private val _isOptimizingStorage = MutableStateFlow(false)
+    val isOptimizingStorage: StateFlow<Boolean> = _isOptimizingStorage.asStateFlow()
+
+    /**
+     * Limpieza profunda a petición del usuario: elimina las copias idénticas de addons,
+     * los archivos huérfanos y los artefactos antiguos.
+     *
+     * Es costosa porque compara el contenido de los archivos, de ahí que se ofrezca como
+     * acción manual además de la pasada automática única por versión.
+     */
+    fun optimizeStorage() {
+        if (_isOptimizingStorage.value) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _isOptimizingStorage.value = true
+            try {
+                val app = getApplication<Application>()
+                val db = database ?: PackForgeDatabase.getInstance(app)
+                val sessionPaths = _addons.value.map { it.sourceFilePath }
+                val report = AddonStorageManager.runDeepCleanup(app, db, sessionPaths)
+                _lastCleanupReport.value = report
+                _storageSnapshot.value = AddonStorageManager.snapshot(app)
+                _events.emit(
+                    PackForgeEvent.ShowSnackbar(
+                        if (report.changed) {
+                            "Espacio liberado: ${report.totalBytesFreed / (1024 * 1024)} MB " +
+                                "en ${report.totalFilesRemoved} archivos"
+                        } else {
+                            "El almacenamiento ya estaba optimizado"
+                        }
+                    )
+                )
+            } catch (e: Exception) {
+                _events.emit(PackForgeEvent.ShowSnackbar("No se pudo optimizar el almacenamiento", true))
+            } finally {
+                _isOptimizingStorage.value = false
+            }
+        }
+    }
+
+    /** Recalcula el resumen de espacio ocupado (para mostrarlo en la interfaz). */
+    fun refreshStorageSnapshot() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                _storageSnapshot.value = AddonStorageManager.snapshot(getApplication())
+            }
+        }
+    }
+
+    /**
+     * Mantenimiento de arranque.
+     *
+     * - Limpieza barata (huérfanos + artefactos viejos) en cada inicio.
+     * - Deduplicación profunda UNA vez por versión instalada: es una migración para el
+     *   almacenamiento que ya se acumuló con las versiones anteriores, y leer todos los
+     *   addons para compararlos no debe repetirse en cada arranque.
+     */
+    private suspend fun runStorageMaintenance(app: Application) {
+        val db = database ?: PackForgeDatabase.getInstance(app)
+        val prefs = app.getSharedPreferences("packforge_prefs", Context.MODE_PRIVATE)
+        val versionTag = try {
+            app.packageManager.getPackageInfo(app.packageName, 0).versionName ?: "unknown"
+        } catch (_: Throwable) {
+            "unknown"
+        }
+        val doneKey = "storage_deep_clean_done_$versionTag"
+        val needsDeepClean = !prefs.getBoolean(doneKey, false)
+
+        val report = if (needsDeepClean) {
+            val result = AddonStorageManager.runDeepCleanup(app, db, emptyList())
+            prefs.edit().putBoolean(doneKey, true).apply()
+            PackForgeLog.d(
+                "PackForge",
+                "Deduplicación inicial v$versionTag: ${result.totalFilesRemoved} archivos, " +
+                    "${result.totalBytesFreed / (1024 * 1024)} MB, " +
+                    "${result.referencesRewritten} modpacks actualizados"
+            )
+            result
+        } else {
+            AddonStorageManager.runQuickCleanup(app, db, emptyList())
+        }
+
+        if (report.changed) _lastCleanupReport.value = report
+        _storageSnapshot.value = AddonStorageManager.snapshot(app)
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -1477,10 +1631,13 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                     }
 
-                    // Borrar el material antiguo del addon reemplazado.
-                    oldAddon?.sourceFilePath?.let { path ->
-                        runCatching { File(path).takeIf { it.isDirectory }?.deleteRecursively() }
-                    }
+                    // El archivo antiguo se libera DESPUÉS de reescribir el modpack: si se
+                    // borrara antes, la BD todavía lo referenciaría y la comprobación de
+                    // "¿lo usa alguien?" impediría borrarlo. Además `sourceFilePath` apunta a
+                    // un ARCHIVO, no a un directorio, así que la condición anterior
+                    // (`takeIf { it.isDirectory }`) nunca se cumplía y la versión vieja
+                    // se quedaba en disco para siempre.
+                    val oldSourcePath = oldAddon?.sourceFilePath
                     AddonUriCache.clear()
 
                     // Reescribir el modpack con los addons nuevos.
@@ -1499,6 +1656,16 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                         addonNames = Gson().toJson(newAddons.filter { it.enabled }.map { it.name })
                     )
                     db.savedModpackDao().insert(updatedPack)
+
+                    // Ya reescrito el modpack, la versión antigua del addon deja de estar
+                    // referenciada y se puede liberar del disco.
+                    if (!oldSourcePath.isNullOrBlank()) {
+                        runCatching {
+                            AddonStorageManager.deleteAddonFileIfUnreferenced(
+                                context, db, oldSourcePath, newAddons.map { it.sourceFilePath }
+                            )
+                        }
+                    }
 
                     // Reflejar el cambio en el informe abierto.
                     _updateReport.value = _updateReport.value?.let { report ->

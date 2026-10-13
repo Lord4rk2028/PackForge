@@ -1,13 +1,16 @@
 package com.packforge.app.domain.engine
 
 import android.graphics.Bitmap
+import com.packforge.app.domain.model.ConflictSeverity
 import android.graphics.BitmapFactory
 import com.packforge.app.util.PackForgeConfig
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.util.FileUtils
 import com.packforge.app.util.logFile
+import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 import java.util.UUID
 import java.io.BufferedOutputStream
 import java.io.BufferedInputStream
@@ -16,6 +19,7 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
+import java.util.zip.CRC32
 import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -403,15 +407,44 @@ object PackForgeOrchestrator {
             PackForgeLog.d("PackForge_Export", "  BPs detectados: ${bpDirs.size}")
             PackForgeLog.d("PackForge_Export", "  RPs detectados: ${rpDirs.size}")
 
-            // ═══ RENAMESPACER — MOVIDO A FASE POST-COPIA (OPTIMIZADO) ═══
-            // ⚠️ ANTES aquí se ejecutaba IdentifierRemapper.run() que lee Y PARSEA
-            // el contenido de TODOS los JSONs de todos los BP/RP (readDeclaredIdentifier
-            // hace readText + JSONObject por archivo) → bloquea la UI 10+ min en
-            // "Clasificando addons". Ahora el renombrado se diferirá a la Fase 3
-            // (post-copia) operando SOLO sobre los archivos realmente conflictivos.
-            // Esto elimina el cuello de botella E/S de O(N*M) durante la clasificación.
-            PackForgeLog.d(TAG, "⚡ Renamespacer diferido a Fase 3 (post-copia) para máxima velocidad")
-            idRenames = emptyList() // Se poblará de forma selectiva después de copiar
+            // ══ RENAMESPACER (H1 — REACTIVADO CON DISEÑO OPTIMIZADO) ══
+            // ANTES aquí se ejecutaba IdentifierRemapper.run() y se DESACTIVÓ
+            // porque leía Y parseaba TODOS los JSON de todos los BP/RP sin
+            // filtro (readDeclaredIdentifier = readText + JSONObject por
+            // archivo) → bloqueaba la UI 10+ min en "Clasificando addons".
+            //
+            // Se reactiva con el diseño acordado (H1):
+            //  · filtro barato de texto ANTES de parsear (sin "identifier" ni
+            //    se abre el JSON) → en packs sin colisiones el costo es O(bytes)
+            //  · DirIndexCache: una sola pasada de disco
+            //  · la reescritura SOLO ocurre si hay colisiones reales y SOBRE
+            //    los archivos de los addons perdedores
+            //  · progressCallback para que la UI muestre avance real
+            // Sin esto, dos addons con el MISMO id se aniquilan en silencio
+            // ("uno gana") y el contenido del perdedor desaparece.
+            idRenames = if (bpDirs.size + rpDirs.size >= 2) {
+                try {
+                    IdentifierRemapper.run(
+                        bpDirs.map { File(it) },
+                        rpDirs.map { File(it) }
+                    ) { msg ->
+                        // Wrapper para progreso: convertir onProgress (suspend) a función regular
+                        runBlocking { progressCallback?.onProgress(msg) }
+                    }
+                } catch (e: Exception) {
+                    PackForgeLog.e(TAG, "Renamespacer falló (no bloqueante): ${e.message}")
+                    emptyList()
+                }
+            } else {
+                emptyList()
+            }
+            // El remapper REESCRIBE y RENOMBRA archivos en los directorios de
+            // origen: el índice cacheado queda obsoleto y debe invalidarse
+            // antes de que la copia lo consuma.
+            if (idRenames.isNotEmpty()) {
+                bpDirs.forEach { DirIndexCache.invalidate(File(it)) }
+                rpDirs.forEach { DirIndexCache.invalidate(File(it)) }
+            }
             coroutineContext.ensureActive()
             
             // ARQUITECTURA NUEVA: FASE 1 EAGER + FASE 2 LAZY (Evita indexado masivo de 20 min)
@@ -526,6 +559,16 @@ object PackForgeOrchestrator {
                         );
                     }
                 }
+
+                // === FASE 3E: DETECCION DE client_entity DUPLICADO (TICKET-CORE-003) ===
+  // Bedrock descarta en silencio los client_entity con identifier repetido.
+      // Se reportan siempre por ConflictRegistry (nunca se resuelve en silencio);
+                // los duplicados VANILLA se apartan a entity/.shadow/ para no romper el pack.
+        try {
+            merger.detectDuplicateClientEntities(mergedRpDir)
+        } catch (e: Exception) {
+    PackForgeLog.w("PackForge_Export", "Deteccion de duplicados no bloqueante: ${e.message}")
+     }
             }
             coroutineContext.ensureActive()
             val tFusionFin = tEagerStart
@@ -561,6 +604,30 @@ object PackForgeOrchestrator {
                     description = it
                 )
             }
+
+            // g0) DECIFRADOR: recuperar addons closed-source con contenido oculto
+            // ⚠️ DEBE ejecutarse ANTES del validador y del healer: restaura los
+            // archivos canónicos rotos para que la validación vea el pack real.
+            // Se procesa RP y BP: los addons cerrados también entierran copias
+            // en claro dentro del behavior pack (entidades/bloques/objetos).
+            progressCallback?.onProgress("Descifrando addons closed-source...")
+            PackForgeLog.d("PackForge_Export", "PASO 4d: Ejecutando BedrockDecifrator...")
+            val decryptReport = try {
+                BedrockDecifrator.decrypt(mergedRpDir, mergedBpDir)
+            } catch (e: Exception) {
+                PackForgeLog.w("PackForge_Export", "Decifrator tuvo error no bloqueante: ${e.message}")
+                BedrockDecifrator.DecryptReport(emptyList(), emptyList(), 0, listOf("Error: ${e.message}"))
+            }
+            // La escritura invalida el índice: todo lo que venga después debe
+            // releer el disco, no el snapshot cacheado previo.
+            if (decryptReport.restored.isNotEmpty()) {
+                DirIndexCache.invalidate(mergedRpDir)
+                DirIndexCache.invalidate(mergedBpDir)
+            }
+            if (decryptReport.restored.isNotEmpty() || decryptReport.unrecoverable.isNotEmpty()) {
+                PackForgeLog.w("PackForge_Export", "Decifrador: ${decryptReport.summary}")
+            }
+            PackForgeLog.d("PackForge_Export", "PASO 4d completado")
 
             // f) EJECUTAR VALIDADOR DE REFERENCIAS CRUZADAS
             progressCallback?.onProgress("Validando referencias...")
@@ -644,10 +711,54 @@ object PackForgeOrchestrator {
                 idJson
             )
 
+            // ⭐ VERIFICACIÓN POST-ZIP ⭐
+            // El síntoma real del usuario fue "RP sin portada" e "ZIP inválido",
+            // y ambos se detectan LeyENDO el .mcaddon recién escrito, no el
+            // directorio intermedio. Se comprueba aquí, sobre el archivo final.
+            val zipAudit = auditFinalMcAddon(outputFile, bpDirs.isNotEmpty(), rpDirs.isNotEmpty())
+            zipAudit.forEach { (severity, type, detail) ->
+                ConflictRegistry.logConflict(
+                    severity = severity,
+                    type = type,
+                    file = outputFile.name,
+                    addon1 = "empaquetado final",
+                    addon2 = "-",
+                    description = detail
+                )
+            }
+            if (zipAudit.isEmpty()) {
+                PackForgeLog.d("PackForge_ZIP", "✅ Auditoría del .mcaddon: manifiestos y portadas presentes")
+            }
+
             // ══ VALIDACIÓN POST-FUSIÓN + REPORTE LEGIBLE ══
             progressCallback?.onProgress("Generando reporte de fusión...")
             val syntaxErrors = MergeReportGenerator.validateJsonSyntax(mergedBpDir) +
                 MergeReportGenerator.validateJsonSyntax(mergedRpDir)
+
+        // TICKET-CORE-003 Parte 4: auditoria de integridad (texto plano y claves cifradas).
+  // No bloquea la exportacion: se registra y se muestra en el reporte.
+   val integrityFindings = try {
+        MergeReportGenerator.auditJsonIntegrity(mergedBpDir) +
+             MergeReportGenerator.auditJsonIntegrity(mergedRpDir)
+   } catch (e: Exception) {
+            PackForgeLog.w("PackForge_Export", "Auditoria de integridad no bloqueante: ${e.message}")
+          emptyList()
+        }
+        integrityFindings.forEach { finding ->
+        ConflictRegistry.logConflict(
+        severity = when (finding.severity) {
+     MergeReportGenerator.IntegrityFinding.Severity.INFO -> ConflictSeverity.LOW
+            MergeReportGenerator.IntegrityFinding.Severity.LOW -> ConflictSeverity.LOW
+       MergeReportGenerator.IntegrityFinding.Severity.HIGH -> ConflictSeverity.HIGH
+       },
+    type = finding.kind,
+ file = finding.relativePath,
+        addon1 = "integridad del pack",
+          addon2 = "-",
+          description = finding.detail
+  )
+        }
+        val integrityLines = MergeReportGenerator.formatIntegrityFindings(integrityFindings)
             syntaxErrors.forEach { PackForgeLog.e(TAG, it) }
 
             // ÚLTIMA BARRERA: validar el paquete FINAL empaquetado (referencias de
@@ -672,9 +783,15 @@ object PackForgeOrchestrator {
                     soundRenames = soundKeyRenames,
                     scriptFindings = scriptFindings,
                     syntaxErrors = syntaxErrors,
+      integrityFindings = integrityLines,
                     validationResult = validationResult,
                     dependencyNotes = dependencyNotes,
                     zipValidation = zipValidation,
+                    zipAuditNotes = zipAudit.map { it.third },
+                    decryptRestored = decryptReport.restored.size,
+                    decryptUnrecoverable = decryptReport.unrecoverable,
+                    decryptUnrecoverableNeutralized = decryptReport.neutralizedUnrecoverable.size,
+                    decryptDecoysNeutralized = decryptReport.renamedDecoys.size,
                     totalJsonsMerged = totalJsonsMerged,
                     elapsedSeconds = (System.currentTimeMillis() - tInicio) / 1000.0
                 )
@@ -980,6 +1097,30 @@ object PackForgeOrchestrator {
                 PackForgeLog.d("PackForge_Debug", "  🖼️ ${pathRenames.size} rutas de recurso + ${folderRenames.size} rutas de carpeta con alias para $sourceAddonName")
             }
 
+            // B8: los alias de structures/ se referencian en .mcfunction como
+            // `/structure load <stem>`; hay que reescribir esos comandos o la
+            // estructura renombrada queda inaccesible ("Structure not found").
+            val structureStems = FolderAliasRegistry.structureStemRenames(folderRenames)
+
+            // H2: exponer colisiones de ui/ como hallazgos HIGH. Antes el alias
+            // de ui/ era ignorado por Bedrock (binding por nombre exacto) y la
+            // UI del perdedor se PERDÍA en silencio; ahora el usuario lo ve.
+            FolderAliasRegistry.uiConflicts
+                .filter { it.loserAddon == sourceAddonName }
+                .forEach { c ->
+                    ConflictRegistry.logConflict(
+                        severity = com.packforge.app.domain.model.ConflictSeverity.HIGH,
+                        type = "UI_COLLISION",
+                        file = c.path,
+                        addon1 = c.winnerAddon,
+                        addon2 = c.loserAddon,
+                        description = "La UI '${c.path}' de '$sourceAddonName' NO se aplicará: " +
+                            "'${c.winnerAddon}' gana la ruta canónica (Bedrock carga la UI por " +
+                            "nombre exacto). El archivo perdedor quedó archivado en " +
+                            "_packforge/ui_discard/ para recuperación manual."
+                    )
+                }
+
             try {
                 // Usar índice cacheado en vez de segundo walkTopDown (reducción 3-10x en I/O)
                 val cachedFiles = DirIndexCache.index(sourceFile).allFiles
@@ -1034,6 +1175,42 @@ object PackForgeOrchestrator {
                             fileOriginIndex.putIfAbsent(effectivePath, sourceIndex)
                             jsonCount++
                         }
+                    } else if (structureStems.isNotEmpty() &&
+                        file.extension.equals("mcfunction", ignoreCase = true)
+                    ) {
+                        // B8: reescribir referencias `/structure load <stem>`
+                        // antes de copiar; sin esto la estructura renombrada
+                        // queda inaccesible en gameplay.
+                        try {
+                            var text = file.readText(Charsets.UTF_8)
+                            var changed = false
+                            structureStems.forEach { (oldStem, newStem) ->
+                                if (!text.contains(oldStem)) return@forEach
+                                val re = Regex("\\b" + Regex.escape(oldStem) + "\\b")
+                                if (re.containsMatchIn(text)) {
+                                    text = re.replace(text, newStem)
+                                    changed = true
+                                }
+                            }
+                            if (changed) {
+                                targetFile.parentFile?.mkdirs()
+                                targetFile.writeText(text, Charsets.UTF_8)
+                                PackForgeLog.d(
+                                    "PackForge_Debug",
+                                    "  🧩 Estructuras reescritas en ${file.name} ($effectivePath)"
+                                )
+                            } else {
+                                FileUtils.fastCopy(file, targetFile)
+                            }
+                        } catch (e: Exception) {
+                            PackForgeLog.w(
+                                "PackForge_Debug",
+                                "  ⚠️ No se pudo reescribir ${file.name}, copia directa: ${e.message}"
+                            )
+                            FileUtils.fastCopy(file, targetFile)
+                        }
+                        fileOriginIndex.putIfAbsent(effectivePath, sourceIndex)
+                        nonJsonCount++
                     } else {
                         FileUtils.fastCopy(file, targetFile)
                         fileOriginIndex.putIfAbsent(effectivePath, sourceIndex)
@@ -1201,11 +1378,11 @@ object PackForgeOrchestrator {
             }
             ensureModuleDep("@minecraft/server", "1.16.0")
             ensureModuleDep("@minecraft/server-ui", "1.3.0")
-            val header = bpManifestObj.optJSONObject("header") ?: JSONObject().also { bpManifestObj.put("header", it) }
-            val caps = header.optJSONArray("capabilities") ?: JSONArray().also { header.put("capabilities", it) }
-            var hasDyn = false
-            for (i in 0 until caps.length()) if (caps.optString(i) == "dynamic_light") { hasDyn = true; break }
-            if (!hasDyn) caps.put("dynamic_light")
+            // B2 (auditoría CORE): SIN inyección ciega de `dynamic_light`.
+            // Los capabilities son declaración del AUTOR: buildMergedBpManifest
+            // ya propagó los que los manifests originales traían (REGLA 7).
+            // Inyectarlo aquí a todo pack con scripts cambiaba la iluminación
+            // y obligaba la capability a todos los jugadores de la sesión.
         }
 
         // ⭐ PASO 3: Añadir módulo de script combinado ⭐
@@ -1364,58 +1541,101 @@ object PackForgeOrchestrator {
             PackForgeLog.e("PackForge_Icon", "❌ El archivo de icono no existe: $effectiveIconPath")
             return null
         }
-        
+
         PackForgeLog.d("PackForge_Icon", "   Icon file existe: ${iconFile.exists()}")
         PackForgeLog.d("PackForge_Icon", "   Icon file tamaño: ${iconFile.length()} bytes")
-        
+
+        // ⭐ BUG REAL (verificado en Test 1.mcaddon): la portada suele salir de
+        // pickAddonIcon(), que elige un pack_icon.png DENTRO de mergedRpDir o
+        // mergedBpDir. El bucle borraba el destino antes de copiar: si el origen
+        // y el destino eran el MISMO archivo, el delete() destruía la fuente y
+        // el RP quedaba SIN pack_icon.png (el juego mostraba el pack sin
+        // portada). Se lee el origen UNA vez en memoria y se trabaja sobre esa
+        // copia: el disco nunca vuelve a ser la fuente de verdad.
+        val iconBytes = try {
+            iconFile.readBytes()
+        } catch (e: Exception) {
+            PackForgeLog.e("PackForge_Icon", "❌ No se pudo leer la portada: ${e.message}")
+            return null
+        }
+        if (iconBytes.isEmpty()) {
+            PackForgeLog.e("PackForge_Icon", "❌ La portada está vacía")
+            return null
+        }
+
         val dirs = listOfNotNull(mergedBpDir, mergedRpDir).filter { it.exists() }
-        
+
         if (dirs.isEmpty()) {
             PackForgeLog.e("PackForge_Icon", "❌ No hay directorios válidos para aplicar icono")
             return null
         }
 
         PackForgeLog.d("PackForge_Icon", "   Directorios a procesar: ${dirs.size}")
-        
+
         dirs.forEach { dir ->
             try {
                 val targetIcon = File(dir, "pack_icon.png")
-                
-                // ELIMINAR icono existente (de los addons)
-                if (targetIcon.exists()) {
+
+                // Si el origen ES el destino, no hay nada que borrar: se
+                // sobrescribe en su sitio sin destruir la fuente.
+                val sourceIsTarget = try {
+                    iconFile.canonicalPath == targetIcon.canonicalPath
+                } catch (_: Exception) { false }
+
+                if (targetIcon.exists() && !sourceIsTarget) {
                     val deleted = targetIcon.delete()
                     PackForgeLog.d("PackForge_Icon", "🗑️ Icono anterior eliminado de ${dir.name}: $deleted")
                 } else {
-                    PackForgeLog.d("PackForge_Icon", "ℹ️ No había icono anterior en ${dir.name}")
+                    PackForgeLog.d("PackForge_Icon", "ℹ️ Sin icono anterior en ${dir.name}")
                 }
-                
-                // CRÍTICO: Minecraft espera pack_icon.png CUADRADO (normalmente 256x256 o 512x512).
-                // Si el usuario sube una portada ancha o vertical, se debe ajustar (center-crop a
-                // cuadrado + escalar) para que el icono encaje perfectamente sin espacios vacíos.
-                val processed = processIconCrop(iconFile, targetIcon)
-                
+
+                // CRÍTICO: Minecraft espera pack_icon.png CUADRADO (256x256 o
+                // 512x512). Si la portada es ancha o vertical se hace
+                // center-crop a cuadrado + escalado, para que el icono encaje
+                // sin espacios vacíos.
+                val processed = processIconCrop(iconBytes, targetIcon)
+
                 if (processed) {
                     PackForgeLog.d("PackForge_Icon", "✅ pack_icon.png generado (256x256, center-crop) en ${dir.name}")
                 } else {
-                    // Fallback: copiar tal cual si no se pudo procesar
+                    // Fallback: escribir los bytes originales tal cual.
                     PackForgeLog.w("PackForge_Icon", "⚠️ No se pudo procesar la portada, copiando original")
-                    FileUtils.fastCopy(iconFile, targetIcon)
+                    FileOutputStream(targetIcon).use { it.write(iconBytes) }
                 }
-                
+
                 // VERIFICAR que el archivo se creó
-                if (targetIcon.exists()) {
+                if (targetIcon.exists() && targetIcon.length() > 0) {
                     PackForgeLog.d("PackForge_Icon", "✅ pack_icon.png creado en ${dir.name}")
                     PackForgeLog.d("PackForge_Icon", "   Tamaño: ${targetIcon.length()} bytes")
                     PackForgeLog.d("PackForge_Icon", "   Ruta: ${targetIcon.absolutePath}")
                 } else {
                     PackForgeLog.e("PackForge_Icon", "❌ pack_icon.png NO se creó en ${dir.name}")
                 }
-                
+
             } catch (e: Exception) {
                 PackForgeLog.e("PackForge_Icon", "❌ Error procesando ${dir.name}: ${e.message}", e)
             }
         }
         
+        // CRÍTICO: verificar que el icono quedó en disco antes de empaquetar.
+        // Bug histórico: el RP salía SIN pack_icon.png y el juego mostraba el
+        // pack sin portada. Si falta, se reintenta desde los bytes ya leídos
+        // para no depender del estado del disco.
+        dirs.forEach { dir ->
+            val check = File(dir, "pack_icon.png")
+            if (!check.exists() || check.length() == 0L) {
+                PackForgeLog.w("PackForge_Icon", "⚠️ Reintentando icono en ${dir.name}")
+                try {
+                    FileOutputStream(check).use { it.write(iconBytes) }
+                    if (check.length() > 0) {
+                        PackForgeLog.d("PackForge_Icon", "✅ Icono recuperado en ${dir.name}")
+                    }
+                } catch (e: Exception) {
+                    PackForgeLog.e("PackForge_Icon", "❌ Reintento fallido en ${dir.name}: ${e.message}")
+                }
+            }
+        }
+
         PackForgeLog.d("PackForge_Icon", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         return effectiveIconPath
     }
@@ -1446,37 +1666,43 @@ object PackForgeOrchestrator {
     /**
      * Convierte la portada en un icono CUADRADO (center-crop) de 256x256 PNG,
      * el formato que Minecraft Bedrock espera para pack_icon.png.
+     *
+     * Recibe los bytes YA EN MEMORIA (no una ruta): así el archivo de origen
+     * puede seguir existiendo, haber sido renombrado o vivir dentro del propio
+     * pack que se está modificando, sin que el resultado dependa del disco.
+     *
      * Devuelve true si se procesó correctamente.
      */
-    private fun processIconCrop(sourceFile: File, targetFile: File): Boolean {
+    private fun processIconCrop(iconBytes: ByteArray, targetFile: File): Boolean {
         return try {
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(sourceFile.absolutePath, options)
+            BitmapFactory.decodeByteArray(iconBytes, 0, iconBytes.size, options)
             val srcW = options.outWidth
             val srcH = options.outHeight
             if (srcW <= 0 || srcH <= 0) return false
-            
+
             // Decodificar con reducción de sampleo para no saturar memoria
             val sampleSize = calculateInSampleSize(srcW, srcH, 512)
             val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-            val srcBitmap = BitmapFactory.decodeFile(sourceFile.absolutePath, decodeOpts) ?: return false
-            
+            val srcBitmap = BitmapFactory.decodeByteArray(iconBytes, 0, iconBytes.size, decodeOpts)
+                ?: return false
+
             // Center-crop a cuadrado
             val side = minOf(srcBitmap.width, srcBitmap.height)
             val left = (srcBitmap.width - side) / 2
             val top = (srcBitmap.height - side) / 2
             val cropped = Bitmap.createBitmap(srcBitmap, left, top, side, side)
-            
+
             // Escalar a 256x256
             val resized = Bitmap.createScaledBitmap(cropped, 256, 256, true)
             if (resized != cropped) cropped.recycle()
             if (resized != srcBitmap) srcBitmap.recycle()
-            
+
             FileOutputStream(targetFile).use { out ->
                 resized.compress(Bitmap.CompressFormat.PNG, 100, out)
             }
             resized.recycle()
-            true
+            targetFile.exists() && targetFile.length() > 0
         } catch (e: Exception) {
             PackForgeLog.e("PackForge_Icon", "❌ Error procesando portada: ${e.message}")
             false
@@ -1563,7 +1789,11 @@ object PackForgeOrchestrator {
         ZipOutputStream(
             BufferedOutputStream(FileOutputStream(outputFile), 262144) // ⭐ 256KB buffer
         ).use { zos ->
-            zos.setLevel(Deflater.BEST_SPEED) // ⭐ Nivel 1: ~5x más rápido, tamaño casi igual
+            // Nivel de compresión: solo afecta a las entradas que van en
+            // streaming (>32 MB). El grueso del pack se emite STORED (ver
+            // addFolderToZip) porque es lo único que elimina el data
+            // descriptor que hacía que Bedrock rechazase el .mcaddon.
+            zos.setLevel(Deflater.BEST_SPEED) // Nivel 1: rápido, tamaño casi igual
 
             // Inyectar PackForge.ID al inicio del ZIP para identificación exclusiva de modpack
             if (!idContent.isNullOrBlank()) {
@@ -1603,18 +1833,162 @@ object PackForgeOrchestrator {
         val entries: List<File> = idx?.allFiles ?: sourceFolder.walkTopDown().filter { it.isFile }.toList()
         var count = 0
         entries.forEach { curFile: File ->
+            // ⭐ NO EMPAQUETAR BASURA INTERNA ⭐
+            // - `.bak`: evidencia que deja el decifrador al neutralizar señuelos.
+            //   Iban dentro del .mcaddon (15 en Test 1) y exponían al usuario
+            //   restos de addons cerrados.
+            // - `.json` con nombre oculto (`.OU.json`): son las copias
+            //   ENTERRADAS del esquema closed-source, en rutas absurdas que
+            //   Bedrock ignora. Ningún asset legítimo de Bedrock usa ese patrón.
+            // - `_packforge/`: archivo perdedor de ui/ archivado por H2.
+            // Todo sigue en disco para el reporte; solo dejamos de enviarlo.
+            val ext = curFile.extension.lowercase(Locale.ROOT)
+            val isInternalJunk = ext == "bak" ||
+                curFile.name.startsWith(".") ||
+                relForJunkCheck(sourceFolder, curFile).startsWith("_packforge/")
+            if (isInternalJunk) return@forEach
+
             val relativePath = curFile.relativeTo(sourceFolder).path
             if (curFile.name == "pack_icon.png") {
                 logFile { "🎨 Agregando pack_icon.png al ZIP desde: ${curFile.absolutePath} (${curFile.length()} bytes) en $zipFolderPath/$relativePath" }
             }
-            val zipEntryName = if (relativePath.isEmpty()) "$zipFolderPath/${curFile.name}" else "$zipFolderPath/$relativePath"
-            zos.putNextEntry(ZipEntry(zipEntryName))
-            FileInputStream(curFile).use { ins -> ins.copyTo(zos, 65536) }
-            zos.closeEntry()
+            // Los nombres de entrada ZIP DEBEN usar '/' (especificación ZIP).
+            // File.path usa el separador de la PLATAFORMA: en Windows daría
+            // 'entities\\foo.json' y Minecraft rechazaría el paquete.
+            val relNormalized = relativePath.replace('\\', '/')
+            val zipEntryName = if (relNormalized.isEmpty()) "$zipFolderPath/${curFile.name}" else "$zipFolderPath/$relNormalized"
+
+            // ⭐ COMPATIBILIDAD BEDROCK: sin "data descriptor" ⭐
+            //
+            // CAUSA REAL del "ZIP inválido", confirmada por forensia sobre el
+            // .mcaddon que el usuario importó: las 130 entradas tenían activo
+            // el bit 3 de la cabecera local (data descriptor) con tamaño y CRC
+            // en 0. ZipOutputStream lo activa SIEMPRE sobre un stream no
+            // seekable, y el lector estricto de Bedrock lo rechaza.
+            //
+            // Verificado empíricamente (sandbox, 3 casos):
+            //   · DEFLATED + size/crc declarados → bit 3 SIGUE activo (no sirve)
+            //   · STORED   + size/crc declarados → bit 3 DESAPARECE  ✅
+            // Por eso la salida usa STORED: es lo único que elimina el
+            // descriptor. Minecraft acepta entradas sin comprimir sin problema,
+            // y el .mcaddon resultante es incluso más rápido de importar.
+            val size = curFile.length()
+            if (size in 1..ZIP_INLINE_MAX_BYTES) {
+                val bytes = curFile.readBytes()
+                val crc = CRC32().apply { update(bytes) }.value
+                val entry = ZipEntry(zipEntryName).apply {
+                    method = ZipEntry.STORED
+                    setSize(bytes.size.toLong())
+                    setCrc(crc)
+                }
+                zos.putNextEntry(entry)
+                zos.write(bytes)
+                zos.closeEntry()
+            } else {
+                // Vacíos o enormes: streaming. Conservan el data descriptor,
+                // pero evitan cargar el binario completo en memoria.
+                zos.putNextEntry(ZipEntry(zipEntryName))
+                FileInputStream(curFile).use { ins -> ins.copyTo(zos, 65536) }
+                zos.closeEntry()
+            }
             count++
         }
         return count
     }
+
+    /**
+     * Auditoría del .mcaddon YA ESCRITO: comprueba sobre el archivo final lo que
+     * el juego va a comprobar al importar.
+     *
+     * Devuelve una lista de (severidad, tipo, detalle). Vacía = paquete sano.
+     *
+     * Verifica:
+     *  1. El ZIP abre y tiene directorio central válido (EOCD).
+     *  2. Cada pack esperado declara su manifest.json.
+     *  3. Cada pack tiene su pack_icon.png (si no, el juego lo muestra sin portada).
+     *  4. Ninguna entrada usa '\\' como separador (ZIP inválido en parsers estrictos).
+     */
+    private fun auditFinalMcAddon(
+        outputFile: File,
+        expectBp: Boolean,
+        expectRp: Boolean
+    ): List<Triple<com.packforge.app.domain.model.ConflictSeverity, String, String>> {
+        val findings = mutableListOf<Triple<com.packforge.app.domain.model.ConflictSeverity, String, String>>()
+        if (!outputFile.exists() || outputFile.length() == 0L) {
+            findings += Triple(
+                com.packforge.app.domain.model.ConflictSeverity.CRITICAL,
+                "MADDON_VACIO",
+                "El archivo ${outputFile.name} no existe o está vacío."
+            )
+            return findings
+        }
+
+        val entryNames: List<String> = try {
+            ZipFile(outputFile).use { zip ->
+                zip.entries().toList().map { it.name }
+            }
+        } catch (e: Exception) {
+            findings += Triple(
+                com.packforge.app.domain.model.ConflictSeverity.CRITICAL,
+                "ZIP_CORRUPTO",
+                "El .mcaddon no se puede abrir como ZIP (${e.javaClass.simpleName}: ${e.message}). " +
+                    "Minecraft lo rechazará como 'ZIP inválido'."
+            )
+            return findings
+        }
+
+        if (entryNames.isEmpty()) {
+            findings += Triple(
+                com.packforge.app.domain.model.ConflictSeverity.CRITICAL,
+                "ZIP_SIN_ENTRADAS",
+                "El .mcaddon no contiene ningún archivo."
+            )
+            return findings
+        }
+
+        // (4) Separadores: el ZIP exige '/'.
+        val withBackslash = entryNames.count { it.contains('\\') }
+        if (withBackslash > 0) {
+            findings += Triple(
+                com.packforge.app.domain.model.ConflictSeverity.CRITICAL,
+                "ZIP_SEPARADOR_INVALIDO",
+                "$withBackslash entrada(s) usan '\\' en lugar de '/'. Minecraft no las reconoce."
+            )
+        }
+
+        val packs = buildList {
+            if (expectBp) add("BP_PackForge")
+            if (expectRp) add("RP_PackForge")
+        }
+
+        packs.forEach { packRoot ->
+            // (2) manifest.json
+            if (entryNames.none { it == "$packRoot/manifest.json" }) {
+                findings += Triple(
+                    com.packforge.app.domain.model.ConflictSeverity.CRITICAL,
+                    "MANIFEST_AUSENTE",
+                    "Falta $packRoot/manifest.json dentro del .mcaddon: Minecraft no detectará el pack."
+                )
+            }
+            // (3) pack_icon.png
+            if (entryNames.none { it == "$packRoot/pack_icon.png" }) {
+                findings += Triple(
+                    com.packforge.app.domain.model.ConflictSeverity.HIGH,
+                    "PORTADA_AUSENTE",
+                    "Falta $packRoot/pack_icon.png: el pack se mostrará sin portada en el juego."
+                )
+            }
+        }
+
+        return findings
+    }
+
+    /** Ruta relativa normalizada para decidir si un archivo es basura interna. */
+    private fun relForJunkCheck(sourceFolder: File, file: File): String =
+        file.relativeTo(sourceFolder).path.replace('\\', '/')
+
+    /** Umbral para declarar size+CRC en la cabecera local (evita data descriptor). */
+    private const val ZIP_INLINE_MAX_BYTES = 32L * 1024 * 1024
     
     /**
      * Agrega un directorio recursivamente al ZIP
@@ -1775,3 +2149,6 @@ object PackForgeOrchestrator {
         }
     }
 }
+
+
+

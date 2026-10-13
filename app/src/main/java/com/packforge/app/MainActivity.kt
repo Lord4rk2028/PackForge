@@ -1,6 +1,8 @@
 package com.packforge.app
 
 import com.packforge.app.R
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.res.stringResource
 import android.content.Intent
 import android.net.Uri
@@ -47,6 +49,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.wrapContentWidth
 import com.packforge.app.domain.model.OperationProgress
 import com.packforge.app.ui.components.PackForgeTopBar
 import com.packforge.app.ui.navigation.Screen
@@ -301,6 +308,75 @@ fun PackForgeApp(
             if (activeWebSource == null && !showMyModpacks && !showThemeSettings) {
                 PackForgeTopBar(
                     title = currentScreen.title,
+                    titleContent = when (currentScreen) {
+                        Screen.Import -> {
+                            {
+                                Image(
+                                    painter = painterResource(id = R.drawable.title_importar),
+                                    contentDescription = "IMPORTAR",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .height(32.dp)
+                                        .wrapContentWidth(Alignment.Start)
+                                )
+                            }
+                        }
+                        Screen.Conflicts -> {
+                            {
+                                val unresolvedCount = conflicts.count { !resolutions.containsKey(it.id) } +
+                                    mergeConflicts.count { it.resolution.isNullOrBlank() }
+                                val conflictState = when {
+                                    addons.isEmpty() && conflicts.isEmpty() && mergeConflicts.isEmpty() -> 0 // Grey
+                                    unresolvedCount > 0 -> 2 // Red
+                                    else -> 1 // Green
+                                }
+
+                                Crossfade(
+                                    targetState = conflictState,
+                                    animationSpec = tween(durationMillis = 350),
+                                    label = "ConflictTitleCrossfade"
+                                ) { state ->
+                                    val drawableRes = when (state) {
+                                        0 -> R.drawable.title_conflictos_grey
+                                        1 -> R.drawable.title_conflictos_green
+                                        else -> R.drawable.title_conflictos_red
+                                    }
+                                    Image(
+                                        painter = painterResource(id = drawableRes),
+                                        contentDescription = "CONFLICTOS",
+                                        contentScale = ContentScale.Fit,
+                                        modifier = Modifier
+                                            .height(32.dp)
+                                            .wrapContentWidth(Alignment.Start)
+                                    )
+                                }
+                            }
+                        }
+                        Screen.Export -> {
+                            {
+                                Image(
+                                    painter = painterResource(id = R.drawable.title_exportar),
+                                    contentDescription = "EXPORTAR",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .height(32.dp)
+                                        .wrapContentWidth(Alignment.Start)
+                                )
+                            }
+                        }
+                        Screen.Studio -> {
+                            {
+                                Image(
+                                    painter = painterResource(id = R.drawable.title_estudio),
+                                    contentDescription = "ESTUDIO",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .height(32.dp)
+                                        .wrapContentWidth(Alignment.Start)
+                                )
+                            }
+                        }
+                    },
                     actions = {}
                 )
             }
@@ -427,9 +503,17 @@ fun PackForgeApp(
                         importProgress = importProgress,
                         webImportError = webImportError,
                         onDeleteModpack = { packForgeViewModel.deleteFromHistory(appContext, it) },
-                        onLoadModpack = {
-                            packForgeViewModel.loadModpack(it)
-                            navController.navigate(Screen.Import.route) { popUpTo(Screen.Studio.route) }
+                        onLoadModpack = { summary ->
+                            // El ViewModel avisa cuando los addons ya están
+                            // hidratados. Antes se navegaba de inmediato y el
+                            // ImportScreen aparecía VACÍO hasta que terminaba
+                            // la carga: eso se percibía como una lentitud de
+                            // varios segundos al pulsar "Editar".
+                            packForgeViewModel.loadModpack(summary) {
+                                navController.navigate(Screen.Import.route) {
+                                    popUpTo(Screen.Studio.route)
+                                }
+                            }
                         },
                         onImportFromUrl = { url, pageUrl, siteName ->
                             packForgeViewModel.importFromWebUrl(appContext, url, pageUrl, siteName)

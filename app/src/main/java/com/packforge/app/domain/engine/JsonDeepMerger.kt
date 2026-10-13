@@ -106,6 +106,11 @@ object JsonDeepMerger {
                 }
 
                 baseValue is JSONArray && mergeValue is JSONArray -> {
+                    // Unión por igualdad estructural (concatArrays): en animaciones,
+                    // render controllers y attachables los arrays son POSICIONALES
+                    // (bones[], arrays.textures[], materials). Concatenar a ciegas
+                    // duplicaba entradas y desplazaba los índices, y el juego usaba
+                    // el hueso o la textura EQUIVOCADA.
                     result.put(cleanKey, concatArrays(baseValue, mergeValue))
                 }
 
@@ -172,24 +177,48 @@ object JsonDeepMerger {
         for ((path, json) in buffer) {
             val outFile = File(targetDir, path)
             outFile.parentFile?.mkdirs()
-            outFile.writeText(json.toString())
+            // B6 (auditoría CORE): escritura indentada para diagnóstico legible
+            // (consistente con deepMergeStrings que ya usa toString(4)).
+            outFile.writeText(json.toString(4))
         }
     }
 
     private fun concatArrays(array1: JSONArray, array2: JSONArray): JSONArray {
+        // C5 (compatibilidad absoluta): antes concatenaba a ciegas, así que
+        // fusionar dos packs con las mismas entradas duplicaba eventos
+        // (minecraft:client_entity duplicado, etc.) → Bedrock ejecutaba dos
+        // veces lo mismo. Ahora se hace UNION por igualdad estructural.
         val result = JSONArray()
+        val seen = LinkedHashSet<String>()
         for (i in 0 until array1.length()) {
-            result.put(cleanJsonValue(array1.get(i)))
+            val v = cleanJsonValue(array1.get(i))
+            result.put(v); seen.add(canonicalOf(v))
         }
         for (i in 0 until array2.length()) {
-            result.put(cleanJsonValue(array2.get(i)))
+            val v = cleanJsonValue(array2.get(i))
+            val key = canonicalOf(v)
+            if (seen.add(key)) result.put(v)
         }
         return result
     }
 
-    // Limpieza estricta: elimina invisibles Unicode (ZWSP \u200B, BOM, etc.) + control + espacios
-    private fun String.sanitize(): String = this.replace(Regex("[\\p{C}\\p{Z}]"), "").trim()
-    private fun String.sanitizeKey(): String = this.replace(Regex("[\\p{C}\\p{Z}]"), "").trim()
+    /** Clave de igualdad estructural para deduplicar arrays fusionados. */
+    private fun canonicalOf(value: Any?): String = when (value) {
+        is JSONObject -> {
+            val keys = value.keys().asSequence().toList().sorted()
+            keys.joinToString("|", "{", "}") { k -> "$k=${canonicalOf(value.opt(k))}" }
+        }
+        is JSONArray -> (0 until value.length()).joinToString(",", "[", "]") { canonicalOf(value.get(it)) }
+        else -> value.toString()
+    }
+
+    // C0 (compatibilidad absoluta): la limpieza anterior usaba [\p{C}\p{Z}],
+    // pero \p{Z} incluye el ESPACIO normal → "Iron Sword" se convertía en
+    // "IronSword" (nombres, lore y descripciones corruptos en partida).
+    // Ahora solo se eliminan controles/invisibles (Cc+Cf: ZWSP, BOM, etc.)
+    // y se recortan los bordes con trim(); los espacios INTERIORES se conservan.
+    private fun String.sanitize(): String = this.replace(Regex("[\\p{Cc}\\p{Cf}]"), "").trim()
+    private fun String.sanitizeKey(): String = this.replace(Regex("[\\p{Cc}\\p{Cf}]"), "").trim()
 
     fun cleanJsonValue(value: Any?): Any? {
         return when (value) {

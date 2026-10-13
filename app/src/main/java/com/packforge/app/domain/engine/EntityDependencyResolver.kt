@@ -187,7 +187,6 @@ object EntityDependencyResolver {
 
     // ── SANDBOX ────────────────────────────────────────────────────────────
 
-    /** Resuelve rel dentro de base rechazando traversal (".."), absolutos y unidades de disco. */
     /**
      * Resuelve una ruta de referencia Bedrock contra [base] respetando el
      * sandbox (sin escapes fuera del directorio ni rutas absolutas).
@@ -294,8 +293,9 @@ object EntityDependencyResolver {
 
                 // ── 1) GEOMETRÍA (string u objeto {"default": …}) ──
                 val geoId = readGeometryId(desc)
-                if (geoId != null) {
-                    val mergedHash = merged.geoHashById[geoId]
+       // TICKET-CORE-003: assets vanilla los resuelve el juego, no son "rotos".
+      if (geoId != null && !VanillaAssets.isVanillaGeometry(geoId)) {
+  val mergedHash = merged.geoHashById[geoId]
                     val candidates = geoIndex[geoId].orEmpty()
                     when {
                         candidates.isEmpty() ->
@@ -373,7 +373,9 @@ object EntityDependencyResolver {
                             return@forEach
                         }
 
-                        val dest = safeResolve(mergedRpDir, rawPath)
+                        // TICKET-CORE-003: no intentar reparar assets vanilla.
+                if (!VanillaAssets.isVanillaTexture(rawPath)) {
+                    val dest = safeResolve(mergedRpDir, rawPath)
                         if (dest == null) {
                             missing += "textura '$rawPath' (ruta insegura) requerida por ${file.name}"
                             texLookupMemo[rawPath] = FILE_INSECURE_SENTINEL
@@ -391,12 +393,15 @@ object EntityDependencyResolver {
                                 missing += "textura '$rawPath' requerida por ${file.name}"
                             }
                         }
+            }
                     }
                 }
 
                 // ── 3) ANIMACIONES ──
                 readAnimationIds(desc).forEach { animId ->
-                    if (merged.animRcIds.contains(animId)) return@forEach
+         // TICKET-CORE-003: assets vanilla los resuelve el juego en runtime.
+    if (VanillaAssets.isVanillaAnimation(animId)) return@forEach
+     if (merged.animRcIds.contains(animId)) return@forEach
                     val candidates = animIndex[animId].orEmpty()
                     if (candidates.isEmpty()) {
                         missing += "animación '$animId' requerida por ${file.name}"
@@ -408,7 +413,9 @@ object EntityDependencyResolver {
 
                 // ── 4) RENDER CONTROLLERS (array u objeto legacy) ──
                 readRenderControllerIds(desc).forEach { rcId ->
-                    if (rcId.isBlank() || merged.animRcIds.contains(rcId)) return@forEach
+  // TICKET-CORE-003: assets vanilla los resuelve el juego en runtime.
+         if (VanillaAssets.isVanillaRenderController(rcId)) return@forEach
+   if (rcId.isBlank() || merged.animRcIds.contains(rcId)) return@forEach
                     val candidates = rcIndex[rcId].orEmpty()
                     if (candidates.isEmpty()) {
                         missing += "render controller '$rcId' requerido por ${file.name}"
@@ -635,21 +642,21 @@ object EntityDependencyResolver {
                         val shortName = entityPath.substringAfterLast('/')
 
                         readGeometryId(desc)?.let { g ->
-                            if (g !in geoIds) errors += "❌ [ZIP] $shortName: geometría '$g' no existe en el paquete"
+                            if (g !in geoIds && !VanillaAssets.isVanillaGeometry(g)) errors += "❌ [ZIP] $shortName: geometría '$g' no existe en el paquete"
                         }
                         desc.optJSONObject("textures")?.let { t ->
                             t.keys().forEach { k ->
                                 val p = t.optString(k).replace("\\", "/").trimStart('/')
-                                if (p.isNotBlank() && !zipHasTexture(folderPrefix, p)) {
+                                if (p.isNotBlank() && !VanillaAssets.isVanillaTexture(p) && !zipHasTexture(folderPrefix, p)) {
                                     errors += "❌ [ZIP] $shortName: textura '$p' no está empaquetada"
                                 }
                             }
                         }
                         readAnimationIds(desc).forEach { id ->
-                            if (id !in animRcIds) errors += "❌ [ZIP] $shortName: animación '$id' ausente"
+                            if (id !in animRcIds && !VanillaAssets.isVanillaAnimation(id)) errors += "❌ [ZIP] $shortName: animación '$id' ausente"
                         }
                         readRenderControllerIds(desc).forEach { rc ->
-                            if (rc !in animRcIds) errors += "❌ [ZIP] $shortName: render controller '$rc' ausente"
+                            if (rc !in animRcIds && !VanillaAssets.isVanillaRenderController(rc)) errors += "❌ [ZIP] $shortName: render controller '$rc' ausente"
                         }
                     }
                 }
@@ -674,6 +681,11 @@ object EntityDependencyResolver {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 }
+
+
+
+
+
 
 
 

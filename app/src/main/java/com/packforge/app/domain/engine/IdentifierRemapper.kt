@@ -60,6 +60,9 @@ object IdentifierRemapper {
         "minecraft:feature_rules",
         "minecraft:spawn_rules",
         "minecraft:material",
+        // B9 (auditoría CORE): minecraft:fog — dos addons con el mismo fog id
+        // en fogs/ se pisaban ("uno gana") sin pasar por el renamespacer.
+        "minecraft:fog",
         "minecraft:music_definition",
         "minecraft:music",
         "minecraft:sounds",
@@ -73,7 +76,11 @@ object IdentifierRemapper {
      * @param behaviorDirs directorios BP por addon (cada uno = raíz de un pack)
      * @param resourceDirs directorios RP por addon
      */
-    fun run(behaviorDirs: List<File>, resourceDirs: List<File>): List<RemapEntry> {
+    fun run(
+        behaviorDirs: List<File>,
+        resourceDirs: List<File>,
+        progress: ((String) -> Unit)? = null
+    ): List<RemapEntry> {
         val allDirs = behaviorDirs + resourceDirs
         if (allDirs.size < 2) return emptyList()
 
@@ -88,11 +95,17 @@ object IdentifierRemapper {
 
             if (dirsByOwner.size < 2) return emptyList()
 
-            // ── 2) Recolectar identificadores DECLARADOS por cada addon ─
+            // ── 2) Recolectar identificadores DECLARADOS por cada addon ──
             // Solo cuentan los declarados en behavior packs (evita que el BP y el
             // RP del MISMO addon se "colisionen" a sí mismos).
+            // OPTIMIZACIÓN H1: barrido barato con filtro de texto previo al parseo
+            // (un JSON que declara un id SIEMPRE contiene "identifier"), de modo
+            // que en un pack sin colisiones el costo es O(bytes leídos), no
+            // O(JSON parseados). El diseño histórico bloqueaba la UI 10+ min
+            // porque parseaba TODOS los JSON de TODOS los addons sin filtro.
             val declaredByOwner = LinkedHashMap<String, MutableMap<String, File>>()
             dirsByOwner.forEach { (owner, dirs) ->
+                progress?.invoke("Analizando identificadores de ${shortOwner(owner)}...")
                 dirs.forEach { dir ->
                     collectDeclaredIds(dir)?.forEach { (id, file) ->
                         declaredByOwner.getOrPut(owner) { mutableMapOf() }[id] = file
@@ -116,9 +129,15 @@ object IdentifierRemapper {
                 if (id.substringBefore(':') == "minecraft") return@forEach // no tocar vanilla
                 if (id.startsWith("$PF_NAMESPACE:")) return@forEach // ya es nuestro
 
-                // Ganador = el primer addon en orden de prioridad
-                val winner = owners.first()
-                owners.drop(1).forEachIndexed { i, loser ->
+                // B4 (auditoría CORE): ganador DETERMINISTA = el owner menor en
+                // orden lexicográfico. ANTES era owners.first() (orden de llegada
+                // al pipeline), así que dos ejecuciones sobre los mismos addons
+                // podían dar ganadores distintos → resultado no reproducible.
+                // El orden lexicográfico es estable porque ownerKey deriva del
+                // timestamp de separación (BOTH agrupa BP+RP) o de la ruta.
+                val sortedOwners = owners.sorted()
+                val winner = sortedOwners.first()
+                sortedOwners.drop(1).forEachIndexed { i, loser ->
                     val name = sanitizeIdName(id.substringAfter(':', id))
                     var newId = "$PF_NAMESPACE:${tokenFor(loser)}_$name"
                     while (newIdsInUse.contains(newId)) {
@@ -136,6 +155,8 @@ object IdentifierRemapper {
                 PackForgeLog.d(TAG, "✅ Sin colisiones de identificadores detectadas entre addons.")
                 return emptyList()
             }
+
+            progress?.invoke("Renombrando ${remapByOwner.values.sumOf { it.size }} identificadores en colisión...")
 
             // ── 4) Aplicar renombres por addon (solo en SUS directorios) ─
             val report = mutableListOf<RemapEntry>()
@@ -183,7 +204,16 @@ object IdentifierRemapper {
             // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
             val cachedFiles = DirIndexCache.index(packDir).jsonFiles
             for (file in cachedFiles) {
-                val id = readDeclaredIdentifier(file) ?: continue
+                // Filtro barato H1: un JSON que declara un identificador SIEMPRE
+                // contiene el texto "identifier"; sin él ni se lee ni se parsea.
+                // Esto convierte la detección en O(bytes) en lugar de O(parseos).
+                val preview = try {
+                    file.readText(StandardCharsets.UTF_8)
+                } catch (e: Exception) {
+                    continue
+                }
+                if (!preview.contains("identifier")) continue
+                val id = readDeclaredIdentifier(file, preview) ?: continue
                 // Evitar renombrar manifest.json por accidente
                 if (file.name.equals("manifest.json", true)) continue
                 result[id] = file
@@ -194,10 +224,13 @@ object IdentifierRemapper {
         return result.ifEmpty { null }
     }
 
-    /** Lee `description.identifier` del JSON si alguna raíz lo declara. */
-    private fun readDeclaredIdentifier(file: File): String? {
+    /**
+     * Lee `description.identifier` del JSON si alguna raíz lo declara.
+     * @param preview texto ya leído por el filtro barato (evita una segunda lectura).
+     */
+    private fun readDeclaredIdentifier(file: File, preview: String? = null): String? {
         return try {
-            val json = JSONObject(file.readText(StandardCharsets.UTF_8))
+            val json = JSONObject(preview ?: file.readText(StandardCharsets.UTF_8))
             for (key in json.keys()) {
                 if (key in DECLARING_KEYS) {
                     val id = json.getJSONObject(key)

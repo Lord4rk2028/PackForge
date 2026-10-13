@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +18,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -27,11 +29,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,18 +54,35 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.painter.ColorPainter
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.packforge.app.ui.components.CachedAsyncImage
 import com.packforge.app.ui.components.AddonSite
-import com.packforge.app.ui.components.MorphingFab
-import com.packforge.app.ui.components.MorphingFabItem
-import com.packforge.app.ui.components.SiteSelector
+import com.packforge.app.ui.components.BlockLetterWord
+import com.packforge.app.ui.components.CoverColorExtractor
+import com.packforge.app.ui.components.ModpackParsingCache
+import com.packforge.app.data.PackForgeDatabase
+import com.packforge.app.domain.engine.AddonParser
+import com.packforge.app.ui.theme.ExpressiveElevation
+import com.packforge.app.ui.theme.ExpressiveShapes
+import com.packforge.app.ui.theme.ExpressiveSpacing
+import com.packforge.app.ui.theme.ModpackCardMinWidth
+import com.packforge.app.ui.theme.MotionLevel
+import com.packforge.app.ui.theme.currentMotionLevel
+import com.packforge.app.ui.theme.mediumTweenOf
+import com.packforge.app.ui.theme.rememberExpressiveHaptics
+import com.packforge.app.ui.theme.snappySpringOf
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.domain.model.OperationProgress
 import com.packforge.app.domain.model.SavedModpackSummary
@@ -244,217 +269,114 @@ fun StudioScreen(
     }
 
     val listState = rememberLazyListState()
+    val haptics = rememberExpressiveHaptics()
+    var showInfoBanner by remember { mutableStateOf(true) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp)
-        ) {
-            // ── Header hero con gradiente ────────────────────
-            item {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
-                                        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.10f),
-                                        Color.Transparent
-                                    )
-                                )
-                            )
-                            .padding(20.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(54.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    Icons.Default.Workspaces,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(28.dp)
-                                )
-                            }
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(
-                                    text = "Centro de Modpacks",
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Gestiona tus creaciones y fuentes de contenido",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(ExpressiveSpacing.listGap),
+        contentPadding = PaddingValues(
+            start = ExpressiveSpacing.screenMargin,
+            end = ExpressiveSpacing.screenMargin,
+            top = ExpressiveSpacing.screenMargin,
+            bottom = 96.dp
+        )
+    ) {
+        // ── Línea de contexto ───────────────────
+        // Sin título aquí: el nombre de la pantalla vive en la TopBar (como
+        // wordmark de bloques). Repetirlo dentro creaba el mismo texto dos veces
+        // en la misma vista, que es justo lo que se veía duplicado.
+        item {
+            Text(
+                text = "Gestiona tus modpacks y accede a fuentes",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
 
-            // ── Fila de estadísticas rápidas ─────────────────
-            item {
+        // ── Stats Compacto Horizontal Unificado ─────────────────
+        item {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    StatChip(
-                        value = if (savedModpacks.isNotEmpty()) "${savedModpacks.size}" else "—",
-                        label = "Modpacks",
-                        icon = Icons.Default.Folder,
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatChip(
-                        value = "${savedModpacks.sumOf { it.addonCount }}",
-                        label = "Addons",
-                        icon = Icons.Outlined.Extension,
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatChip(
-                        value = "3",
-                        label = "Fuentes",
-                        icon = Icons.Default.Public,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            item {
-                StudioCard(
-                    icon = Icons.Default.Folder,
-                    title = "Mis Modpacks",
-                    description = "Edita, comparte o borra tus modpacks guardados",
-                    badge = if(savedModpacks.isNotEmpty()) savedModpacks.size.toString() else null,
-                    accent = MaterialTheme.colorScheme.primary
-                ) {
-                    viewModel.setShowMyModpacks(true)
-                }
-            }
-
-            item {
-                StudioCard(
-                    icon = Icons.Default.Settings,
-                    title = "Ajustes de Tema",
-                    description = "Modo oscuro, color de acento y animaciones",
-                    badge = null,
-                    accent = MaterialTheme.colorScheme.tertiary
-                ) {
-                    viewModel.setShowThemeSettings(true)
-                }
-            }
-
-            item {
-                OutlinedButton(
-                    onClick = {
-                        importFileLauncher.launch(
-                            arrayOf(
-                                "application/zip",
-                                "application/octet-stream",
-                                "application/x-mcaddon",
-                                "application/x-mcpack",
-                                "*/*"
-                            )
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Start,
-                        content = {
-                            Icon(Icons.Default.Upload, contentDescription = stringResource(R.string.cd_import))
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = "Importar Modpack",
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                        }
-                    )
-                }
-            }
-
-            item {
-                Text(
-                    text = "Fuentes Bedrock",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            }
-
-            // ── SELECTOR DE SITIOS CON LOGOS ─────────────────
-            item {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                    // Modpacks
                     Column(
-                        modifier = Modifier.padding(vertical = 14.dp, horizontal = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        SiteSelector(
-                            currentSite = AddonSite.fromSourceKey(activeWebSource),
-                            onSelect = { site ->
-                                viewModel.setActiveWebSource(site.sourceKey)
+                        modifier = Modifier
+                            .weight(1f)
+                            .bounceClick(scaleDown = 0.96f, hapticFeedback = false) {
+                                haptics.light()
+                                viewModel.setShowMyModpacks(true)
                             }
+                            .padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = if (savedModpacks.isNotEmpty()) "${savedModpacks.size}" else "—",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "Toca un sitio para navegar y descargar addons",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp)
+                            text = "Modpacks",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                }
-            }
 
-            item {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier.padding(top = 8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    VerticalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    // Addons
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primaryContainer),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Lightbulb,
-                                contentDescription = stringResource(R.string.cd_info),
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
                         Text(
-                            text = "Navega y pulsa 'Descargar' en cualquier fuente. PackForge detectará el archivo automáticamente y te avisará al finalizar.",
-                            style = MaterialTheme.typography.bodySmall,
+                            text = "${savedModpacks.sumOf { it.addonCount }}",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                        Text(
+                            text = "Addons",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    VerticalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    // Fuentes
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .bounceClick(scaleDown = 0.96f, hapticFeedback = false) {
+                                haptics.light()
+                                // Scroll hacia abajo para ver fuentes
+                            }
+                            .padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "3",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                        Text(
+                            text = "Fuentes",
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -462,23 +384,215 @@ fun StudioScreen(
             }
         }
 
-        // FAB EXPRESIVO con morphing: atajos a las fuentes
-        MorphingFab(
-            items = listOf(
-                MorphingFabItem("MCPEDL", Icons.Default.Search) {
-                    viewModel.setActiveWebSource("MCPEDL")
+        // ── Mis Modpacks (Hero principal con háptica HEAVY) ─────────────────
+        item {
+            StudioCard(
+                icon = Icons.Default.Folder,
+                title = "Mis Modpacks",
+                description = "Edita, comparte o borra tus modpacks guardados",
+                badge = if(savedModpacks.isNotEmpty()) savedModpacks.size.toString() else null,
+                accent = MaterialTheme.colorScheme.primary,
+                onClickHaptic = { haptics.heavy() }
+            ) {
+                viewModel.setShowMyModpacks(true)
+            }
+        }
+
+        // ── Ajustes de Tema (Tarjeta secundaria con háptica MEDIUM) ─────────────────
+        item {
+            StudioCard(
+                icon = Icons.Default.Settings,
+                title = "Ajustes de Tema",
+                description = "Modo oscuro, color de acento y movimiento",
+                badge = null,
+                accent = MaterialTheme.colorScheme.tertiary,
+                onClickHaptic = { haptics.medium() }
+            ) {
+                viewModel.setShowThemeSettings(true)
+            }
+        }
+
+        // ── Importar Modpack (Botón destacado pill con háptica MEDIUM) ─────────────────
+        item {
+            Button(
+                onClick = {
+                    haptics.medium()
+                    importFileLauncher.launch(
+                        arrayOf(
+                            "application/zip",
+                            "application/octet-stream",
+                            "application/x-mcaddon",
+                            "application/x-mcpack",
+                            "*/*"
+                        )
+                    )
                 },
-                MorphingFabItem("CurseForge", Icons.Outlined.Extension) {
-                    viewModel.setActiveWebSource("CurseForge")
-                },
-                MorphingFabItem("ModBay", Icons.Default.Star) {
-                    viewModel.setActiveWebSource("ModBay")
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            ) {
+                Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Importar Modpack",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        // ── Carrusel Horizontal de Fuentes (con LOGOS REALES) ─────────────────
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Fuentes Bedrock",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(horizontal = 0.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // Se recorren los sitios REALES del enum (misma fuente de
+                    // verdad que usa el ViewModel), así que el logo, el nombre y
+                    // la clave de navegación nunca se desincronizan.
+                    items(AddonSite.entries.size) { idx ->
+                        val site = AddonSite.entries[idx]
+                        val selected = AddonSite.fromSourceKey(activeWebSource) == site
+
+                        // Contenedor TRANSPARENTE con el borde del color de la web.
+                        // Se descarta `ElevatedCard`: su relleno opaco tapaba el
+                        // fondo y competía con el logo. Aquí el color que
+                        // identifica al sitio es el borde, dejando ver el fondo.
+                        Surface(
+                            modifier = Modifier
+                                .width(124.dp)
+                                .bounceClick(scaleDown = 0.94f, hapticFeedback = false) {
+                                    haptics.medium()
+                                    viewModel.setActiveWebSource(site.sourceKey)
+                                },
+                            shape = ExpressiveShapes.card,
+                            color = if (selected) {
+                                // Seleccionado: tinte muy leve del color del sitio,
+                                // manteniendo el fondo visible.
+                                site.fallbackColor.copy(alpha = 0.12f)
+                            } else {
+                                Color.Transparent
+                            },
+                            border = BorderStroke(
+                                width = if (selected) 2.dp else 1.5.dp,
+                                color = site.fallbackColor.copy(
+                                    alpha = if (selected) 0.95f else 0.55f
+                                )
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 14.dp, horizontal = 10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                // Logo OFICIAL del sitio (favicon real), en squircle
+                                // transparente: se apoya sobre el fondo de la tarjeta.
+                                Surface(
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = Color.Transparent,
+                                    modifier = Modifier.size(46.dp)
+                                ) {
+                                    AsyncImage(
+                                        model = ImageRequest.Builder(LocalContext.current)
+                                            .data(site.logoUrl)
+                                            // El favicon se dibuja en 34dp: pedirlo
+                                            // ya reducido evita decodificar el PNG
+                                            // original del servicio de favicons.
+                                            .size(34 * 3)
+                                            .crossfade(false)
+                                            .build(),
+                                        contentDescription = stringResource(
+                                            R.string.cd_logo_of,
+                                            site.displayName
+                                        ),
+                                        modifier = Modifier
+                                            .padding(6.dp)
+                                            .clip(RoundedCornerShape(11.dp)),
+                                        placeholder = ColorPainter(
+                                            site.fallbackColor.copy(alpha = 0.35f)
+                                        ),
+                                        error = ColorPainter(
+                                            site.fallbackColor.copy(alpha = 0.35f)
+                                        )
+                                    )
+                                }
+                                Text(
+                                    text = site.displayName,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (selected) {
+                                        site.fallbackColor
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
                 }
-            ),
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 20.dp, bottom = 16.dp)
-        )
+            }
+        }
+
+        // ── Banner de Tips Descartable ─────────────────
+        if (showInfoBanner) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Lightbulb,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "Navega cualquier fuente, toca 'Descargar' y PackForge detecta el archivo automáticamente.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = { showInfoBanner = false },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Descartar",
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -493,24 +607,27 @@ private fun StatChip(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     modifier: Modifier = Modifier
 ) {
+    val haptics = rememberExpressiveHaptics()
     Surface(
-        shape = RoundedCornerShape(16.dp),
+        shape = ExpressiveShapes.statChip,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
-        modifier = modifier
+        // El chip responde al toque aunque no navegue: refuerza que la fila es
+        // informativa y a la vez "viva".
+        modifier = modifier.bounceClick(scaleDown = 0.94f) { haptics.light() }
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 10.dp),
+                .padding(vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+            verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(16.dp)
+                modifier = Modifier.size(17.dp)
             )
             Text(
                 text = value,
@@ -535,33 +652,68 @@ fun StudioCard(
     description: String,
     badge: String?,
     accent: Color,
+    onClickHaptic: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
+    val haptics = rememberExpressiveHaptics()
+    val motionLevel = currentMotionLevel
+    var pressed by remember { mutableStateOf(false) }
+
+    // Al pulsar, la tarjeta se hunde (baja la elevación) en vez de saltar: es la
+    // lectura Expressive de "acuse de recibo". Con movimiento reducido se
+    // mantiene la elevación para no introducir parpadeo.
+    val elevation by animateDpAsState(
+        targetValue = if (pressed && motionLevel != MotionLevel.NONE) {
+            ExpressiveElevation.cardPressed
+        } else {
+            ExpressiveElevation.raised
+        },
+        animationSpec = snappySpringOf(motionLevel),
+        label = "studioCardElevation"
+    )
+
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(20.dp))
-            .bounceClick(scaleDown = 0.97f) { onClick() },
-        shape = RoundedCornerShape(20.dp),
+            .border(
+                width = 1.dp,
+                color = accent.copy(alpha = if (pressed) 0.55f else 0.30f),
+                shape = ExpressiveShapes.heroCard
+            )
+            .bounceClick(
+                scaleDown = 0.96f,
+                hapticFeedback = false,
+                onPressChanged = { pressed = it }
+            ) {
+                // Ejecutar el háptico personalizado si existe, si no usar light()
+                if (onClickHaptic != null) {
+                    onClickHaptic()
+                } else {
+                    haptics.light()
+                }
+                onClick()
+            },
+        shape = ExpressiveShapes.heroCard,
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = elevation),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         )
     ) {
         Row(
-            Modifier.padding(16.dp),
+            Modifier.padding(ExpressiveSpacing.heroContent),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Box(
                 Modifier
-                    .size(52.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(accent.copy(alpha = 0.15f)),
+                    .size(56.dp)
+                    .clip(ExpressiveShapes.iconContainer)
+                    .background(accent.copy(alpha = 0.16f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(icon, null, tint = accent, modifier = Modifier.size(26.dp))
+                Icon(icon, null, tint = accent, modifier = Modifier.size(27.dp))
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     if (badge != null) {
@@ -579,7 +731,7 @@ fun StudioCard(
             Icon(
                 imageVector = Icons.Default.ChevronRight,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                tint = accent.copy(alpha = 0.75f)
             )
         }
     }
@@ -606,6 +758,7 @@ fun MyModpacksScreen(
 ) {
     val context = LocalContext.current
     val shareScope = rememberCoroutineScope()
+    val haptics = rememberExpressiveHaptics()
     var modpackToDelete by remember { mutableStateOf<SavedModpackSummary?>(null) }
     var showShareDialog by remember { mutableStateOf(false) }
 
@@ -618,7 +771,7 @@ fun MyModpacksScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp),
-                shape = RoundedCornerShape(24.dp),
+                shape = ExpressiveShapes.dialog,
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(
                     width = 2.dp,
@@ -630,7 +783,7 @@ fun MyModpacksScreen(
                         )
                     )
                 ),
-                shadowElevation = 10.dp
+                shadowElevation = ExpressiveElevation.dialog
             ) {
                 Column(
                     modifier = Modifier.padding(20.dp),
@@ -687,11 +840,12 @@ fun MyModpacksScreen(
                                 Surface(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .bounceClick(scaleDown = 0.97f) {
+                                        .bounceClick(scaleDown = 0.97f, hapticFeedback = false) {
+                                            haptics.medium()
                                             shareModpack(context, modpack, shareScope)
                                             showShareDialog = false
                                         },
-                                    shape = RoundedCornerShape(16.dp),
+                                    shape = ExpressiveShapes.container,
                                     color = MaterialTheme.colorScheme.surfaceContainerLow,
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                                 ) {
@@ -701,7 +855,7 @@ fun MyModpacksScreen(
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
                                         Surface(
-                                            shape = RoundedCornerShape(10.dp),
+                                            shape = ExpressiveShapes.action,
                                             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                                             modifier = Modifier.size(44.dp)
                                         ) {
@@ -775,7 +929,7 @@ fun MyModpacksScreen(
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                shadowElevation = 2.dp
+                shadowElevation = ExpressiveElevation.bar
             ) {
                 Row(
                     modifier = Modifier
@@ -799,34 +953,11 @@ fun MyModpacksScreen(
                 }
             }
         },
-        floatingActionButton = {
-            MorphingFab(
-                items = listOf(
-                    MorphingFabItem("Importar Modpack", Icons.Default.Upload) {
-                        importFileLauncher.launch(
-                            arrayOf(
-                                "application/zip",
-                                "application/octet-stream",
-                                "application/x-mcaddon",
-                                "application/x-mcpack",
-                                "*/*"
-                            )
-                        )
-                    },
-                    MorphingFabItem("Explorar fuentes", Icons.Default.Search) {
-                        onOpenSources()
-                    },
-                    MorphingFabItem("Compartir uno", Icons.Default.Share) {
-                        if (modpacks.isNotEmpty()) {
-                            showShareDialog = true
-                        } else {
-                            android.widget.Toast.makeText(context, "No hay modpacks para compartir", android.widget.Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                ),
-                modifier = Modifier.padding(end = 4.dp, bottom = 8.dp)
-            )
-        }
+        // Sin FAB: sus tres acciones ya viven en la propia pantalla y el botón
+        // flotante competía por la atención con las tarjetas. "Importar" está
+        // en el Hub, "Explorar fuentes" en el carrusel y "Compartir" en el menú
+        // de cada tarjeta, así que aquí solo estorbaba.
+        floatingActionButton = {}
     ) { padding ->
         if (modpacks.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
@@ -834,7 +965,7 @@ fun MyModpacksScreen(
                     Icon(Icons.Outlined.FolderOpen, null, Modifier.size(64.dp).alpha(0.4f))
                     Text(stringResource(R.string.studio_no_modpacks), style = MaterialTheme.typography.titleMedium, modifier = Modifier.alpha(0.6f))
                     Text(
-                        "Toca + para explorar fuentes y crear tu primer modpack",
+                        "Explora una fuente o importa un archivo para crear tu primer modpack",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -851,19 +982,69 @@ fun MyModpacksScreen(
                 }
             }
         } else {
-            // ── LISTA VERTICAL: una tarjeta horizontal por fila, ancho completo ──
-            LazyColumn(
+            // ── GRILLA RESPONSIVA ──
+            // `Adaptive` calcula las columnas por ancho disponible: una sola
+            // tarjeta horizontal a ancho completo en móvil (donde el contenido
+            // necesita todo el espacio) y dos o más en tablet o plegable
+            // desplegado, sin ramas por tipo de dispositivo.
+            // El scroll lo aporta la propia grilla; `LazyColumn` no puede
+            // anidarse dentro de una lista lazy.
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = ModpackCardMinWidth),
                 modifier = Modifier.fillMaxSize().padding(padding),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp)
+                verticalArrangement = Arrangement.spacedBy(ExpressiveSpacing.listGap),
+                horizontalArrangement = Arrangement.spacedBy(ExpressiveSpacing.listGap),
+                contentPadding = PaddingValues(
+                    start = ExpressiveSpacing.screenMargin,
+                    end = ExpressiveSpacing.screenMargin,
+                    top = ExpressiveSpacing.screenMargin,
+                    bottom = 96.dp
+                )
             ) {
-                items(modpacks, key = { it.id }, contentType = { "modpack" }) { modpack ->
-                    val onLoadThis = remember(modpack.id) { { onLoad(modpack); onBack() } }
+                gridItems(
+                    items = modpacks,
+                    key = { it.id },
+                    contentType = { "modpack" }
+                ) { modpack ->
+                    // Las lambdas se memorizan por id para no recrearlas en cada
+                    // recomposición, y leen el valor ACTUAL de los callbacks vía
+                    // `rememberUpdatedState`: sin esto capturaban la versión del
+                    // primer render y, tras un guardado o un borrado, la tarjeta
+                    // seguía invocando una lambda con el estado viejo.
+                    val currentOnLoad by rememberUpdatedState(onLoad)
+                    val currentOnBack by rememberUpdatedState(onBack)
+                    val currentOnRegenerate by rememberUpdatedState(onRegenerate)
+                    val currentOnCheckUpdates by rememberUpdatedState(onCheckUpdates)
+                    val currentOnOpenSource by rememberUpdatedState(onOpenSource)
+                    val currentModpack by rememberUpdatedState(modpack)
+                    val currentContext by rememberUpdatedState(context)
+                    val currentShareScope by rememberUpdatedState(shareScope)
+
+                    val onLoadThis = remember(modpack.id) {
+                        { currentOnLoad(currentModpack); currentOnBack() }
+                    }
                     val onDeleteThis = remember(modpack.id) { { modpackToDelete = modpack } }
-                    val onShareThis = remember(modpack.id) { { shareModpack(context, modpack, shareScope) } }
-                    val onRegenThis = remember(modpack.id) { { onRegenerate(modpack) } }
-                    val onCheckUpdatesThis = remember(modpack.id) { { onCheckUpdates(modpack.id) } }
-                    val source = remember(modpack.id) { extractModpackSource(modpack.sourceJsonHead) }
+                    val onShareThis = remember(modpack.id) {
+                        { shareModpack(currentContext, currentModpack, currentShareScope) }
+                    }
+                    val onRegenThis = remember(modpack.id) { { currentOnRegenerate(modpack) } }
+                    val onCheckUpdatesThis = remember(modpack.id) {
+                        { currentOnCheckUpdates(modpack.id) }
+                    }
+                    // El origen web se resuelve en segundo plano, NO durante la
+                    // composición. `extractModpackSource` parsea hasta 64 KB de
+                    // JSON por tarjeta; hacerlo en el hilo principal en cada
+                    // pasada de composición era trabajo de decenas de
+                    // milisegundos justo mientras se desliza la lista.
+                    var source by remember(modpack.id) { mutableStateOf<ModpackSource?>(null) }
+                    LaunchedEffect(modpack.id) {
+                        val head = modpack.sourceJsonHead
+                        if (head.isNotBlank()) {
+                            source = withContext(Dispatchers.Default) {
+                                extractModpackSource(head)
+                            }
+                        }
+                    }
                     ModpackLibraryCard(
                         modpack = modpack,
                         modpackSource = source,
@@ -871,13 +1052,14 @@ fun MyModpacksScreen(
                         onDelete = onDeleteThis,
                         onShare = onShareThis,
                         onRegenerate = onRegenThis,
-                        onOpenSource = { source?.let { onOpenSource(it.site, it.url) } },
+                        onOpenSource = { source?.let { currentOnOpenSource(it.site, it.url) } },
                         onCheckUpdates = onCheckUpdatesThis,
                         isCheckingUpdates = isCheckingUpdates && checkingUpdatesForId == modpack.id
+                        // Sin `animateItem()`: animaba la entrada y el
+                        // reordenamiento de CADA tarjeta, y con una lista corta
+                        // eso añade trabajo de animación por fotograma sin
+                        // aportar nada visible durante el desplazamiento.
                     )
-                }
-                item {
-                    Spacer(modifier = Modifier.height(72.dp))
                 }
             }
         }
@@ -886,7 +1068,14 @@ fun MyModpacksScreen(
     modpackToDelete?.let { m ->
         AlertDialog(onDismissRequest = { modpackToDelete = null }, title = { Text(stringResource(R.string.studio_delete_title)) },
             text = { Text(stringResource(R.string.studio_delete_message, m.name)) },
-            confirmButton = { TextButton(onClick = { onDelete(m.id); modpackToDelete = null }) { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) } },
+            shape = ExpressiveShapes.dialog,
+            confirmButton = {
+                TextButton(onClick = {
+                    haptics.heavy()
+                    onDelete(m.id)
+                    modpackToDelete = null
+                }) { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) }
+            },
             dismissButton = { TextButton(onClick = { modpackToDelete = null }) { Text(stringResource(R.string.common_cancel)) } }
         )
     }
@@ -1010,12 +1199,15 @@ private fun DirectCardAction(
     isSpinning: Boolean = false,
     isHighlighted: Boolean = false
 ) {
+    val haptics = rememberExpressiveHaptics()
+    val motionLevel = currentMotionLevel
+
     val containerColor by animateColorAsState(
         targetValue = if (isHighlighted)
             MaterialTheme.colorScheme.primaryContainer
         else
             MaterialTheme.colorScheme.surfaceContainerHighest,
-        animationSpec = tween(200),
+        animationSpec = mediumTweenOf(motionLevel),
         label = "directActionContainer"
     )
     val contentColor = if (isHighlighted)
@@ -1023,14 +1215,20 @@ private fun DirectCardAction(
     else
         MaterialTheme.colorScheme.onSurfaceVariant
 
+    // `Surface(onClick = ...)` ya aporta el gesto; añadir `bounceClick` con
+    // onClick propio disparaba la acción DOS veces por toque. Aquí el
+    // modificador solo aporta el efecto de compresión y el háptico.
     Surface(
-        onClick = onClick,
+        onClick = {
+            haptics.light()
+            onClick()
+        },
         enabled = !isSpinning,
-        shape = RoundedCornerShape(10.dp),
+        shape = ExpressiveShapes.action,
         color = containerColor,
         modifier = modifier
-            .height(34.dp)
-            .bounceClick(scaleDown = 0.9f) { onClick() }
+            .height(36.dp)
+            .bounceClick(scaleDown = 0.9f, hapticFeedback = false)
     ) {
         Row(
             modifier = Modifier
@@ -1080,9 +1278,12 @@ fun ModpackLibraryCard(
     modpackSource: ModpackSource? = null,
     onOpenSource: () -> Unit = {},
     onCheckUpdates: () -> Unit = {},
-    isCheckingUpdates: Boolean = false
+    isCheckingUpdates: Boolean = false,
+    modifier: Modifier = Modifier
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val haptics = rememberExpressiveHaptics()
+
     val coverPath = modpack.coverUriString
     // Coil necesita un File (no un String de ruta absoluta) para cargar la
     // portada persistida en almacenamiento interno; un content:// se pasa tal cual.
@@ -1091,6 +1292,101 @@ fun ModpackLibraryCard(
         coverPath.startsWith("/") -> File(coverPath)
         coverPath.startsWith("file://") -> try { File(java.net.URI(coverPath)) } catch (e: Exception) { coverPath }
         else -> coverPath
+    }
+
+    // ── Borde con el COLOR DOMINANTE de la portada ─────────────────
+    // El análisis corre en IO y solo una vez por portada (hay caché), así que
+    // no afecta al scroll. Si el modpack no tiene portada o el color no se
+    // puede extraer, `coverColor` queda null y el borde usa el acento del
+    // tema, que es el respaldo acordado.
+    var coverColor by remember(coverPath) {
+        mutableStateOf(CoverColorExtractor.peek(coverPath.orEmpty()))
+    }
+    val appContext = LocalContext.current.applicationContext
+    LaunchedEffect(coverPath) {
+        // `extract` ya consulta la caché internamente y devuelve al instante si
+        // el color está calculado. Se mantiene la comprobación previa para no
+        // lanzar siquiera la corrutina en el caso habitual de scroll repetido.
+        if (coverPath != null && coverColor == null) {
+            coverColor = CoverColorExtractor.extract(appContext, coverPath)
+        }
+    }
+    val borderColor = coverColor ?: MaterialTheme.colorScheme.primary
+
+    // Visor de addons: se decodifica al abrir, no durante el scroll.
+    var showAddonsDialog by remember { mutableStateOf(false) }
+
+    if (showAddonsDialog) {
+        // El addonsJson completo NO vive en el summary ligero (leerlo de todas
+        // las filas reventaba el CursorWindow). Se pide la fila completa por id
+        // en segundo plano al abrir el visor, que es un evento puntual.
+        val db = remember { PackForgeDatabase.getInstance(appContext) }
+        var dialogAddons by remember { mutableStateOf<List<Addon>?>(null) }
+        LaunchedEffect(modpack.id) {
+            dialogAddons = withContext(Dispatchers.IO) {
+                val full = db.savedModpackDao().getById(modpack.id)
+                val parsed = decodeModpackAddons(full?.addonsJson.orEmpty())
+                // Los iconos se cachean en filesDir/addon_icons. Si el sistema
+                // limpió la caché, `iconPath` apunta a un archivo que ya no
+                // existe y la portada NO se ve: Coil recibe una ruta muerta.
+                // Aquí se re-extrae del addon fuente, igual que hace
+                // `hydrateModpackForEditing` al abrir el editor.
+                // En PARALELO: cada recuperación abre el ZIP del addon, así que
+                // hacerlo en serie multiplicaba la espera por el número de addons.
+                // `coroutineScope` aporta el scope que `async` necesita para
+                // poder lanzar todas las recuperaciones a la vez.
+                coroutineScope {
+                    parsed.map { addon ->
+                        // Tipo explícito: `async` infiere `Any` cuando las ramas
+                        // devuelven `Addon` y `Addon.copy(...)` sin anotación, y
+                        // luego el resultado no encaja en List<Addon>.
+                        async<Addon> {
+                            // `iconPath` ya se comprobó no-nulo arriba, así que se
+                            // captura en local: evita el `!!` y el warning.
+                            val cachedIcon = addon.iconPath
+                            val exists = cachedIcon != null &&
+                                runCatching { File(cachedIcon).exists() }.getOrDefault(false)
+                            if (exists || addon.sourceFilePath.isBlank()) {
+                                addon
+                            } else {
+                                val recovered = AddonParser.recoverIconFromSource(
+                                    addon.sourceFilePath,
+                                    addon.id,
+                                    appContext
+                                )
+                                if (recovered != null) addon.copy(iconPath = recovered) else addon
+                            }
+                        }
+                    }.awaitAll()
+                }
+            }
+        }
+
+        if (dialogAddons != null) {
+            ModpackAddonsDialog(
+                modpackName = modpack.name,
+                addons = dialogAddons!!,
+                onDismiss = { showAddonsDialog = false }
+            )
+        } else {
+            // Mientras carga la fila completa: ventana con indicador, para que
+            // el toque tenga respuesta inmediata en lugar de no hacer nada.
+            androidx.compose.ui.window.Dialog(onDismissRequest = { showAddonsDialog = false }) {
+                Surface(
+                    shape = ExpressiveShapes.dialog,
+                    color = MaterialTheme.colorScheme.surface
+                ) {
+                    Row(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Text("Leyendo addons...", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
     }
 
     // La flecha de "Actualizar" gira mientras el motor revisa las 3 fuentes.
@@ -1109,27 +1405,48 @@ fun ModpackLibraryCard(
         remember { mutableFloatStateOf(0f) }
     }
 
-    ElevatedCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .bounceClick(scaleDown = 0.97f) { onLoad() },
-        shape = RoundedCornerShape(18.dp),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        )
-    ) {
+    // `Surface` en lugar de `ElevatedCard`: la sombra de `ElevatedCard`
+                    // obliga a RenderNode a dibujar y recortar un desenfoque por
+                    // cada tarjeta en cada fotograma, y era el mayor coste
+                    // gráfico del desplazamiento. El borde ya identifica la
+                    // tarjeta con el color de su portada, así que la sombra no
+                    // aportaba nada y sí se notaba como tirones.
+                    //
+                    // El `animateDpAsState` de elevación también desaparece: sin
+                    // sombra no hay nada que animar, y animar una elevación por
+                    // tarjeta era otra fuente de trabajo por fotograma.
+                    Surface(
+                        modifier = modifier
+                            .fillMaxWidth()
+                            .border(
+                                width = if (coverColor != null) 1.5.dp else 1.dp,
+                                color = borderColor.copy(alpha = 0.45f),
+                                shape = ExpressiveShapes.card
+                            )
+                            .bounceClick(
+                                scaleDown = 1f,
+                                hapticFeedback = false
+                            ) {
+                                haptics.light()
+                                onLoad()
+                            },
+                        shape = ExpressiveShapes.card,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        // Elevación tonal (sin sombra difusa): mantiene la
+                        // jerarquía visual sin coste de desenfoque.
+                        tonalElevation = 2.dp
+                    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(ExpressiveSpacing.cardContent),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             // ── Portada grande con badges superpuestos ─────────────────
             Box(
                 modifier = Modifier
                     .size(118.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(ExpressiveShapes.cover)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
             ) {
                 when {
@@ -1137,7 +1454,11 @@ fun ModpackLibraryCard(
                         model = coverModel,
                         contentDescription = stringResource(R.string.cd_cover_of, modpack.name),
                         modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
+                        contentScale = ContentScale.Crop,
+                        cornerRadius = 20.dp,
+                        // La portada se dibuja en 118dp: que Coil la decodifique
+                        // ya a ese tamaño evita cargar la imagen completa.
+                        decodeSize = 118.dp
                     )
                     else -> Icon(
                         Icons.Default.Extension,
@@ -1222,9 +1543,24 @@ fun ModpackLibraryCard(
                             onDismissRequest = { menuOpen = false }
                         ) {
                             DropdownMenuItem(
+                                text = { Text("Ver addons (${modpack.addonCount})") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.List,
+                                        null,
+                                        Modifier.size(18.dp)
+                                    )
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    haptics.light()
+                                    showAddonsDialog = true
+                                }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Compartir") },
                                 leadingIcon = { Icon(Icons.Default.Share, null, Modifier.size(18.dp)) },
-                                onClick = { menuOpen = false; onShare() }
+                                onClick = { menuOpen = false; haptics.medium(); onShare() }
                             )
                             if (modpackSource != null) {
                                 DropdownMenuItem(
@@ -1232,7 +1568,7 @@ fun ModpackLibraryCard(
                                     leadingIcon = {
                                         Icon(Icons.AutoMirrored.Filled.OpenInNew, null, Modifier.size(18.dp))
                                     },
-                                    onClick = { menuOpen = false; onOpenSource() }
+                                    onClick = { menuOpen = false; haptics.light(); onOpenSource() }
                                 )
                             }
                             DropdownMenuItem(
@@ -1244,7 +1580,9 @@ fun ModpackLibraryCard(
                                         tint = MaterialTheme.colorScheme.error
                                     )
                                 },
-                                onClick = { menuOpen = false; onDelete() }
+                                // Háptico de rechazo: avisa de que la acción es destructiva
+                                // antes de que aparezca el diálogo de confirmación.
+                                onClick = { menuOpen = false; haptics.reject(); onDelete() }
                             )
                         }
                     }
@@ -1310,6 +1648,7 @@ private fun formatModpackDate(timestamp: Long): String {
 }
 
 /** Origen web de un addon dentro de un modpack guardado. */
+@Immutable
 data class ModpackSource(
     val site: String,      // "MCPEDL" | "CurseForge" | "ModBay"
     val url: String,       // URL de la página del addon
@@ -1318,13 +1657,19 @@ data class ModpackSource(
 
 /**
  * Deserializa la lista de addons guardada en un modpack, para pintarlos
- * dentro del centro de actualizaciones (portada, tamaño y sitio de origen).
+ * dentro del centro de actualizaciones y del visor de addons (portada,
+ * tamaño y sitio de origen).
+ *
+ * Reutiliza la instancia de Gson y el `Type` precompilados: antes se creaban
+ * ambos en cada llamada, y esta función se invoca por tarjeta durante el
+ * scroll de la biblioteca.
  */
 fun decodeModpackAddons(addonsJson: String): List<Addon> {
     if (addonsJson.isBlank()) return emptyList()
     return try {
-        val type = object : com.google.gson.reflect.TypeToken<List<Addon>>() {}.type
-        com.google.gson.Gson().fromJson<List<Addon>>(addonsJson, type) ?: emptyList()
+        ModpackParsingCache.gson
+            .fromJson<List<Addon>>(addonsJson, ModpackParsingCache.addonListType)
+            ?: emptyList()
     } catch (e: Exception) {
         emptyList()
     }
@@ -1338,13 +1683,34 @@ fun decodeModpackAddons(addonsJson: String): List<Addon> {
  * Recibe el addonsJson COMPLETO o solo el head truncado (64 KB) de la lista
  * ligera: si el fragmento no se puede parsear por estar cortado a mitad de
  * JSON, se escanea el texto para localizar el primer "sourceSite" y su addon.
+ *
+ * ⚡ RENDIMIENTO: el resultado se memoiza por fragmento de JSON. Esta función
+ * corre una vez por tarjeta visible en cada pasada de scroll, y antes
+ * construía `Gson()` más cinco `Regex(...)` cada vez —compilar un patrón es
+ * lo más caro de todo—, que era la causa principal del tirón al deslizar.
+ * Con la caché, revisitar una tarjeta ya vista no vuelve a parsear nada.
  */
 fun extractModpackSource(addonsJson: String): ModpackSource? {
     if (addonsJson.isBlank()) return null
+
+    // 1) ¿Ya se calculó para este mismo fragmento?
+    ModpackParsingCache.cachedSource(addonsJson)?.let { cached ->
+        return cached.value as? ModpackSource
+    }
+
+    val result = computeModpackSource(addonsJson)
+
+    // Solo se memoiza el acierto: un fallo puede deberse a un head truncado
+    // justo antes del campo, y no interesa fijar el negativo.
+    if (result != null) ModpackParsingCache.putSource(addonsJson, result)
+    return result
+}
+
+private fun computeModpackSource(addonsJson: String): ModpackSource? {
     // 1) Ruta rápida: JSON completo (modpacks cortos o sin truncar)
     try {
-        val type = object : com.google.gson.reflect.TypeToken<List<Addon>>() {}.type
-        val addons: List<Addon> = com.google.gson.Gson().fromJson(addonsJson, type)
+        val addons: List<Addon> = ModpackParsingCache.gson
+            .fromJson(addonsJson, ModpackParsingCache.addonListType)
             ?: emptyList()
         addons.firstOrNull { !it.sourceUrl.isNullOrBlank() && !it.sourceSite.isNullOrBlank() }
             ?.let { return ModpackSource(it.sourceSite!!, it.sourceUrl!!, it.name) }
@@ -1356,13 +1722,12 @@ fun extractModpackSource(addonsJson: String): ModpackSource? {
     return try {
         val siteIdx = addonsJson.indexOf("\"sourceSite\"")
         if (siteIdx < 0) return null
-        val site = Regex("\"sourceSite\"\\s*:\\s*\"([^\"]+)\"")
+        val site = ModpackParsingCache.siteRegex
             .find(addonsJson, siteIdx)?.groupValues?.get(1) ?: return null
-        val urlRe = Regex("\"sourceUrl\"\\s*:\\s*\"([^\"]+)\"")
-        val urlMatch = urlRe.findAll(addonsJson).lastOrNull { it.range.first < siteIdx }
+        val urlMatch = ModpackParsingCache.urlRegex
+            .findAll(addonsJson).lastOrNull { it.range.first < siteIdx }
         val url = urlMatch?.groupValues?.get(1) ?: return null
-        val nameRe = Regex("\"name\"\\s*:\\s*\"([^\"]+)\"")
-        val name = nameRe.findAll(addonsJson)
+        val name = ModpackParsingCache.nameRegex.findAll(addonsJson)
             .lastOrNull { it.range.first < urlMatch.range.first }
             ?.groupValues?.get(1) ?: ""
         ModpackSource(site, url, name)

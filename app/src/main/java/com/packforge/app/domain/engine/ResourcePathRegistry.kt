@@ -159,15 +159,19 @@ class ResourcePathRegistry {
     /**
      * Expande cada ruta física mutada a todas las formas en que Bedrock puede
      * referenciarla:
-     *   1. ruta completa con extensión → "textures/entity/steve.png"
-     *   2. ruta completa sin extensión → "textures/entity/steve"
-     *   3. relativa a textures/ con ext → "entity/steve.png"
-     *   4. relativa a textures/ sin ext → "entity/steve"
+     *   1. ruta completa con extensión → "textures/entity/steve.png",
+     *      "sounds/mob/reef/ambient.ogg"
+     *   2. ruta completa sin extensión → "textures/entity/steve",
+     *      "sounds/mob/reef/ambient" (sound_definitions.json usa esta forma)
+     *   3. relativa a la raíz de referencia con ext → "entity/steve.png",
+     *      "mob/reef/ambient.ogg"
+     *   4. relativa a la raíz de referencia sin ext → "entity/steve",
+     *      "mob/reef/ambient"
      *
-     * (3) y (4) son necesarias porque terrain_texture.json e item_texture.json
-     * referencian el atlas con rutas relativas a `textures/`. Solo se generan
-     * para imágenes: en el resto de binarios la forma con extensión es la única
-     * referenciada y `lastIndexOf('.')` sin cambio de directorio es válido.
+     * B5 (auditoría CORE): la forma relativa ANTES solo se generaba para
+     * `textures/`; Bedrock resuelve los sonidos igual de relativo a `sounds/`
+     * y SIN extensión en sound_definitions.json → un .ogg renombrado dejaba
+     * referencias huérfanas (sonido silencioso, sin error visible).
      */
     private fun buildRewriteVariants(renames: Map<String, String>): Map<String, String> {
         val out = LinkedHashMap<String, String>(renames.size * 4)
@@ -178,42 +182,47 @@ class ResourcePathRegistry {
             val oDot = original.lastIndexOf('.')
             // El punto debe estar en el NOMBRE del archivo, no en un directorio.
             if (oDot <= oSlash + 1) continue
-            if (original.substring(oDot + 1).lowercase(Locale.ROOT) !in IMAGE_EXTS) continue
+            if (original.substring(oDot + 1).lowercase(Locale.ROOT) !in VARIANT_EXTS) continue
 
             val mDot = mutated.lastIndexOf('.')
             if (mDot <= 0) continue
 
-     // (2) Ruta completa sin extensión.
+            // (2) Ruta completa sin extensión.
             out[original.substring(0, oDot)] = mutated.substring(0, mDot)
 
-    // (3)(4) Relativas a `textures/`: Bedrock referencia el atlas como
-     // "entity/steve" o "entity/steve.png", NO como "textures/entity/steve".
-        // Se conserva el directorio padre, no solo el basename.
-        if (oSlash > 0 && original.startsWith(TEXTURES_PREFIX)) {
-   // Directorio relativo a `textures/` (ej. "textures/entity/" -> "entity/").
-     val relDir = original.substring(0, oSlash + 1).removePrefix(TEXTURES_PREFIX)
-    // Directorio del mutado en la misma forma relativa (ej. "entity/").
-            val mDir = mutated.substring(0, mutated.lastIndexOf('/', mDot) + 1)
-              .removePrefix(TEXTURES_PREFIX)
-            val oName = original.substring(oSlash + 1)
-      val mName = mutated.substring(mutated.lastIndexOf('/', mDot) + 1)
+            // (3)(4) Relativas a la raíz de referencia (textures/ o sounds/):
+            // Bedrock referencia el atlas como "entity/steve" y los sonidos
+            // como "mob/reef/ambient", SIN el prefijo de la carpeta raíz.
+            // Se conserva el directorio padre, no solo el basename.
+            val refRoot = REFERENCE_ROOTS.firstOrNull { original.startsWith(it) }
+            if (oSlash > 0 && refRoot != null) {
+                // Directorio relativo (ej. "textures/entity/" -> "entity/").
+                val relDir = original.substring(0, oSlash + 1).removePrefix(refRoot)
+                // Directorio del mutado en la misma forma relativa.
+                val mDir = mutated.substring(0, mutated.lastIndexOf('/', mDot) + 1)
+                    .removePrefix(refRoot)
+                val oName = original.substring(oSlash + 1)
+                val mName = mutated.substring(mutated.lastIndexOf('/', mDot) + 1)
 
-   out["$relDir$oName"] = "$mDir$mName"
-     val oNameDot = oName.lastIndexOf('.')
-            if (oNameDot > 0) {
-       out["$relDir${oName.substring(0, oNameDot)}"] =
-            "$mDir${mName.substring(0, mName.lastIndexOf('.'))}"
-      }
-        }
+                out["$relDir$oName"] = "$mDir$mName"
+                val oNameDot = oName.lastIndexOf('.')
+                if (oNameDot > 0) {
+                    out["$relDir${oName.substring(0, oNameDot)}"] =
+                        "$mDir${mName.substring(0, mName.lastIndexOf('.'))}"
+                }
+            }
         }
         return out
     }
 
-
     /** Extensiones para las que tiene sentido generar variantes de referencia. */
-    private val IMAGE_EXTS = setOf("png", "jpg", "jpeg", "tga", "webp", "bmp", "gif")
-    /** Prefijo desde el que Bedrock resuelve rutas de atlas (terrain_texture/item_texture). */
-    private val TEXTURES_PREFIX = "textures/"
+    private val VARIANT_EXTS = setOf(
+        "png", "jpg", "jpeg", "tga", "webp", "bmp", "gif",
+        // B5: sonidos — Bedrock los referencia sin extensión en sound_definitions.
+        "ogg", "fsb", "mp3", "m4a", "wav"
+    )
+    /** Raíces bajo las que Bedrock resuelve referencias RELATIVAS. */
+    private val REFERENCE_ROOTS = listOf("textures/", "sounds/")
     private fun readCached(cache: HashMap<String, String>, file: File): String =
         cache.getOrPut(file.absolutePath) {
             try { file.readText(StandardCharsets.UTF_8) } catch (_: Exception) { "" }
@@ -225,7 +234,10 @@ class ResourcePathRegistry {
             val json = JSONObject(text)
             if (!JsonValueRewriter.replaceValues(json, rewriteMap)) return false
             OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8).use { writer ->
-                writer.write(json.toString())
+                // B6 (auditoría CORE): JSON indentado, igual que IdentifierRemapper
+                // (toString(4)) y PackForgeValidator (toString(2)). El compacto
+                // de una línea hacía ilegible el diagnóstico post-fusión.
+                writer.write(json.toString(2))
             }
             true
         } catch (_: Exception) {
@@ -259,10 +271,15 @@ class ResourcePathRegistry {
                     val alias = buildAlias(rel, hash)
                     committed[alias] = hash
                     renames[rel] = alias
-                    // Variante sin extensión (referencias lógicas de atlas Bedrock)
+                    // Variante sin extensión (referencias lógicas de atlas Bedrock).
+                    // B5b (auditoría CORE): INCLUIR sonidos — sound_definitions
+                    // referencia "mob/reef/ambient", sin extensión; antes solo
+                    // las imágenes generaban la variante y un .ogg renombrado
+                    // dejaba la referencia huérfana (B5 cubrió buildRewriteVariants
+                    // pero aquí se perdía la forma corta en el fast-path).
                     val dot = rel.lastIndexOf('.')
                     if (dot > 0 && rel.substringAfterLast('.').lowercase(Locale.ROOT) in
-                        setOf("png", "jpg", "jpeg", "tga", "webp", "bmp", "gif")
+                        setOf("png", "jpg", "jpeg", "tga", "webp", "bmp", "gif", "ogg", "fsb", "mp3", "m4a", "wav")
                     ) {
                         renames[rel.substring(0, dot)] = alias.substring(0, alias.lastIndexOf('.'))
                     }

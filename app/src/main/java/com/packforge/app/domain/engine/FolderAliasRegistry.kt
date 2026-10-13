@@ -25,7 +25,33 @@ import java.util.Locale
 object FolderAliasRegistry {
     private const val TAG = "PackForge_FolderAlias"
 
-    private val ALIASED_FOLDERS = setOf("structures/", "fogs/", "ui/")
+    /**
+     * H2 (auditoría CORE): `ui/` NO se aliasa.
+     *
+     * La UI de Bedrock se bindea por NOMBRE EXACTO de archivo (un
+     * `ui/hud_screen.json` debe llamarse así para sobreescribir la UI
+     * vanilla; un alias `hud_screen_pf1a2b3.json` es IGNORADO por el motor
+     * y el addon perdía su custom UI en silencio). Ante una colisión de ui/:
+     *  · el PRIMER addon en llegar gana la ruta canónica (determinista),
+     *  · el perdedor se archiva en `_packforge/ui_discard/` (fuera del
+     *    alcance de Bedrock, recuperable manualmente),
+     *  · el choque se expone en [uiConflicts] para que el orquestador lo
+     *    reporte como hallazgo HIGH — hoy esa pérdida era invisible.
+     */
+    private val ALIASED_FOLDERS = setOf("structures/", "fogs/")
+
+    /** Colisión de ui/ detectada (ruta, addon ganador, addon perdedor). */
+    data class UiConflict(
+        val path: String,
+        val winnerAddon: String,
+        val loserAddon: String
+    )
+
+    /** Conflictos de ui/ de la sesión actual (limpiar en clear()). */
+    val uiConflicts = mutableListOf<UiConflict>()
+
+    /** Archivo perdedor de ui/ → ruta de archivo fuera del alcance de Bedrock. */
+    private const val UI_DISCARD_ROOT = "_packforge/ui_discard"
 
     /** Un alias de carpeta aplicado a un archivo. */
     data class FolderAlias(
@@ -37,6 +63,9 @@ object FolderAliasRegistry {
 
     /** Commit único por ruta → hash (primer addon gana el path canónico). */
     private val committed = LinkedHashMap<String, String>()
+
+    /** Ruta canónica → addon que la comprometió primero (el ganador en ui/). */
+    private val committedOwner = mutableMapOf<String, String>()
 
     /** Log legible para reporte final. */
     val aliasLog = mutableListOf<String>()
@@ -59,8 +88,25 @@ object FolderAliasRegistry {
             val existing = committed[rel]
 
             when {
-                existing == null -> committed[rel] = hash
+                existing == null -> {
+                    committed[rel] = hash
+                    committedOwner[rel] = ownerAddon
+                }
                 existing == hash -> Unit // idéntico: dedupe, sin rename
+                rel.startsWith("ui/") -> {
+                    // H2: NO se aliasa ui/ (Bedrock bindea por nombre exacto;
+                    // un alias nunca cargaba). El primer addon en llegar gana
+                    // la ruta canónica; el perdedor se archiva FUERA del
+                    // alcance de Bedrock y el choque queda en uiConflicts.
+                    val winner = committedOwner[rel] ?: "?"
+                    val discardRel = "$UI_DISCARD_ROOT/$ownerAddon/$rel"
+                    committed[discardRel] = hash
+                    renames[rel] = discardRel
+                    uiConflicts += UiConflict(rel, winner, ownerAddon)
+                    aliasLog += "UI COLLISION: $rel — gana '$winner'; " +
+                        "'$ownerAddon' archivado en $discardRel"
+                    PackForgeLog.w(TAG, "🧩 Colisión de UI: $rel — gana $winner; $ownerAddon archivado")
+                }
                 else -> {
                     val alias = buildAlias(rel, hash)
                     committed[alias] = hash
@@ -77,9 +123,31 @@ object FolderAliasRegistry {
     fun applyRenames(node: Any, renames: Map<String, String>): Boolean =
         JsonValueRewriter.replaceValues(node, renames)
 
+    /**
+     * B8 (auditoría CORE): traduce los renombres de `structures/` a la forma
+     * en que las estructuras se referencian en COMANDOS (`/structure load
+     * <nombre> ...` en .mcfunction): por nombre de archivo SIN extensión.
+     *
+     * Devuelve `stemOriginal → stemRenombrado` (p.ej. "casa" → "casa_pf2bb225")
+     * para que el orquestador pueda reescribir los .mcfunction al copiarlos;
+     * sin esto, toda estructura renombrada dejaba "Structure not found" en
+     * gameplay (el alias resolvía el archivo, pero no el comando).
+     */
+    fun structureStemRenames(renames: Map<String, String>): Map<String, String> {
+        val out = mutableMapOf<String, String>()
+        for ((original, aliased) in renames) {
+            if (!original.startsWith("structures/")) continue
+            val oldStem = original.removePrefix("structures/").substringBeforeLast('.')
+            val newStem = aliased.removePrefix("structures/").substringBeforeLast('.')
+            if (oldStem.isNotBlank() && oldStem != newStem) out[oldStem] = newStem
+        }
+        return out
+    }
+
     private fun needsAliasing(relPath: String): Boolean {
         val lower = relPath.lowercase(Locale.ROOT)
-        return ALIASED_FOLDERS.any { lower.startsWith(it) }
+        // ui/ se DETECTA pero ya no se aliasa (ver ALIASED_FOLDERS/H2).
+        return (ALIASED_FOLDERS + "ui/").any { lower.startsWith(it) }
     }
 
     private fun buildAlias(rel: String, hash: String): String {
@@ -105,6 +173,8 @@ object FolderAliasRegistry {
     /** Limpia el registro (nueva fusión). */
     fun clear() {
         committed.clear()
+        committedOwner.clear()
         aliasLog.clear()
+        uiConflicts.clear()
     }
 }

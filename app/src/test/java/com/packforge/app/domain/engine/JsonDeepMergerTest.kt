@@ -232,4 +232,68 @@ class JsonDeepMergerTest {
         assertEquals(500, components.getJSONObject("minecraft:durability").getInt("max_durability"))
         assertEquals("itemGroup.name.tools", components.getJSONObject("minecraft:creative_category").getString("parent"))
     }
+
+    /**
+     * C5 (compatibilidad absoluta): los arrays de animación/render son POSICIONALES.
+     * La fusión hace UNIÓN por igualdad estructural: dos addons que declaran el
+     * mismo hueso NO producen ["huesoA","huesoA"] (que desplazaría los índices y
+     * haría que el juego renderice el hueso EQUIVOCADO), pero sí conservan las
+     * entradas distintas en el orden del base.
+     */
+    @Test
+    fun testDeepMerge_arraysUnenPorIgualdadEstructural_sinDesplazarIndices() {
+        val base = JSONObject().apply {
+            put(
+                "animation.mob.walk",
+                JSONObject().apply {
+                    put("bones", JSONArray(listOf("huesoA", "huesoB")))
+                }
+            )
+        }
+        val toMerge = JSONObject().apply {
+            put(
+                "animation.mob.walk",
+                JSONObject().apply {
+                    put("bones", JSONArray(listOf("huesoA", "huesoC")))
+                }
+            )
+        }
+
+        val result = JsonDeepMerger.deepMerge(base, toMerge)
+        val bones = result.getJSONObject("animation.mob.walk").getJSONArray("bones")
+
+        assertEquals("'huesoA' no debe duplicarse ni desplazar índices", 3, bones.length())
+        assertEquals("huesoA", bones.getString(0))
+        assertEquals("huesoB", bones.getString(1))
+        assertEquals("huesoC", bones.getString(2))
+    }
+
+    /** Objetos distintos dentro del array se conservan ambos (no se pierde contenido). */
+    @Test
+    fun testDeepMerge_arraysConservanEntradasDistintas() {
+        val base = JSONObject().apply {
+            put(
+                "arrays",
+                JSONObject().apply {
+                    put("textures", JSONArray(listOf("tex_base")))
+                }
+            )
+        }
+        val toMerge = JSONObject().apply {
+            put(
+                "arrays",
+                JSONObject().apply {
+                    put("textures", JSONArray(listOf("tex_otra")))
+                }
+            )
+        }
+
+        val result = JsonDeepMerger.deepMerge(base, toMerge)
+        val textures = result.getJSONObject("arrays").getJSONArray("textures")
+
+        assertEquals("Ambas texturas deben conservarse", 2, textures.length())
+        assertEquals("tex_base", textures.getString(0))
+        assertEquals("tex_otra", textures.getString(1))
+    }
+
 }
