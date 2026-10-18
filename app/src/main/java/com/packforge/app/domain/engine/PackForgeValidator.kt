@@ -28,6 +28,7 @@ object PackForgeValidator {
     data class ValidationResult(
         val missingTextures: List<String>,
         val missingModels: List<String>,
+        val incompleteEntities: List<String>,
         val fixedReferences: Int,
         val langKeysAdded: Map<String, Int>,
         val soundsFixed: Boolean,
@@ -136,6 +137,7 @@ object PackForgeValidator {
 
         val missingTextures = mutableListOf<String>()
         val missingModels = mutableListOf<String>()
+        val incompleteEntities = mutableListOf<String>()
         val warnings = mutableListOf<String>()
         var fixedReferences = 0
         val langKeysAdded = mutableMapOf<String, Int>()
@@ -143,12 +145,28 @@ object PackForgeValidator {
 
         if (bpDir == null || !bpDir.exists()) {
             PackForgeLog.e(TAG, "❌ BP dir no existe")
-            return ValidationResult(emptyList(), emptyList(), 0, emptyMap(), false, listOf("BP dir no existe"))
+            return ValidationResult(
+                missingTextures = emptyList(),
+                missingModels = emptyList(),
+                incompleteEntities = emptyList(),
+                fixedReferences = 0,
+                langKeysAdded = emptyMap(),
+                soundsFixed = false,
+                warnings = listOf("BP dir no existe")
+            )
         }
 
         if (rpDir == null || !rpDir.exists()) {
             PackForgeLog.e(TAG, "❌ RP dir no existe")
-            return ValidationResult(emptyList(), emptyList(), 0, emptyMap(), false, listOf("RP dir no existe"))
+            return ValidationResult(
+                missingTextures = emptyList(),
+                missingModels = emptyList(),
+                incompleteEntities = emptyList(),
+                fixedReferences = 0,
+                langKeysAdded = emptyMap(),
+                soundsFixed = false,
+                warnings = listOf("RP dir no existe")
+            )
         }
 
         // Convertir rutas de addons a File
@@ -188,6 +206,16 @@ object PackForgeValidator {
         PackForgeLog.d(TAG, "📦 VALIDACIÓN 6: Render controllers y animaciones")
         fixedReferences += validateRenderControllers(rpDir, idx, identifierIndex ?: BedrockIdentifierIndex(emptyMap()), missingTextures)
 
+        // VALIDACIÓN 7: Integridad por entidad — una entidad sin geometría,
+        // texturas o render controller NO se renderiza aunque el resto del
+        // pack sea válido. Acumula en las mismas listas de faltantes.
+        PackForgeLog.d(TAG, "📦 VALIDACIÓN 7: Integridad de entidades (geometría/texturas)")
+        try {
+            validateEntityIntegrity(bpDir, rpDir, idx, incompleteEntities, missingTextures, missingModels)
+        } catch (e: Exception) {
+            PackForgeLog.w(TAG, "Validación de integridad de entidades no bloqueante: ${e.message}")
+        }
+
         val tValidadorFin = System.currentTimeMillis()
 
         PackForgeLog.d(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -203,16 +231,19 @@ object PackForgeValidator {
             PackForgeLog.w(TAG, "   ADVERTENCIAS: ${warnings.size}")
             warnings.forEach { PackForgeLog.w(TAG, "      • $it") }
         }
+        PackForgeLog.d(TAG, "   Entidades incompletas: ${incompleteEntities.size}")
+        incompleteEntities.forEach { PackForgeLog.w(TAG, "      • $it") }
         PackForgeLog.d(TAG, "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         PackForgeLog.d("PackForge_Perf", "⏱️ Validador: ${(tValidadorFin - tValidador) / 1000.0}s")
 
         return ValidationResult(
-            missingTextures,
-            missingModels,
-            fixedReferences,
-            langKeysAdded,
-            soundsFixed,
-            warnings
+            missingTextures = missingTextures,
+            missingModels = missingModels,
+            incompleteEntities = incompleteEntities,
+            fixedReferences = fixedReferences,
+            langKeysAdded = langKeysAdded,
+            soundsFixed = soundsFixed,
+            warnings = warnings
         )
     }
 
@@ -690,6 +721,159 @@ object PackForgeValidator {
 
         PackForgeLog.d(TAG, "   Render controllers validados: ${fixedCount} texturas reparadas")
         return fixedCount
+    }
+
+    /**
+     * VALIDACIÓN 7: INTEGRIDAD POR ENTIDAD.
+     *
+     * Una entidad puede existir como JSON válido y aun así NO renderizarse si
+     * le falta alguna dependencia obligatoria. Comprueba por cada
+     * client_entity del RP: definición en BP, geometría por IDENTIFICADOR
+     * dentro de models/ (no por nombre de archivo: el decifrador restaura
+     * `carryblock.geometry.json` pero la referencia es `geometry.carryblock`,
+     * origen de los "Modelos faltantes: 5"), texturas reales excluyendo
+     * vanilla, render controllers y materiales con namespace.
+     *
+     * Parsea con LenientJson: los archivos pueden conservar el cebo
+     * closed-source (comentario inicial + claves duplicadas). Nunca lanza:
+     * la validación NO bloquea la exportación.
+     */
+    private fun validateEntityIntegrity(
+        bpDir: File,
+        rpDir: File,
+        idx: PackIndex,
+        incompleteEntities: MutableList<String>,
+        missingTextures: MutableList<String>,
+        missingModels: MutableList<String>
+    ) {
+        fun loadJson(f: File): JSONObject? = try {
+            LenientJson.parseObject(f.readText(Charsets.UTF_8))
+        } catch (e: Exception) { null }
+
+        // ── Inventario 1: identificadores de geometría reales ──
+        val geometryIds = mutableSetOf<String>()
+        DirIndexCache.index(File(rpDir, "models")).allFiles
+            .filter { it.isFile && it.name.endsWith(".json", true) }
+            .forEach { f ->
+                val arr = (loadJson(f) ?: return@forEach).optJSONArray("minecraft:geometry")
+                    ?: return@forEach
+                for (i in 0 until arr.length()) {
+                    val id = arr.optJSONObject(i)
+                        ?.optJSONObject("description")?.optString("identifier")
+                    if (!id.isNullOrBlank()) geometryIds.add(id)
+                }
+            }
+
+        // ── Inventario 2: render controllers declarados en el RP ──
+        val rcIds = mutableSetOf<String>()
+        DirIndexCache.index(File(rpDir, "render_controllers")).allFiles
+            .filter { it.isFile && it.name.endsWith(".json", true) }
+            .forEach { f ->
+                (loadJson(f) ?: return@forEach).optJSONObject("render_controllers")
+                    ?.keys()?.forEach { rcIds.add(it) }
+            }
+
+        // ── Inventario 3: entidades declaradas en el BP ──
+        val bpEntityIds = mutableSetOf<String>()
+        DirIndexCache.index(File(bpDir, "entities")).allFiles
+            .filter { it.isFile && it.name.endsWith(".json", true) }
+            .forEach { f ->
+                val id = (loadJson(f) ?: return@forEach)
+                    .optJSONObject("minecraft:entity")
+                    ?.optJSONObject("description")?.optString("identifier")
+                if (!id.isNullOrBlank()) bpEntityIds.add(id)
+            }
+
+        // ── Inventario 4: materiales custom en materials/ ──
+        val customMaterials = mutableSetOf<String>()
+        DirIndexCache.index(File(rpDir, "materials")).allFiles
+            .filter { it.isFile && it.name.endsWith(".json", true) }
+            .forEach { f ->
+                (loadJson(f) ?: return@forEach).optJSONObject("materials")
+                    ?.keys()?.forEach { customMaterials.add(it) }
+            }
+
+        val entityDir = File(rpDir, "entity")
+        if (!entityDir.isDirectory) return
+        val reported = incompleteEntities.toMutableSet()
+        DirIndexCache.index(entityDir).allFiles
+            .filter { it.isFile && it.name.endsWith(".json", true) }
+            .forEach { f ->
+                val json = loadJson(f)
+                // JSON ilegible: lo reporta el audit de integridad, no duplicar.
+                if (json == null) return@forEach
+                val desc = json.optJSONObject("minecraft:client_entity")
+                    ?.optJSONObject("description") ?: return@forEach
+                val ident = desc.optString("identifier").ifBlank { null }
+                val problems = mutableListOf<String>()
+
+                // (1) Definición en BP
+                if (bpEntityIds.isNotEmpty() && ident != null && ident !in bpEntityIds) {
+                    problems.add("sin definición en BP")
+                }
+
+                // (2) Geometría por identificador (no por nombre de archivo)
+                val geoRef: String? = when (val g = desc.opt("geometry")) {
+                    is String -> g
+                    is JSONObject -> g.optString("default").ifBlank { null }
+                        ?: g.keys().asSequence().firstOrNull()?.let { g.optString(it).ifBlank { null } }
+                    else -> null
+                }
+                if (geoRef != null && geoRef !in geometryIds &&
+                    !VanillaAssets.isVanillaGeometry(geoRef)
+                ) {
+                    problems.add("geometría '$geoRef' no existe en models/")
+                    if (missingModels.none { it.contains(geoRef) }) {
+                        missingModels.add("models/entity/$geoRef (por identificador)")
+                    }
+                }
+
+                // (3) Texturas reales, excluyendo vanilla y placeholders Molang
+                desc.optJSONObject("textures")?.let { texObj ->
+                    texObj.keys().forEach { part ->
+                        val tex = texObj.opt(part) as? String ?: return@forEach
+                        if (tex.startsWith("Array.") || tex.startsWith("variable.") ||
+                            tex.startsWith("query.") || tex.startsWith("Texture.")
+                        ) return@forEach
+                        if (!tex.startsWith("textures/")) return@forEach
+                        if (VanillaAssets.isVanillaTexture(tex)) return@forEach
+                        if (idx.has("$tex.png") || idx.has("$tex.tga") ||
+                            idx.has("$tex.jpg")
+                        ) return@forEach
+                        problems.add("textura '$tex' no existe")
+                        if (tex !in missingTextures) missingTextures.add("$tex.png")
+                    }
+                }
+
+                // (4) Render controllers, excluyendo vanilla
+                desc.optJSONArray("render_controllers")?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        val rc = arr.optString(i).ifBlank { null } ?: continue
+                        if (VanillaAssets.isVanillaRenderController(rc)) continue
+                        if (rc !in rcIds && rcIds.none {
+                                it.startsWith("$rc.") || rc.startsWith("$it.")
+                            }
+                        ) {
+                            problems.add("render controller '$rc' no existe")
+                        }
+                    }
+                }
+
+                // (5) Materiales con namespace; sin namespace = vanilla
+                desc.optJSONObject("materials")?.let { matObj ->
+                    matObj.keys().forEach { part ->
+                        val mat = matObj.opt(part) as? String ?: return@forEach
+                        if (mat.contains(':') && mat !in customMaterials) {
+                            problems.add("material custom '$mat' no existe")
+                        }
+                    }
+                }
+
+                if (problems.isNotEmpty() && ident != null) {
+                    val entry = "$ident → ${problems.joinToString("; ")}"
+                    if (reported.add(entry)) incompleteEntities.add(entry)
+                }
+            }
     }
 
     private val TEXTURE_EXTENSIONS = listOf(".png", ".tga", ".jpg")

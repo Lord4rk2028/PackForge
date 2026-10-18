@@ -105,11 +105,18 @@ fun Modifier.bounceClick(
         label = "bounceScale"
     )
 
+    // ⚡ OPTIMIZACIÓN DE SCROLL: `graphicsLayer { scaleX/scaleY }` crea una capa
+    // separada de RenderNode por cada elemento que la lleva. En una lista de
+    // tarjetas, eso significa una capa por tarjeta en cada fotograma, y es el
+    // mayor coste gráfico del desplazamiento.
+    //
+    // Se aplica solo cuando el elemento está presionado o está animando: cuando
+    // `scale == 1f` se omite la capa y el elemento se pinta directamente, sin
+    // sobrecoste de compositing. El gesto de "bounce" sigue siendo visible
+    // porque la capa se crea al presionar y se destruye al soltar.
+    val useLayer = motionLevel != MotionLevel.NONE && scale != 1f
     this
-        .graphicsLayer {
-            scaleX = scale
-            scaleY = scale
-        }
+        .then(if (useLayer) Modifier.graphicsLayer(scaleX = scale, scaleY = scale) else Modifier)
         .then(
             if (onClick != null) {
                 Modifier.clickable(

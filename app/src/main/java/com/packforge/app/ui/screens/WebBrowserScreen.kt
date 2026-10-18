@@ -68,12 +68,6 @@ fun WebBrowserScreen(
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var showSuccess by remember { mutableStateOf(false) }
 
-    // Menú que la web abre como ventana nueva (window.open de MCPEDL/CurseForge).
-    // Se guarda el WebView hijo para dibujarlo SUPERPUESTO sobre la página: así
-    // el menú aparece encima del addon abierto, que es el comportamiento nativo
-    // de esos sitios, en lugar de reemplazar la página (lo que parecía un cuelgue).
-    var popupWebView by remember { mutableStateOf<WebView?>(null) }
-
     LaunchedEffect(webImportSuccess) {
         if (webImportSuccess != null) {
             showSuccess = true
@@ -254,19 +248,19 @@ fun WebBrowserScreen(
                             /**
                              * Menús que la web abre como ventana nueva.
                              *
-                             * MCPEDL y CurseForge despliegan su menú lateral o de
-                             * pantalla completa con `window.open()`. Antes se
-                             * cargaba la URL en el WebView PRINCIPAL, lo que
-                             * reemplazaba la página del addon y dejaba la web
-                             * "trabada" (había navegado a otro sitio). Además,
-                             * al estar `setSupportMultipleWindows` desactivado,
-                             * la petición ni siquiera llegaba aquí y el toque no
-                             * hacía nada.
+                             * ⚠️ POR QUÉ NO SE DEVUELVE UN WEBVIEW AL SISTEMA
+                             * (`WebViewTransport`): intentarlo dejaba la página
+                             * COMPLETAMENTE EN BLANCO. Estos sitios usan
+                             * `window.open()` no solo para el menú, sino también
+                             * como paso intermedio de la descarga; al entregar
+                             * ese popup al transporte, el WebView principal
+                             * perdía su superficie y quedaba inutilizable.
                              *
-                             * Ahora se devuelve un WebView hijo que el sistema
-                             * usa como ventana emergente: el menú se dibuja
-                             * ENCIMA de la página, que es el comportamiento
-                             * nativo de esos sitios, sin perder el addon abierto.
+                             * En su lugar se extrae la URL de destino y se
+                             * decide en el WebView principal: si es una descarga
+                             * se importa, y si es una página del menú se navega
+                             * en la propia vista. Así el menú funciona y la
+                             * página nunca queda en blanco.
                              */
                             override fun onCreateWindow(
                                 view: WebView?,
@@ -275,19 +269,12 @@ fun WebBrowserScreen(
                                 resultMsg: android.os.Message?
                             ): Boolean {
                                 val host = view ?: return false
-                                val popup = WebView(host.context)
-                                popup.settings.apply {
-                                    javaScriptEnabled = true
-                                    domStorageEnabled = true
-                                    javaScriptCanOpenWindowsAutomatically = true
-                                    setSupportMultipleWindows(true)
-                                    loadsImagesAutomatically = true
-                                    useWideViewPort = true
-                                    loadWithOverviewMode = true
-                                }
-                                android.webkit.CookieManager.getInstance()
-                                    .setAcceptThirdPartyCookies(popup, true)
-                                popup.webViewClient = object : WebViewClient() {
+                                // WebView auxiliar SOLO para capturar la URL que
+                                // la web pretendía abrir; no se muestra ni se
+                                // entrega al sistema.
+                                val probe = WebView(host.context)
+                                probe.settings.javaScriptEnabled = true
+                                probe.webViewClient = object : WebViewClient() {
                                     override fun shouldOverrideUrlLoading(
                                         childView: WebView?,
                                         request: WebResourceRequest?
@@ -299,23 +286,16 @@ fun WebBrowserScreen(
                                                 webViewRef?.url ?: currentUrl,
                                                 currentSite.sourceKey
                                             )
-                                            return true
+                                        } else if (url.startsWith("http")) {
+                                            host.loadUrl(url)
                                         }
-                                        // Enlaces internos del menú: se navegan
-                                        // en la página principal, que es lo que
-                                        // el usuario espera al elegir una sección.
-                                        host.loadUrl(url)
+                                        childView?.destroy()
                                         return true
                                     }
                                 }
-                                // El popup se entrega a Compose para dibujarlo superpuesto.
-                                // Se envía por el transporte del sistema (obligatorio
-                                // para que la web considere la ventana creada) y
-                                // además se guarda en estado para renderizarlo.
                                 (resultMsg?.obj as? android.webkit.WebView.WebViewTransport)
-                                    ?.webView = popup
+                                    ?.webView = probe
                                 resultMsg?.sendToTarget()
-                                popupWebView = popup
                                 return true
                             }
                         }
@@ -367,28 +347,10 @@ fun WebBrowserScreen(
                 }
             )
 
-            // ── MENÚ EMERGENTE DE LA WEB, SUPERPUESTO ──────────────────────
-            // MCPEDL y CurseForge despliegan su menú lateral / de pantalla
-            // completa mediante `window.open()`, que el WebView entrega aquí.
-            // Se dibuja ENCIMA de la página para no perder el addon abierto, y
-            // se cierra al tocar fuera, que es como se comportan esos sitios.
-            popupWebView?.let { popup ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.45f))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { popupWebView = null }
-                ) {
-                    AndroidView(
-                        modifier = Modifier.fillMaxSize(),
-                        factory = { popup },
-                        update = { }
-                    )
-                }
-            }
+            // NOTA: no se dibuja ningún WebView superpuesto. El menú de estos
+            // sitios se resuelve navegando en esta misma vista (ver
+            // `onCreateWindow`): entregar un popup al sistema dejaba la página
+            // en blanco, que es justo el fallo que se está corrigiendo.
         }
     }
 }

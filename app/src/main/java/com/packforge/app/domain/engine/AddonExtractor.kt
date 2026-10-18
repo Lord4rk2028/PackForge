@@ -565,7 +565,13 @@ object AddonExtractor {
 
         // ── NIVEL 3: manifest.json DENTRO de .mcpack/.zip anidados ──
         if (name.isNullOrBlank()) {
-            // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+            // ⭐ DirIndexCache en lugar de walkTopDown().
+            // Se invalida ANTES de indexar: `classify()` acaba de extraer los
+            // .mcpack anidados a subcarpetas `nested_*`, y el índice cacheado de
+            // este directorio no los conoce todavía. Sin invalidar, los ZIPs
+            // anidados no aparecían en la lista, el nombre no se resolvía y sus
+            // iconos nunca se encontraban (el caso del modpack "Mini/Pack").
+            DirIndexCache.invalidate(extractedDir)
             val nestedZips = DirIndexCache.index(extractedDir).allFiles
                 .filter {
                     it.extension.equals("mcpack", true) ||

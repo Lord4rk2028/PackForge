@@ -1,5 +1,6 @@
 package com.packforge.app.domain.engine
 
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -357,6 +358,51 @@ class BedrockDecifratorTest {
             "El contenido de la evidencia no debe alterarse entre pasadas",
             "Hi. This addon is closed-source.",
             File(pack, "models/entity/carryblock.json.bak").readText()
+        )
+    }
+
+    @Test
+    fun `recupera geometria envuelta en el cebo de comentario`() {
+        // Reproduce el cebo REAL del addon: un comentario /* */ delante del JSON.
+        val conComentario = "/*\n\nHi. This addon is closed-source.\n\n*/\n" +
+            "{\"format_version\":\"1.8.0\",\"minecraft:geometry\":[{\"description\":{" +
+            "\"identifier\":\"geometry.carryblock\"}}]}"
+        val pack = newPack()
+        write(pack, "manifest.json", "{\"format_version\":2}")
+
+        // Documenta el limite que obliga a recortar: org.json lanza con comentarios.
+        var orgjsonAceptoElComentario = false
+        try {
+            JSONObject(conComentario)
+            orgjsonAceptoElComentario = true
+        } catch (expected: Exception) {
+        }
+        assertFalse(
+            "org.json NO admite comentarios C-style: por eso hay que recortar el cebo",
+            orgjsonAceptoElComentario
+        )
+
+        // Fuente clara enterrada, igual que en el addon real.
+        write(pack, "models/entity/entity/models/entity/.pp.json", conComentario)
+        // Roto canonico: cebo + JSON incompleto, irrecuperable.
+        write(pack, "models/entity/carryblock.json", "/* bait */{\"incomplete\":")
+
+        val report = BedrockDecifrator.decrypt(pack)
+
+        assertEquals(
+            "La geometria envuelta en cebo SI debe reconocerse como fuente clara",
+            1, report.restored.size
+        )
+        val restaurado = File(pack, "models/entity/carryblock.geometry.json")
+        assertTrue("Debe escribirse en la ruta canonica de geometria", restaurado.exists())
+        val texto = restaurado.readText()
+        assertFalse(
+            "El restaurado NO debe conservar el cebo: Bedrock lo rechazaria",
+            texto.contains("closed-source")
+        )
+        assertTrue(
+            "Debe contener la geometria real",
+            texto.contains("geometry.carryblock")
         )
     }
 

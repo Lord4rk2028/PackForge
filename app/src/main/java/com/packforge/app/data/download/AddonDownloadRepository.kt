@@ -2,14 +2,10 @@ package com.packforge.app.data.download
 
 import android.content.Context
 import android.net.Uri
-import android.webkit.CookieManager
 import androidx.core.content.FileProvider
 import com.packforge.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.Cookie
-import okhttp3.CookieJar
-import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
@@ -23,56 +19,34 @@ import java.util.concurrent.TimeUnit
  * usuario toca el enlace de descarga de un addon, el fichero se guarda en
  * cacheDir/downloads/ y se entrega al motor de fusión.
  *
- * ── POR QUÉ FALLABAN LAS DESCARGAS (arreglo crítico) ────────────────────────
- * 1. SIN COOKIES: el cliente HTTP no compartía nada con el WebView. El usuario
- *    navega en el navegador integrado, el sitio le pone cookies de sesión, y
- *    al pedir la descarga por separado el servidor no reconocía esa sesión y
- *    devolvía una PÁGINA HTML (aviso de verificación o "inicia sesión") en vez
- *    del archivo. Esa página se guardaba como .mcaddon y, al no ser un ZIP,
- *    el parser la descartaba en silencio: parecía que "ya no se importa nada".
- *    Ahora un [CookieJar] lee y escribe las cookies del WebView.
- * 2. FALLO SILENCIOSO: si el archivo descargado no era un ZIP válido,
- *    `parseFromUri` devolvía null y no se avisaba de nada. Ahora se comprueba
- *    la firma ZIP y se explica el motivo real.
- * 3. PROGRESO EXCESIVO: se emitía un valor por cada bloque de 8 KB. Un addon
- *    de 32 MB provocaba ~4000 emisiones de estado, cada una recomponiendo la
- *    interfaz: la app se quedaba congelada durante la descarga. Ahora solo se
- *    notifica cuando cambia el porcentaje entero.
+ * ── HISTORIAL DE CORRECCIONES ───────────────────────────────────────────────
+ *
+ * 1. SE RETIRÓ EL `CookieJar` BASADO EN `CookieManager`.
+ *    Se añadió para que las descargas heredaran la sesión del WebView, pero
+ *    `CookieManager` SOLO puede usarse desde el hilo principal, y OkHttp lo
+ *    invoca desde su hilo de red. Además de no funcionar, interfería con la
+ *    sincronización interna de cookies del WebView y dejaba la página
+ *    COMPLETAMENTE EN BLANCO al iniciar una descarga, inutilizando el
+ *    navegador. Las cookies ahora se leen una sola vez, en el hilo principal,
+ *    con [snapshotWebViewCookies] y se pasan al cliente como cabecera.
+ *
+ * 2. SIN VERIFICACIÓN SILENCIOSA: si lo descargado no era un ZIP, el parser lo
+ *    descartaba sin mensaje y parecía que "la importación no hace nada". Ahora
+ *    se comprueba la firma ZIP y se explica el motivo real.
+ *
+ * 3. PROGRESO TROCEADO: se emitía un valor por cada bloque de 8 KB, lo que en
+ *    un addon de 32 MB son ~4000 emisiones de estado recomponiendo la interfaz
+ *    y congelaba la app. Ahora solo se notifica al cambiar el porcentaje entero.
  */
 class AddonDownloadRepository {
 
-    /**
-     * Puente de cookies entre el WebView y OkHttp.
-     *
-     * Es la pieza que faltaba: al compartir el almacén de cookies del sistema,
-     * las descargas heredan la sesión que el usuario ya estableció navegando.
-     */
-    private val httpClient: OkHttpClient by lazy { defaultHttpClient(webViewCookieJar) }
-
-    private val webViewCookieJar = object : CookieJar {
-        override fun loadForRequest(url: HttpUrl): List<Cookie> {
-            val header = runCatching {
-                CookieManager.getInstance().getCookie(url.toString())
-            }.getOrNull() ?: return emptyList()
-            return header.split(';').mapNotNull { part ->
-                val trimmed = part.trim()
-                if (trimmed.isEmpty()) null else Cookie.parse(url, trimmed)
-            }
-        }
-
-        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-            runCatching {
-                val manager = CookieManager.getInstance()
-                cookies.forEach { manager.setCookie(url.toString(), it.toString()) }
-                manager.flush()
-            }
-        }
-    }
+    private val httpClient: OkHttpClient by lazy { defaultHttpClient() }
 
     suspend fun downloadToCache(
         context: Context,
         downloadUrl: String,
         suggestedFileName: String,
+        cookieHeader: String? = null,
         onProgress: ((Float) -> Unit)? = null
     ): Result<Uri> = withContext(Dispatchers.IO) {
         runCatching {
@@ -98,6 +72,12 @@ class AddonDownloadRepository {
                 "Accept",
                 "application/octet-stream,application/zip,*/*;q=0.8"
             )
+            // Cookies capturadas en el hilo principal: es lo que permite que la
+            // descarga herede la sesión que el usuario ya abrió en el WebView,
+            // sin tocar `CookieManager` desde este hilo de red.
+            if (!cookieHeader.isNullOrBlank()) {
+                requestBuilder.header("Cookie", cookieHeader)
+            }
             val request = requestBuilder.build()
 
             httpClient.newCall(request).execute().use { response ->
@@ -111,9 +91,6 @@ class AddonDownloadRepository {
                     ?: throw IllegalStateException("Respuesta vacía al descargar")
 
                 val totalBytes = body.contentLength()
-                // Progreso troceado: solo se emite al cambiar el porcentaje
-                // entero. Antes se emitía por bloque de 8 KB y miles de
-                // actualizaciones seguidas bloqueaban la interfaz.
                 var lastPercent = -1
 
                 body.byteStream().use { input ->
@@ -139,8 +116,7 @@ class AddonDownloadRepository {
 
             // Verificación decisiva: un .mcaddon/.mcpack es un ZIP, así que debe
             // empezar por "PK". Si no, lo que llegó fue una página HTML de aviso
-            // o de inicio de sesión. Antes esto se descartaba en silencio y el
-            // usuario no sabía por qué "no importaba nada".
+            // o de inicio de sesión.
             if (!hasZipSignature(destination)) {
                 val sizeKb = destination.length() / 1024
                 destination.delete()
@@ -159,7 +135,7 @@ class AddonDownloadRepository {
         }
     }
 
-    /** ¿El archivo empieza por la firma ZIP ("PK\x03\x04")? */
+    /** ¿El archivo empieza por la firma ZIP ("PK")? */
     private fun hasZipSignature(file: File): Boolean = try {
         file.inputStream().use { input ->
             val header = ByteArray(4)
@@ -175,6 +151,19 @@ class AddonDownloadRepository {
         const val CACHE_DIR_NAME = "downloads"
 
         /**
+         * Copia las cookies de una URL desde el WebView.
+         *
+         * DEBE invocarse en el hilo principal: `CookieManager` no es
+         * thread-safe y usarlo desde otro hilo corrompe su estado interno y
+         * deja el WebView en blanco.
+         */
+        fun snapshotWebViewCookies(url: String): String? = try {
+            android.webkit.CookieManager.getInstance().getCookie(url)
+        } catch (_: Throwable) {
+            null
+        }
+
+        /**
          * Referer adecuado según el origen del enlace.
          *
          * Los CDN de CurseForge y MCPEDL rechazan peticiones sin Referer, y cada
@@ -188,9 +177,8 @@ class AddonDownloadRepository {
             else -> null
         }
 
-        private fun defaultHttpClient(cookieJar: CookieJar): OkHttpClient =
+        private fun defaultHttpClient(): OkHttpClient =
             OkHttpClient.Builder()
-                .cookieJar(cookieJar)
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(60, TimeUnit.SECONDS)
                 .writeTimeout(60, TimeUnit.SECONDS)

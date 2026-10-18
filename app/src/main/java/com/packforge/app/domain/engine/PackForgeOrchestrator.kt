@@ -629,6 +629,35 @@ object PackForgeOrchestrator {
             }
             PackForgeLog.d("PackForge_Export", "PASO 4d completado")
 
+            // f0) HEALER · REPARACIÓN: copia texturas/modelos faltantes desde los
+            // addons originales ANTES de validar, para que el validador mida el
+            // estado REAL del pack. Si una geometría no está en ningún addon,
+            // genera un placeholder de caja para que la entidad exista en el
+            // mundo en vez de no renderizarse.
+            progressCallback?.onProgress("Reparando texturas y modelos faltantes...")
+            val healerRepair = try {
+                PackForgeHealer.repair(mergedBpDir, mergedRpDir, extractedDirs)
+            } catch (e: Exception) {
+                PackForgeLog.w("PackForge_Export", "Healer.repair no bloqueante: ${e.message}")
+                PackForgeHealer.RepairResult()
+            }
+            if (healerRepair.totalFixed > 0) {
+                DirIndexCache.invalidate(mergedRpDir)
+                DirIndexCache.invalidate(mergedBpDir)
+                PackForgeLog.d("PackForge_Export", "💊 ${healerRepair.summary}")
+            }
+            val healerNotes = mutableListOf<String>()
+            if (healerRepair.totalFixed > 0) healerNotes += healerRepair.summary
+            if (healerRepair.placeholdersGenerated > 0) {
+                healerNotes += "Geometrías placeholder generadas (caja 8x8x8): ${healerRepair.placeholdersGenerated}"
+            }
+            healerRepair.stillMissingTextures.take(5).forEach {
+                healerNotes += "sin textura en ningún addon: $it"
+            }
+            healerRepair.stillMissingModels.take(5).forEach {
+                healerNotes += "sin modelo en ningún addon: $it"
+            }
+
             // f) EJECUTAR VALIDADOR DE REFERENCIAS CRUZADAS
             progressCallback?.onProgress("Validando referencias...")
             PackForgeLog.d("PackForge_Export", "🔧 PASO 5: Ejecutando validador de referencias...")
@@ -641,6 +670,35 @@ object PackForgeOrchestrator {
             )
             coroutineContext.ensureActive()
             PackForgeLog.d("PackForge_Export", "🔧 PASO 5 completado")
+
+            // VERACIDAD DEL REPORTE: si faltan modelos, texturas o hay entidades
+            // incompletas, el resumen NO puede afirmar "sin errores críticos".
+            validationResult.let { vr ->
+                if (vr.missingModels.isNotEmpty()) {
+                    FusionReportBuilder.addIssue(
+                        "validación post-fusión", "models/",
+                        "Modelos/geometría faltantes: ${vr.missingModels.size}",
+                        "${vr.missingModels.size} modelo(s) o geometría(s) sin resolver (p.ej. ${vr.missingModels.take(2).joinToString(", ")})",
+                        FusionIssue.Severity.RECOVERABLE
+                    )
+                }
+                if (vr.missingTextures.isNotEmpty()) {
+                    FusionReportBuilder.addIssue(
+                        "validación post-fusión", "textures/",
+                        "Texturas faltantes: ${vr.missingTextures.size}",
+                        "${vr.missingTextures.size} textura(s) no disponibles (p.ej. ${vr.missingTextures.take(2).joinToString(", ")})",
+                        FusionIssue.Severity.RECOVERABLE
+                    )
+                }
+                if (vr.incompleteEntities.isNotEmpty()) {
+                    FusionReportBuilder.addIssue(
+                        "validación post-fusión", "entity/",
+                        "Entidades incompletas: ${vr.incompleteEntities.size}",
+                        "${vr.incompleteEntities.size} entidad(es) con dependencias faltantes (p.ej. ${vr.incompleteEntities.take(2).joinToString("; ")})",
+                        FusionIssue.Severity.RECOVERABLE
+                    )
+                }
+            }
 
             // g1) HEALER: análisis post-merge NO bloqueante (texturas rotas, fuzzy match)
             progressCallback?.onProgress("Analizando integridad del pack...")
@@ -792,6 +850,7 @@ object PackForgeOrchestrator {
                     decryptUnrecoverable = decryptReport.unrecoverable,
                     decryptUnrecoverableNeutralized = decryptReport.neutralizedUnrecoverable.size,
                     decryptDecoysNeutralized = decryptReport.renamedDecoys.size,
+                    healerNotes = healerNotes,
                     totalJsonsMerged = totalJsonsMerged,
                     elapsedSeconds = (System.currentTimeMillis() - tInicio) / 1000.0
                 )

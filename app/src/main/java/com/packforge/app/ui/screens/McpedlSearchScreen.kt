@@ -77,9 +77,6 @@ fun McpedlSearchScreen(
     var query by remember { mutableStateOf("") }
     var isLoadingPage by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    // Menú que MCPEDL abre con window.open(): se dibuja superpuesto sobre la
-    // página de resultados en lugar de reemplazarla.
-    var popupWebView by remember { mutableStateOf<WebView?>(null) }
     val onImportFromUrlState by rememberUpdatedState(onImportFromUrl)
 
     fun buildSearchUrl(searchQuery: String): String {
@@ -295,9 +292,11 @@ fun McpedlSearchScreen(
                         android.webkit.CookieManager.getInstance()
                             .setAcceptThirdPartyCookies(this, true)
 
-                        // Menú emergente de la web (window.open): se carga en un
-                        // WebView hijo que se dibuja superpuesto, para no perder
-                        // la página de resultados de búsqueda.
+                        // Menú emergente de la web (window.open): se captura la URL con un
+                        // WebView auxiliar que NO se muestra ni se entrega al
+                        // sistema. Entregar un popup real dejaba la página en
+                        // blanco, porque estos sitios usan `window.open()` también
+                        // como paso intermedio de la descarga.
                         webChromeClient = object : android.webkit.WebChromeClient() {
                             override fun onCreateWindow(
                                 view: WebView?,
@@ -306,18 +305,9 @@ fun McpedlSearchScreen(
                                 resultMsg: android.os.Message?
                             ): Boolean {
                                 val host = view ?: return false
-                                val popup = WebView(host.context)
-                                popup.settings.apply {
-                                    javaScriptEnabled = true
-                                    domStorageEnabled = true
-                                    javaScriptCanOpenWindowsAutomatically = true
-                                    setSupportMultipleWindows(true)
-                                    useWideViewPort = true
-                                    loadWithOverviewMode = true
-                                }
-                                android.webkit.CookieManager.getInstance()
-                                    .setAcceptThirdPartyCookies(popup, true)
-                                popup.webViewClient = object : WebViewClient() {
+                                val probe = WebView(host.context)
+                                probe.settings.javaScriptEnabled = true
+                                probe.webViewClient = object : WebViewClient() {
                                     override fun shouldOverrideUrlLoading(
                                         childView: WebView?,
                                         request: WebResourceRequest?
@@ -329,15 +319,15 @@ fun McpedlSearchScreen(
                                                 webViewRef?.url ?: MCPEDL_HOME,
                                                 "MCPEDL"
                                             )
-                                            return true
+                                        } else if (url.startsWith("http")) {
+                                            host.loadUrl(url)
                                         }
-                                        host.loadUrl(url)
+                                        childView?.destroy()
                                         return true
                                     }
                                 }
-                                (resultMsg?.obj as? WebView.WebViewTransport)?.webView = popup
+                                (resultMsg?.obj as? WebView.WebViewTransport)?.webView = probe
                                 resultMsg?.sendToTarget()
-                                popupWebView = popup
                                 return true
                             }
                         }
@@ -389,23 +379,9 @@ fun McpedlSearchScreen(
 
             // Menú emergente superpuesto: se cierra al tocar fuera, igual que
             // en el navegador principal.
-            popupWebView?.let { popup ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.45f))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) { popupWebView = null }
-                ) {
-                    AndroidView(
-                        modifier = Modifier.fillMaxSize(),
-                        factory = { popup },
-                        update = { }
-                    )
-                }
-            }
+            // Sin WebView superpuesto: el menú de MCPEDL se resuelve navegando
+            // en esta misma vista (ver `onCreateWindow`). Entregar un popup al
+            // sistema dejaba la página en blanco.
         }
     }
 }

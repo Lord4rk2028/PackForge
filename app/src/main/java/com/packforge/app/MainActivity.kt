@@ -69,13 +69,11 @@ import com.packforge.app.ui.viewmodel.PackForgeEvent
 import com.packforge.app.ui.viewmodel.PackForgeViewModel
 import com.packforge.app.ui.viewmodel.ThemeViewModel
 import kotlinx.coroutines.flow.collectLatest
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import com.packforge.app.ui.components.FADE_SLOW_SPEC
-import com.packforge.app.ui.components.SLIDE_SLOW_SPEC
 import com.packforge.app.ui.components.FloatingBottomBar
+import com.packforge.app.ui.navigation.createEnterTransition
+import com.packforge.app.ui.navigation.createExitTransition
+import com.packforge.app.ui.navigation.getTransitionType
+import com.packforge.app.ui.theme.LocalMotionLevel
 
 class MainActivity : ComponentActivity() {
 
@@ -412,37 +410,40 @@ fun PackForgeApp(
         }
     ) { paddingValues ->
         Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
+            // Sistema de transiciones optimizado: rápido, fluido y adaptativo
+            val motionLevel = LocalMotionLevel.current
+            
             NavHost(
                 navController = navController,
                 startDestination = Screen.Import.route,
                 modifier = Modifier.fillMaxSize(),
                 enterTransition = {
-                    val target = targetState.destination.route
-                    val initial = initialState.destination.route
-                    val isForward = routeIndex(target) > routeIndex(initial)
-                    val offset = { fullWidth: Int -> if (isForward) fullWidth / 6 else -fullWidth / 6 }
-                    fadeIn(animationSpec = FADE_SLOW_SPEC) + slideInHorizontally(animationSpec = SLIDE_SLOW_SPEC, initialOffsetX = offset)
+                    val transitionType = getTransitionType(
+                        initialState.destination.route,
+                        targetState.destination.route
+                    )
+                    createEnterTransition(transitionType, motionLevel)
                 },
                 exitTransition = {
-                    val target = targetState.destination.route
-                    val initial = initialState.destination.route
-                    val isForward = routeIndex(target) > routeIndex(initial)
-                    val offset = { fullWidth: Int -> if (isForward) -fullWidth / 6 else fullWidth / 6 }
-                    fadeOut(animationSpec = FADE_SLOW_SPEC) + slideOutHorizontally(animationSpec = SLIDE_SLOW_SPEC, targetOffsetX = offset)
+                    val transitionType = getTransitionType(
+                        initialState.destination.route,
+                        targetState.destination.route
+                    )
+                    createExitTransition(transitionType, motionLevel)
                 },
                 popEnterTransition = {
-                    val target = targetState.destination.route
-                    val initial = initialState.destination.route
-                    val isForward = routeIndex(target) > routeIndex(initial)
-                    val offset = { fullWidth: Int -> if (isForward) fullWidth / 6 else -fullWidth / 6 }
-                    fadeIn(animationSpec = FADE_SLOW_SPEC) + slideInHorizontally(animationSpec = SLIDE_SLOW_SPEC, initialOffsetX = offset)
+                    val transitionType = getTransitionType(
+                        targetState.destination.route,
+                        initialState.destination.route
+                    )
+                    createEnterTransition(transitionType, motionLevel)
                 },
                 popExitTransition = {
-                    val target = targetState.destination.route
-                    val initial = initialState.destination.route
-                    val isForward = routeIndex(target) > routeIndex(initial)
-                    val offset = { fullWidth: Int -> if (isForward) -fullWidth / 6 else fullWidth / 6 }
-                    fadeOut(animationSpec = FADE_SLOW_SPEC) + slideOutHorizontally(animationSpec = SLIDE_SLOW_SPEC, targetOffsetX = offset)
+                    val transitionType = getTransitionType(
+                        targetState.destination.route,
+                        initialState.destination.route
+                    )
+                    createExitTransition(transitionType, motionLevel)
                 }
             ) {
                 composable(Screen.Import.route) {

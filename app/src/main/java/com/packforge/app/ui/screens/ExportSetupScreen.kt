@@ -41,6 +41,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.MergeType
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -77,6 +79,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -176,6 +179,56 @@ fun ExportSetupScreen(
         if (uri != null) {
             onConnectMinecraft(uri)
         }
+    }
+
+    // ── PORTADAS DE LOS ADDONS (para ciclarlas con las flechas) ──────────
+    // Portadas de los addons activos, en orden de prioridad. Se usan como
+    // alternativa rápida cuando el modpack no tiene portada personalizada.
+    val addonCoverCandidates: List<String> = remember(addons) {
+        addons
+            .filter { it.enabled }
+            .mapNotNull { it.iconPath }
+            .filter { path ->
+                // Solo rutas que apunten a un archivo real y no vacío.
+                path.startsWith("/") && runCatching { java.io.File(path).exists() && java.io.File(path).length() > 0 }.getOrDefault(false)
+            }
+            .distinct()
+    }
+    // Índice de la portada actualmente mostrada (solo cuando es de un addon).
+    var coverIndex by remember { mutableStateOf(0) }
+
+    /**
+     * Portada efectiva a mostrar en la previsualización del exportador:
+     * 1. La portada personalizada del usuario, si existe.
+     * 2. Si no, la portada del addon actualmente seleccionada por índice.
+     * 3. Si no hay ninguna, null (se muestra el icono por defecto).
+     */
+    val effectiveCover: String? = when {
+        !metadata.coverUriString.isNullOrEmpty() -> metadata.coverUriString
+        addonCoverCandidates.isNotEmpty() -> addonCoverCandidates.getOrNull(
+            coverIndex.coerceIn(0, addonCoverCandidates.size - 1)
+        )
+        else -> null
+    }
+
+    /**
+     * Cambia la portada a la siguiente/anterior de los addons, guardándola como
+     * portada del modpack. El usuario puede seguir cambiándola dinámicamente
+     * mientras edite el modpack; la nueva portada se refleja en la biblioteca
+     * y en el juego al exportar. Esto es una opción rápida y NUNCA reemplaza
+     * la portada personalizada que el usuario elija con "elegir portada".
+     */
+    fun cycleCover(next: Boolean) {
+        if (addonCoverCandidates.isEmpty()) return
+        val size = addonCoverCandidates.size
+        val newIndex = if (next) {
+            (coverIndex + 1) % size
+        } else {
+            (coverIndex - 1 + size) % size
+        }
+        coverIndex = newIndex
+        val chosen = addonCoverCandidates[newIndex]
+        onMetadataChange(metadata.copy(coverUriString = chosen))
     }
 
     val createDocumentLauncher = rememberLauncherForActivityResult(
@@ -314,82 +367,136 @@ fun ExportSetupScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
-                    val previewUri = metadata.coverUriString
+                    val previewUri = effectiveCover
+                    val hasAddonCovers = addonCoverCandidates.isNotEmpty()
 
-                    Box(
+                    // ⚡ FLECHAS DE CAMBIO DE PORTADA (función 3):
+                    // Al lado del rectángulo, ← y → recorren las portadas de los
+                    // addons en tiempo real. Tocando una se elige esa portada como
+                    // del modpack, y se refleja en la biblioteca y en el juego al
+                    // exportar. Solo aparecen cuando el modpack NO tiene una
+                    // portada personalizada (no reemplaza "elegir portada").
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(180.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .border(
-                                1.dp,
-                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                                RoundedCornerShape(20.dp)
-                            )
-                            .bounceClick(scaleDown = 0.98f) { coverPickerLauncher.launch("image/*") },
-                        contentAlignment = Alignment.Center
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
                     ) {
-                        when {
-                            previewUri != null -> {
-                                val resolved = resolveCoverModel(previewUri)
-                                val imageModel = resolved.first
-                                val fileExists = resolved.second
-                                
-                                if (fileExists) {
-                                    CachedAsyncImage(
-                                        model = imageModel,
-                                        contentDescription = stringResource(R.string.cd_custom_cover),
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                } else {
+                        IconButton(
+                            onClick = { cycleCover(false) },
+                            enabled = hasAddonCovers
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                contentDescription = "Portada anterior",
+                                tint = if (hasAddonCovers)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(180.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                                    RoundedCornerShape(20.dp)
+                                )
+                                .bounceClick(scaleDown = 0.98f) { coverPickerLauncher.launch("image/*") },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            when {
+                                previewUri != null -> {
+                                    val resolved = resolveCoverModel(previewUri)
+                                    val imageModel = resolved.first
+                                    val fileExists = resolved.second
+
+                                    if (fileExists) {
+                                        CachedAsyncImage(
+                                            model = imageModel,
+                                            contentDescription = stringResource(R.string.cd_custom_cover),
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    } else {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Add,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(32.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                            )
+                                            Text(
+                                                text = "Imagen no encontrada",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                            )
+                                        }
+                                    }
+                                }
+                                else -> {
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Add,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(32.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .size(56.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primaryContainer),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Add,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(24.dp),
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
                                         Text(
-                                            text = "Imagen no encontrada",
+                                            text = "Toca para elegir portada",
                                             style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                }
-                            }
-                            else -> {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(56.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.primaryContainer),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Add,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(24.dp),
-                                            tint = MaterialTheme.colorScheme.onPrimaryContainer
-                                        )
-                                    }
-                                    Text(
-                                        text = "Toca para elegir portada",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
                                 }
                             }
                         }
+
+                        IconButton(
+                            onClick = { cycleCover(true) },
+                            enabled = hasAddonCovers
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = "Portada siguiente",
+                                tint = if (hasAddonCovers)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                            )
+                        }
+                    }
+
+                    // Indicador de cuántas portadas hay disponibles
+                    if (hasAddonCovers) {
+                        Text(
+                            text = "${coverIndex + 1} / ${addonCoverCandidates.size} portadas de addons" +
+                                if (!metadata.coverUriString.isNullOrEmpty()) " (personalizada)" else "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                        )
                     }
 
                     // ── CAMPOS DE TEXTO ───────────────────────

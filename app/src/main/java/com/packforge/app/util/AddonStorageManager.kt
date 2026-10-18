@@ -160,7 +160,22 @@ object AddonStorageManager {
      */
     fun findIdenticalAddon(dir: File, fileName: String, size: Long, hash: String): File? {
         val suffix = "_$fileName"
-        val candidates = dir.listFiles { f -> f.isFile && f.name.endsWith(suffix) } ?: return null
+        // ⚠️ SE EXCLUYEN LOS ARCHIVOS ".incoming_": el archivo que se acaba de
+        // escribir para esta misma importación también termina en "_$fileName",
+        // tiene el mismo tamaño y el mismo SHA-256, así que se encontraba A SÍ
+        // MISMO como "copia ya guardada". Entonces el llamador borraba
+        // `incoming` (creyendo que era un duplicado) y quedaba apuntando a un
+        // archivo RECIÉN BORRADO: la extracción fallaba, `parseFromUri`
+        // devolvía null y la importación no hacía nada, sin ningún error.
+        //
+        // Afectaba a TODA importación de un addon que aún no estuviera guardado
+        // (el caso normal): archivos del dispositivo, compartir desde terceros,
+        // abrir con PackForge y las descargas de las 3 fuentes web.
+        val candidates = dir.listFiles { f ->
+            f.isFile &&
+                !f.name.startsWith(INCOMING_PREFIX) &&
+                f.name.endsWith(suffix)
+        } ?: return null
         for (candidate in candidates) {
             if (candidate.length() != size) continue
             if (candidate.name.length <= suffix.length) continue

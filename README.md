@@ -1,378 +1,221 @@
 # ⚒️ PackForge
 
-> **Fusiona múltiples addons de Minecraft Bedrock Edition en un solo modpack funcional** — sin texturas rotas, sin conflictos manuales, sin dolores de cabeza.
-> WEBSITE: https://packforge.netlify.app/
-
 <div align="center">
 
+> **Fusiona múltiples addons de Minecraft Bedrock Edition en un solo modpack funcional**  
+> *Sin texturas rotas, sin conflictos manuales, sin dolores de cabeza.*
+
+🌐 **Sitio Web Oficial:** [packforge.netlify.app](https://packforge.netlify.app/)
+
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.3.21-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
-[![Android](https://img.shields.io/badge/Android-8.0+-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://www.android.com/)
-[![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
-[![CI](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/Lord4rk2028/PackForge/actions)
-[![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
+[![Android](https://img.shields.io/badge/Android-8.0+_(API_26)-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://www.android.com/)
+[![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-Material%203%20Expressive-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
+[![CI Status](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/Lord4rk2028/PackForge/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 
 </div>
 
 ---
 
-## 📱 Vista Previa
+## 📖 Acerca de PackForge (About)
 
-<table align="center" border="0">
+**PackForge** es una aplicación nativa para Android diseñada específicamente para la comunidad de **Minecraft Bedrock Edition**. Su objetivo principal es resolver uno de los problemas más comunes y frustrantes para jugadores y creadores: **la incompatibilidad y sobreescritura al intentar jugar con varios addons a la vez**.
+
+Normalmente, combinar addons de forma manual implica abrir archivos comprimidos, descifrar y editar múltiples `manifest.json`, sincronizar UUIDs, fusionar archivos JSON complejos (`blocks.json`, `terrain_texture.json`, `item_texture.json`, `sound_definitions.json`) y renombrar identidades en conflicto para evitar crashes en el motor Bedrock.
+
+**PackForge automatiza todo este proceso en segundos**, analizando las dependencias de Resource Packs (RP) y Behavior Packs (BP), resolviendo colisiones con estrategias configurables y generando un modpack limpio (`.mcaddon`) listo para importar directamente en el juego.
+
+---
+
+## 📱 Recorrido por la Aplicación (Screenshots dinámicos)
+
+Explora las capacidades de PackForge paso a paso mediante su interfaz moderna en Material 3:
+
+<table>
   <tr>
-    <td align="center" valign="top">
-      <img src="screenshots/01-import.jpg" width="200" alt="📥 Pantalla de Importación"/><br/>
-      <sub><b>Importar Addons</b></sub><br/>
-      <sub>Selector de archivos .mcaddon/.zip</sub>
+    <td width="50%" valign="top">
+      <h3>1️⃣ Importación & Diagnóstico Inicial</h3>
+      <p>Selecciona o arrastra múltiples archivos <code>.mcaddon</code>, <code>.mcpack</code> o <code>.zip</code>.</p>
+      <ul>
+        <li><b>Detección instantánea:</b> Desempaquetado seguro y parseo rápido de manifests.</li>
+        <li><b>Soporte multiformato:</b> Compatible con addons empaquetados simples o combinados (RP + BP).</li>
+        <li><b>Acceso a exploradores:</b> Integración con el selector de archivos del sistema Android.</li>
+      </ul>
     </td>
-    <td align="center" valign="top">
-      <img src="screenshots/02-conflicts.jpg" width="200" alt="⚠️ Reporte de Conflictos"/><br/>
-      <sub><b>Conflictos</b></sub><br/>
-      <sub>Detección y resolución automática</sub>
-    </td>
-    <td align="center" valign="top">
-      <img src="screenshots/03-studio.jpg" width="200" alt="🎨 Studio de Modpacks"/><br/>
-      <sub><b>Studio</b></sub><br/>
-      <sub>Gestión de fuentes Bedrock</sub>
-    </td>
-    <td align="center" valign="top">
-      <img src="screenshots/04-theme.jpg" width="200" alt="🎨 Personalización de Tema"/><br/>
-      <sub><b>Temas</b></sub><br/>
-      <sub>Oscuro/Claro + Colores</sub>
+    <td width="50%" align="center" valign="middle">
+      <img src="screenshots/01-import.jpg" width="240" alt="Pantalla de Importación de Addons" style="border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);"/>
     </td>
   </tr>
   <tr>
-    <td align="center" colspan="4">
-      <em>De izquierda a derecha: Importación de addons → Detección de conflictos → Studio de gestión → Personalización de interfaz</em>
+    <td width="50%" align="center" valign="middle">
+      <img src="screenshots/03-studio.jpg" width="240" alt="Mesa de Crafteo y Diagnóstico de Compatibilidad" style="border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);"/>
+    </td>
+    <td width="50%" valign="top">
+      <h3>2️⃣ Mesa de Crafteo & Compatibilidad</h3>
+      <p>Supervisa todos los addons cargados y evalúa su viabilidad de fusión.</p>
+      <ul>
+        <li><b>Mesa de Crafteo 3x3:</b> Cuadrícula interactiva para organizar y gestionar tus addons activos.</li>
+        <li><b>Diagnóstico predictivo de compatibilidad:</b> Indicador dinámico (p. ej. 90% compatibilidad) que evalúa versiones de Bedrock, schemas y dependencias.</li>
+        <li><b>Conteo de salud:</b> Diferenciación visual entre alertas críticas y avisos leves que no impiden jugar.</li>
+      </ul>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>3️⃣ Centro de Resolución de Conflictos</h3>
+      <p>Controla al milímetro cómo interactúan los addons duplicados o superpuestos.</p>
+      <ul>
+        <li><b>Métricas por severidad:</b> Clasificación detallada en <i>Critical</i>, <i>High</i>, <i>Medium</i>, <i>Low</i> y <i>Warning</i>.</li>
+        <li><b>Estrategias de resolución rápida:</b>
+          <ul>
+            <li><code>Keep first</code>: Da prioridad al addon cargado primero.</li>
+            <li><code>Keep last</code>: Sobrescribe con el último addon añadido.</li>
+            <li><code>Log and skip</code>: Omite colisiones manteniendo registro de auditoría.</li>
+          </ul>
+        </li>
+        <li><b>Conflictos específicos:</b> Visor expandible de texturas, sonidos, animaciones y entidades en conflicto con indicación del ganador.</li>
+      </ul>
+    </td>
+    <td width="50%" align="center" valign="middle">
+      <img src="screenshots/02-conflicts.jpg" width="240" alt="Pantalla de Resolución de Conflictos" style="border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);"/>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="middle">
+      <img src="screenshots/04-theme.jpg" width="240" alt="Personalización de Tema y Colores" style="border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);"/>
+    </td>
+    <td width="50%" valign="top">
+      <h3>4️⃣ Studio & Ajustes de Personalización</h3>
+      <p>Adapta PackForge a tu estilo y gestiona tus recursos con comodidad.</p>
+      <ul>
+        <li><b>Selector de color dinámico:</b> Elige cualquier color mediante espectro visual, barra de tono y código HEX con soporte de portapapeles.</li>
+        <li><b>Paletas temáticas Bedrock:</b> Variedad de estilos predefinidos inspirados en el universo Minecraft.</li>
+        <li><b>Modo Oscuro / Claro fluido:</b> Animaciones optimizadas en Jetpack Compose con transiciones suaves.</li>
+      </ul>
     </td>
   </tr>
 </table>
 
-## 🧩 ¿Qué hace?
+---
 
-| Función | Descripción |
-|---------|-------------|
-| 📦 **Importación múltiple** | Selecciona varios addons (`.mcaddon` / `.zip`) simultáneamente |
-| 🔀 **Fusión real** | Combina bloques, ítems, texturas, sonidos, recetas, entidades y scripts |
-| ⚠️ **Detección de conflictos** | Identifica y resuelve colisiones de IDs, texturas y scripts automáticamente |
-| 📤 **Exportación limpia** | Genera un único `.mcaddon` listo para importar en Minecraft |
+## ⚡ ¿Qué hace único a PackForge?
 
-## 🎯 ¿Por qué PackForge?
-
-Fusionar addons manualmente requiere:
-- ✏️ Editar múltiples `manifest.json`
-- 🔢 Resolver IDs duplicados a mano
-- 🧩 Unir archivos JSON sin romper sintaxis
-- 🔗 Vincular behavior packs con resource packs
-
-**Un solo error = Minecraft rechaza el paquete o crashea.** PackForge automatiza todo el proceso con un motor de fusión inteligente.
+| Característica | Fusión Manual / Otros Zips | ⚒️ PackForge |
+|---|---|---|
+| **Manejo de Manifests** | Propenso a errores de UUID y sintaxis | Generación y sincronización de UUIDs v4 automática |
+| **Archivos JSON Críticos** | Sobrescritura destructiva | Fusión profunda inteligente (`JsonDeepMerger`) |
+| **Colisiones de Texturas** | Una textura elimina la otra | Detección granular y resolución con selección de ganador |
+| **Diagnóstico de Salud** | Pruebas a ciegas en el juego | `PackForgeHealer` + `PackForgeValidator` previos al juego |
+| **Exportación** | Compresión manual .zip y renombramiento | Exportación optimizada en un solo `.mcaddon` ejecutable |
 
 ---
 
-## 🚀 Características Principales
+## 🚀 Motor de Fusión Bedrock (`domain/engine`)
 
-### 🔧 Motor de Fusión
+El núcleo técnico de PackForge implementa una serie de componentes de ingeniería especializados para Minecraft Bedrock:
 
-| Componente | Función |
-|------------|---------|
-| `AddonExtractor` | Desempaqueta `.mcaddon`/.zip con validación de seguridad |
-| `ConflictEngine` | Detecta y resuelve colisiones de IDs, texturas y scripts |
-| `IdentifierRemapper` | Renombra IDs duplicados manteniendo referencias intactas |
-| `JsonDeepMerger` | Fusión profunda de manifests y archivos JSON |
-| `ManifestGenerator` | Crea manifests válidos y enlaza behavior + resource packs |
-| `BedrockCompatibilityAnalyzer` | Evalúa compatibilidad de versiones y formatos |
-| `EntityDependencyResolver` | Mantiene coherencia entre entidades y spawn rules |
-| `PackForgeOrchestrator` | Orquesta la fusión completa (copiado, merges críticos, validación y empaquetado del `.mcaddon`) |
-| `BedrockCriticalFilesMerger` | Fusiona los archivos sensibles de Bedrock (entidades, bloques, texturas, sonidos, recetas) |
-
-### 🌟 Funcionalidades de Usuario
-
-- 🔍 **Búsqueda integrada** — Explora MCPEDL, CurseForge y ModBay desde la app
-- 📂 **Gestor de archivos** — Abre `.mcaddon` y `.mcpack` directamente desde el explorador
-- ✅ **Verificación de Minecraft** — Detecta si tienes Bedrock Edition instalado
-- 💾 **Persistencia local** — Room para guardar modpacks y DataStore para preferencias
-- 🎨 **UI personalizable** — Temas claro/oscuro con selección de colores Material 3
+- **`PackForgeOrchestrator`**: Administra el pipeline completo: descompresión, indexado, análisis de compatibilidad, fusión de subcomponentes y empaquetado final.
+- **`JsonDeepMerger` & `LenientJson`**: Fusión no destructiva de árboles JSON complejos, tolerando discrepancias comunes de sintaxis presentes en addons comunitarios.
+- **`ConflictEngine` & `ConflictRegistry`**: Detección anticipada de choques de identificadores, colisiones de recetas, loot tables, animaciones y scripts.
+- **`PackForgeHealer`**: Módulo de autodiagnóstico post-merge que detecta referencias rotas y sugiere coincidencias difusas (*fuzzy matching*) sin corromper el contenido original.
+- **`PackForgeValidator`**: Validador estricto que asegura que el modpack final cumpla los estándares exigidos por el motor de Bedrock antes de permitir su exportación.
+- **`BedrockCriticalFilesMerger`**: Algoritmos dedicados para fusionar armónicamente:
+  - `blocks.json` y `terrain_texture.json`
+  - `item_texture.json`
+  - `sound_definitions.json` y `sounds.json`
+  - Definiciones de entidades y attachables en Resource & Behavior Packs
 
 ---
 
-## 🧪 Flujo de Uso
+## 🧪 Flujo de Trabajo
 
 ```mermaid
-graph LR
-    A[📥 Importar<br/>Addons] --> B[⚠️ Análisis<br/>de Conflictos]
-    B --> C[🎨 Studio<br/>Configuración]
-    C --> D[📤 Exportar<br/>.mcaddon]
-    D --> E[🎮 Minecraft<br/>Importar y Jugar]
-    
-    style A fill:#e3f2fd
-    style B fill:#fff3e0
-    style C fill:#f3e5f5
-    style D fill:#e8f5e9
-    style E fill:#ffebee
+flowchart TD
+    A["📥 Selección de Addons (.mcaddon, .zip)"] --> B["🔍 AddonExtractor & AddonParser"]
+    B --> C["📊 Diagnóstico de Compatibilidad & ConflictEngine"]
+    C --> D{"¿Hay Conflictos?"}
+    D -- "Sí" --> E["⚠️ Resolución (Keep First / Last / Custom)"]
+    D -- "No" --> F["🧩 Fusión Profunda (PackForgeOrchestrator)"]
+    E --> F
+    F --> G["🩺 PackForgeHealer & PackForgeValidator"]
+    G --> H["📦 Exportación de Modpack (.mcaddon)"]
+    H --> I["🎮 Importación automática en Minecraft"]
 ```
-
-**Pasos detallados:**
-
-| # | Paso | Acción |
-|---|------|--------|
-| 1 | **Importar** | Selecciona múltiples `.mcaddon` o `.zip` desde tu dispositivo |
-| 2 | **Analizar** | La app detecta automáticamente conflictos entre addons |
-| 3 | **Studio** | Configura nombre, autor, versión y portada del modpack |
-| 4 | **Exportar** | Genera un único `.mcaddon` optimizado y listo para usar |
-| 5 | **Jugar** | Abre con Minecraft Bedrock e importa el resultado |
 
 ---
 
-## 📲 Instalación
+## 📲 Instalación y Descargas
 
-### 🔽 Opción Rápida — APK de CI
-[![Download APK](https://img.shields.io/badge/📥_Download_APK-Debug-green?style=for-the-badge&logo=android)](https://github.com/Lord4rk2028/PackForge/actions)
+### 🔹 Opción 1: Descargar APK compilado (Recomendado)
+Puedes obtener el archivo `.apk` de prueba generado automáticamente por nuestro pipeline de integración continua:
+1. Dirígete a la pestaña de [**GitHub Actions (Android CI)**](https://github.com/Lord4rk2028/PackForge/actions).
+2. Haz clic en la ejecución más reciente en la rama `master`.
+3. En la sección **Artifacts**, descarga el archivo **`debug-apk`**.
 
-Descarga la última versión de depuración directamente desde los **artefactos** del workflow [Android CI](https://github.com/Lord4rk2028/PackForge/actions).
-
-### 🛠️ Compilar desde Código Fuente
-
-<details>
-<summary><b>Requisitos previos (clic para expandir)</b></summary>
-
-- **JDK 17** o superior
-- **Android SDK** con API 35 (compile/target SDK)
-- **Git** instalado
-
-</details>
+### 🔹 Opción 2: Compilar desde el código fuente
 
 ```bash
 # 1. Clonar el repositorio
 git clone https://github.com/Lord4rk2028/PackForge.git
 cd PackForge
 
-# 2. Dar permisos al script de Gradle
+# 2. Dar permisos de ejecución a Gradle wrapper (Linux/macOS)
 chmod +x gradlew
 
-# 3. Compilar APK de depuración
+# 3. Compilar APK Debug
 ./gradlew assembleDebug
 
-# ✅ APK generado en: app/build/outputs/apk/debug/app-debug.apk
+# El APK se genera en:
+# app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### 🧪 Ejecutar Tests
-
+Para correr las suites de pruebas unitarias locales:
 ```bash
-# Tests unitarios del motor de fusión
 ./gradlew test
-
-# Build completo con verificación
-./gradlew build
-```
-
-### 📦 Build de release (minificado y firmado)
-
-```bash
-# APK de release con R8 + resource shrinking (sale SIN firmar si no hay keystore)
-./gradlew assembleRelease
-
-# 1. Genera tu keystore una sola vez (¡guárdalo y respáldalo fuera del repo!)
-keytool -genkeypair -v -keystore keystore.jks -keyalg RSA -keysize 2048 -validity 10000 -alias packforge
-
-# 2. Crea "keystore.properties" en la raíz del repo (ya está en .gitignore):
-#    storeFile=keystore.jks
-#    storePassword=...
-#    keyAlias=packforge
-#    keyPassword=...
-# 3. Vuelve a compilar: el APK saldrá firmado en app/build/outputs/apk/release/
-./gradlew assembleRelease
-```
-
-### 🌍 Traducciones (i18n)
-
-La UI se declara en `app/src/main/res/values/strings.xml` (español, idioma por defecto)
-y `app/src/main/res/values-en/strings.xml` (inglés). Para añadir un idioma, copia
-`strings.xml` a `res/values-<código>/` y traduce los valores. Los textos de UI van
-siempre vía `stringResource(R.string.…)`; no escribas textos visibles hardcodeados.
-
----
-
-## 📋 Requisitos del Sistema
-
-| Componente | Requisito | Notas |
-|------------|-----------|-------|
-| 📱 **SO** | Android 8.0+ (API 26) | Probado hasta Android 15 |
-| 🎮 **Juego** | Minecraft Bedrock Edition | Necesario para importar modpacks |
-| 📦 **Addons** | Formato estándar Bedrock | Deben incluir `manifest.json` válido |
-| 💾 **Almacenamiento** | ~50 MB libres | Para la app + modpacks temporales |
-
----
-
-## 🛠️ Stack Tecnológico
-
-<div align="center">
-
-| Categoría | Tecnologías |
-|-----------|-------------|
-| **Lenguaje** | ![Kotlin](https://img.shields.io/badge/Kotlin-2.3.21-7F52FF?logo=kotlin) |
-| **UI Framework** | Jetpack Compose (BOM 2025) + Material 3 Expressive 1.4.0 |
-| **Arquitectura** | MVVM + Clean Architecture (`domain` / `data` / `ui`) |
-| **Persistencia** | Room 2.8.4 (KSP) + DataStore Preferences |
-| **Networking** | Retrofit 2.11 + OkHttp 4.12 + Gson |
-| **Imágenes** | Coil 2.6.0 |
-| **Navegación** | Navigation Compose 2.8.5 |
-| **Build** | Gradle 9.7.1 + KSP, SDK 35 (version catalog en `gradle/libs.versions.toml`) |
-| **CI/CD** | GitHub Actions |
-
-</div>
-
----
-
-## 🗂️ Estructura del Proyecto
-
-```
-app/src/main/java/com/packforge/app/
-│
-├── 📱 MainActivity.kt
-├── 🏛️ PackForgeApplication.kt
-│
-├── domain/                          # 🧠 Lógica de negocio (Motor de fusión)
-│   ├── engine/
-│   │   ├── AddonExtractor.kt            # Desempaqueta .mcaddon/.zip
-│   │   ├── AddonParser.kt               # Parseo de manifest e identificadores
-│   │   ├── ConflictEngine.kt            # ⚠️ Detección de conflictos
-│   │   ├── IdentifierRemapper.kt        # 🔀 Remapeo de IDs
-│   │   ├── JsonDeepMerger.kt            # 🧩 Fusión JSON profunda
-│   │   ├── ManifestGenerator.kt         # 📄 Manifests válidos
-│   │   ├── BedrockCompatibilityAnalyzer.kt
-│   │   ├── EntityDependencyResolver.kt
-│   │   ├── ScriptCollisionAnalyzer.kt
-│   │   └── PackForgeOrchestrator.kt     # 📤 Orquestación y exportación final
-│   │
-│   └── model/                       # Modelos de dominio
-│       ├── Addon.kt
-│       ├── Conflict.kt
-│       ├── MergeResult.kt
-│       └── ExportState.kt
-│
-├── data/                            # 💾 Capa de datos
-│   ├── PackForgeDatabase.kt
-│   ├── SavedModpackDao.kt
-│   ├── ThemePreferences.kt
-│   └── download/                   # Descarga de addons a caché (OkHttp)
-│
-├── ui/                              # 🎨 Interfaz de usuario
-│   ├── screens/
-│   │   ├── ImportScreen.kt
-│   │   ├── StudioScreen.kt
-│   │   ├── ConflictsScreen.kt
-│   │   ├── ExportScreen.kt
-│   │   ├── CoverPickerScreen.kt
-│   │   ├── McpedlSearchScreen.kt
-│   │   ├── ThemeSettingsScreen.kt
-│   │   └── WebBrowserScreen.kt
-│   ├── navigation/                  # Navegación
-│   ├── components/                  # Componentes reutilizables
-│   ├── theme/                       # Material 3 theming
-│   └── viewmodel/                   # ViewModels
-│
-└── util/                            # 🛠️ Utilidades
-    ├── FileUtils.kt
-    ├── PackForgeLog.kt
-    └── PackForgeConfig.kt
 ```
 
 ---
 
-## 🗺️ Roadmap
+## 🛠️ Especificaciones Técnicas
 
-<div align="center">
-
-| Prioridad | Funcionalidad | Estado |
-|-----------|--------------|--------|
-| 🔴 Alta | Editor manual de conflictos (UI interactiva) | 📝 Planeado |
-| 🟡 Media | Modos de fusión configurables | 💭 En discusión |
-| 🟢 Baja | Soporte multi-formato avanzado | 💭 En discusión |
-| 🟢 Baja | Notificaciones en segundo plano | 📝 Planeado |
-| 🟢 Baja | Publicación en Google Play | 💭 En discusión |
-| 🟢 Baja | Tests de regresión del motor | 🔄 En progreso |
-
-</div>
-
-**Próximamente:**
-- ✨ Selector visual para decidir qué addon "gana" en conflictos
-- ⚙️ Perfiles de fusión predefinidos (rápido, seguro, personalizado)
-- 📊 Historial de exportaciones y estadísticas de uso
+- **Plataforma objetivo:** Android 8.0+ (API 26 mínima, API 35 destino)
+- **Lenguaje:** Kotlin 2.3.21
+- **UI Toolkit:** Jetpack Compose con Compose BOM 2025 + Material 3 Expressive (1.4.0)
+- **Patrón de Arquitectura:** Clean Architecture + MVVM (StateFlow, Coroutines)
+- **Base de Datos Local:** Room Database 2.8.4 con KSP
+- **Almacenamiento Clave-Valor:** DataStore Preferences 1.1.1
+- **Carga Asíncrona de Imágenes:** Coil Compose 2.6.0
+- **Networking:** Retrofit 2.11 + OkHttp 4.12 + Gson
+- **Compilador / Build Tool:** Gradle 9.7.1 + Android Gradle Plugin 9.3.1
 
 ---
 
-## 🤝 Contribuir
+## 📄 Licencia (License)
 
-¡Las contribuciones son bienvenidas! Sigue estos pasos:
+Este proyecto se distribuye bajo la licencia **MIT**. Puedes consultar el texto completo en el archivo [`LICENSE`](LICENSE).
 
-```bash
-# 1. Fork del repositorio
-# 2. Clona tu fork
-git clone https://github.com/TU_USUARIO/PackForge.git
+```text
+MIT License
+Copyright (c) 2026 Lord4rk2028 (PackForge)
 
-# 3. Crea una rama para tu feature
-git checkout -b feat/mi-mejora
-
-# 4. Realiza tus cambios y añade tests (si toca domain/engine)
-# 5. Ejecuta los tests
-./gradlew test
-
-# 6. Commit y push
-git commit -m "feat: descripción de tu mejora"
-git push origin feat/mi-mejora
-
-# 7. Abre un Pull Request a la rama main
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software...
 ```
 
-### 📋 Guía rápida para PRs
-
-| Tipo | Descripción | Ejemplo |
-|------|-------------|---------|
-| `feat:` | Nueva funcionalidad | `feat: editor visual de conflictos` |
-| `fix:` | Corrección de bugs | `fix: crash al exportar modpacks grandes` |
-| `docs:` | Cambios en documentación | `docs: mejorar README` |
-| `refactor:` | Refactorización de código | `refactor: optimizar ConflictEngine` |
-| `test:` | Añadir/modificar tests | `test: tests para JsonDeepMerger` |
-
 ---
 
-## 📄 Licencia
+## ⚠️ Aviso Legal & Descargo de Responsabilidad
 
-Este proyecto está licenciado bajo la **MIT License** — consulta el archivo [`LICENSE`](LICENSE) para más detalles.
-
-En resumen: puedes usar, modificar y distribuir el código libremente, incluso con fines comerciales, manteniendo el aviso de copyright original.
-
----
-
-## ⚠️ Notas Importantes
-
-> 🔒 **Seguridad**: PackForge **no modifica el contenido creativo** de los addons originales, solo los combina técnicamente.
-
-> ⚠️ **Compatibilidad**: Si dos addons son fundamentalmente incompatibles (versiones de Minecraft distintas, scripts conflictivos), la fusión puede generar advertencias. **Revisa siempre el reporte de conflictos antes de jugar.**
-
-> 🚧 **Estado**: Proyecto en **desarrollo activo**; puede tener errores o casos de addons aún no soportados. ¡Reporta issues si encuentras problemas!
+- **Minecraft** es una marca comercial registrada de **Mojang Synergies AB / Microsoft Corporation**.
+- **PackForge** es un desarrollo independiente que **no** está afiliado, respaldado, autorizado ni vinculado formalmente a Mojang ni a Microsoft.
+- PackForge **no distribuye ni comercializa recursos creativos de terceros**: actúa exclusivamente como herramienta técnica en el dispositivo del usuario para fusionar archivos que este provee legítimamente.
 
 ---
 
 <div align="center">
-
-### 📊 Estado del Proyecto
-
-[![GitHub stars](https://img.shields.io/github/stars/Lord4rk2028/PackForge?style=social)](https://github.com/Lord4rk2028/PackForge/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/Lord4rk2028/PackForge?style=social)](https://github.com/Lord4rk2028/PackForge/network/members)
-[![GitHub issues](https://img.shields.io/github/issues/Lord4rk2028/PackForge)](https://github.com/Lord4rk2028/PackForge/issues)
-[![GitHub last commit](https://img.shields.io/github/last-commit/Lord4rk2028/PackForge)](https://github.com/Lord4rk2028/PackForge/commits/main)
-
----
-
-**⚖️ Licencia:** [MIT](LICENSE) — Usa, modifica y distribuye libremente manteniendo el copyright original.
-
-**🎮 ¿Tienes dudas?** Abre un [issue](https://github.com/Lord4rk2028/PackForge/issues) o únete a las discusiones.
-
----
-
-<p align="center">
-  <sub>Hecho con ❤️ para la comunidad de Minecraft Bedrock</sub><br/>
-  <sub>Proyecto no afiliado a Mojang ni a Microsoft. Minecraft es una marca registrada de Mojang Synergies AB / Microsoft.</sub>
-</p>
-
+  <sub>Desarrollado con dedicación para los creadores y jugadores de Minecraft Bedrock.</sub><br/>
+  <sub>¿Encontraste un problema o tienes sugerencias? ¡Abre una <a href="https://github.com/Lord4rk2028/PackForge/issues">Issue</a> o envía un Pull Request!</sub>
 </div>

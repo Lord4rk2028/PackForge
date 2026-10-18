@@ -2,6 +2,7 @@ package com.packforge.app.domain.engine
 
 import org.json.JSONArray
 import com.packforge.app.domain.model.ConflictSeverity
+import com.packforge.app.util.FileUtils
 import com.packforge.app.util.PackForgeLog
 import org.json.JSONObject
 import java.io.File
@@ -51,9 +52,138 @@ object PackForgeHealer {
         val summary get() = "Healer: ${fuzzyMatches.size} fuzzy-match(es), ${unresolved.size} referencia(s) irrecuperable(es)"
     }
 
+    /** Resultado de una operación de reparación automática. */
+    data class RepairResult(
+        val texturesCopied: Int = 0,
+        val modelsCopied: Int = 0,
+        /** Geometría placeholder generada (caja 8x8x8) para entidades sin geometría en ningún addon. */
+        val placeholdersGenerated: Int = 0,
+        val stillMissingTextures: List<String> = emptyList(),
+        val stillMissingModels: List<String> = emptyList()
+    ) {
+        val totalFixed get() = texturesCopied + modelsCopied
+        val hasRemainingIssues get() = stillMissingTextures.isNotEmpty() || stillMissingModels.isNotEmpty()
+        val summary get() = "Healer.repair: ${texturesCopied} textura(s) copiada(s), " +
+            "${modelsCopied} modelo(s) copiado(s) [$placeholdersGenerated placeholder(s) de geometría], " +
+            "${stillMissingTextures.size + stillMissingModels.size} aún faltante(s)"
+    }
+
+    /**
+     * Repara texturas y modelos faltantes copiándolos de los addons originales.
+     *
+     * Para cada referencia rota detectada, busca el archivo en los addons
+     * originales (por nombre de archivo) y, si lo encuentra, lo copia a
+     * la ruta correcta en el RP/BP fusionado.
+     *
+     * Los archivos que no se encuentren en ningún addon original se reportan
+     * como aún faltantes.
+     */
+    fun repair(
+        mergedBpDir: File,
+        mergedRpDir: File,
+        originalAddonPaths: List<String>
+    ): RepairResult {
+        val texturesCopied = mutableSetOf<String>()
+        val modelsCopied = mutableSetOf<String>()
+        val stillMissingTextures = mutableListOf<String>()
+        val stillMissingModels = mutableListOf<String>()
+        var placeholderCount = 0
+
+        try {
+            // ── REPARAR TEXTURAS ──
+            val textureRefs = collectReferencedTextures(mergedRpDir)
+            val textureInventory = collectTextureInventory(mergedRpDir)
+
+            for (texRef in textureRefs) {
+                if (texRef in textureInventory) continue
+
+                val stem = texRef.removePrefix("textures/").substringBeforeLast('.')
+                var copied = false
+
+                for (ext in TEXTURE_EXTENSIONS) {
+                    val fileName = "$stem$ext"
+                    val found = findFileInAddons(fileName, originalAddonPaths)
+                    if (found != null) {
+                        val destDir = File(mergedRpDir, "textures/entity")
+                        destDir.mkdirs()
+                        val destFile = File(destDir, "$stem.png")
+                        FileUtils.fastCopy(found, destFile)
+                        texturesCopied.add(texRef)
+                        copied = true
+                        PackForgeLog.d(TAG, "🔧 Textura reparada: $texRef <- ${found.name}")
+                        break
+                    }
+                }
+
+                if (!copied) {
+                    stillMissingTextures.add(texRef)
+                    PackForgeLog.w(TAG, "❌ Textura aún faltante: $texRef (no existe en ningún addon original)")
+                }
+            }
+
+            // ── REPARAR MODELOS/GEOMETRÍA ──
+            val modelRefs = collectReferencedModels(mergedBpDir, mergedRpDir)
+            val modelInventory = collectModelInventory(mergedRpDir)
+
+            for (modelRef in modelRefs) {
+                if (modelRef in modelInventory) continue
+
+                val fileName = modelRef.substringAfterLast('/')
+                var copied = false
+
+                for (ext in MODEL_EXTENSIONS) {
+                    val candidate = if (fileName.endsWith(ext)) fileName else "$fileName$ext"
+                    val found = findFileInAddons(candidate, originalAddonPaths)
+                    if (found != null) {
+                        val destDir = File(mergedRpDir, "models/entity")
+                        destDir.mkdirs()
+                        val destFile = File(destDir, fileName)
+                        FileUtils.fastCopy(found, destFile)
+                        modelsCopied.add(modelRef)
+                        copied = true
+                        PackForgeLog.d(TAG, "🔧 Modelo reparado: $modelRef <- ${found.name}")
+                        break
+                    }
+                }
+
+                // Último recurso: geometría irrecuperable → placeholder de caja
+                // 8x8x8 con ese identificador, para que la entidad SPAWNEE y sea
+                // visible/colisionable en vez de no renderizarse. Contenido
+                // inventado EXPLÍCITO: se reporta como placeholder, nunca como
+                // una restauración.
+                if (!copied && fileName.startsWith("geometry.")) {
+                    val destDir = File(mergedRpDir, "models/entity")
+                    if (writePlaceholderGeometry(fileName.removeSuffix(".json"), destDir)) {
+                        modelsCopied.add(modelRef)
+                        placeholderCount++
+                        copied = true
+                        PackForgeLog.w(TAG, "📦 Placeholder de geometría: $modelRef (caja 8x8x8)")
+                    }
+                }
+
+                if (!copied) {
+                    stillMissingModels.add(modelRef)
+                    PackForgeLog.w(TAG, "❌ Modelo aún faltante: $modelRef (no existe en ningún addon original)")
+                }
+            }
+
+        } catch (e: Exception) {
+            PackForgeLog.e(TAG, "Error durante reparación del healer: ${e.message}")
+        }
+
+        return RepairResult(
+            texturesCopied = texturesCopied.size,
+            modelsCopied = modelsCopied.size,
+            placeholdersGenerated = placeholderCount,
+            stillMissingTextures = stillMissingTextures.toList(),
+            stillMissingModels = stillMissingModels.toList()
+        )
+    }
+
     /**
      * Analiza los packs fusionados y retorna un reporte de health.
      * NO modifica archivos — solo detecta y reporta.
+     * (Para corregir lo que sea recuperable, ver [repair].)
      */
     fun heal(mergedBpDir: File, mergedRpDir: File): HealReport {
         val fuzzyMatches = mutableListOf<FuzzyMatch>()
@@ -434,6 +564,180 @@ object PackForgeHealer {
         val maxLen = maxOf(lenA, lenB)
         return 1.0 - dp[lenA][lenB].toDouble() / maxLen
     }
+    /** Extensiones de textura soportadas por Bedrock. */
+    private val TEXTURE_EXTENSIONS = listOf(".png", ".tga", ".jpg")
+    /** Extensiones de geometría/modelo soportadas. */
+    private val MODEL_EXTENSIONS = listOf(".geo.json", ".json")
+
+    /**
+     * Busca un archivo por nombre en todos los addons originales (ZIP o directorio).
+     * Retorna el primer File encontrado, o null si no existe en ninguno.
+     */
+    private fun findFileInAddons(fileName: String, addonPaths: List<String>): File? {
+        for (addonPath in addonPaths) {
+            val addonFile = File(addonPath)
+            if (!addonFile.exists()) continue
+
+            if (addonFile.extension.equals("zip", ignoreCase = true) ||
+                addonFile.extension.equals("mcpack", ignoreCase = true) ||
+                addonFile.extension.equals("mcaddon", ignoreCase = true)) {
+                try {
+                    java.util.zip.ZipFile(addonFile).use { zip ->
+                        val entries = zip.entries()
+                        while (entries.hasMoreElements()) {
+                            val entry = entries.nextElement()
+                            if (!entry.isDirectory && entry.name.endsWith(fileName, ignoreCase = true)) {
+                                val tempFile = java.io.File.createTempFile("pf_healer_", fileName)
+                                zip.getInputStream(entry).use { input ->
+                                    tempFile.outputStream().use { output ->
+                                        input.copyTo(output, bufferSize = 16384)
+                                    }
+                                }
+                                return tempFile
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    PackForgeLog.w(TAG, "Error buscando en ZIP " + addonPath + ": " + e.message)
+                }
+            } else if (addonFile.isDirectory) {
+                val found = addonFile.walkTopDown()
+                    .filter { it.isFile && it.name.equals(fileName, ignoreCase = true) }
+                    .firstOrNull()
+                if (found != null) return found
+            }
+        }
+        return null
+    }
+
+    /**
+     * Estructura mínima de geometría válida para Bedrock: una caja 8x8x8 con
+     * el identificador pedido. No es el modelo original (no existe en ningún
+     * addon), solo garantiza que la entidad aparezca en el mundo.
+     * `__ID__` se sustituye por el identificador (p.ej. `geometry.carryblock`).
+     */
+    private val PLACEHOLDER_GEOMETRY_JSON = """{"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"__ID__","texture_width":16,"texture_height":16,"visible_bounds_width":2.0,"visible_bounds_height":2.0,"visible_bounds_offset":[0.0,1.0,0.0]},"bones":[{"name":"root","pivot":[0.0,0.0,0.0],"cubes":[{"origin":[-4.0,0.0,-4.0],"size":[8.0,8.0,8.0],"uv":[0.0,0.0]}]}]}]}"""
+
+    /** Escribe la geometría placeholder si aún no existe. Devuelve si se creó. */
+    private fun writePlaceholderGeometry(identifier: String, destDir: File): Boolean = try {
+        destDir.mkdirs()
+        val dest = File(destDir, "$identifier.placeholder.geo.json")
+        if (dest.exists()) {
+            false
+        } else {
+            dest.writeText(PLACEHOLDER_GEOMETRY_JSON.replace("__ID__", identifier), Charsets.UTF_8)
+            true
+        }
+    } catch (e: Exception) {
+        PackForgeLog.w(TAG, "No se pudo escribir placeholder de $identifier: ${e.message}")
+        false
+    }
+
+    /** Recolecta todas las referencias de textura (textures/xxx) usadas en JSONs del RP. */
+    private fun collectReferencedTextures(rpDir: File): Set<String> {
+        val refs = mutableSetOf<String>()
+        if (!rpDir.isDirectory) return refs
+        rpDir.walkTopDown().filter { it.isFile && it.extension.equals("json", ignoreCase = true) }.forEach { jsonFile ->
+            try {
+                val content = jsonFile.readText(Charsets.UTF_8)
+                val json = JSONObject(content)
+                extractTextureRefs(json, refs)
+            } catch (e: Exception) { }
+        }
+        return refs
+    }
+
+    /** Extrae referencias de textura recursivamente de un JSONObject. */
+    private fun extractTextureRefs(obj: Any, refs: MutableSet<String>) {
+        when (obj) {
+            is JSONObject -> {
+                obj.keys().forEach { key ->
+                    val value = obj.opt(key)
+                    if (key.equals("texture", ignoreCase = true) || key.equals("texture_name", ignoreCase = true)) {
+                        if (value is String && value.startsWith("textures/")) {
+                            refs.add(value)
+                        }
+                    } else if (key.equals("textures", ignoreCase = true)) {
+                        if (value is JSONObject) {
+                            value.keys().forEach { texKey ->
+                                val texValue = value.opt(texKey)
+                                if (texValue is String) {
+                                    refs.add(if (texValue.startsWith("textures/")) texValue else "textures/" + texValue)
+                                }
+                            }
+                        }
+                    } else {
+                        extractTextureRefs(value, refs)
+                    }
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until obj.length()) {
+                    extractTextureRefs(obj.opt(i), refs)
+                }
+            }
+        }
+    }
+
+    /** Recolecta referencias de modelos/geometría (models/entity/xxx) usados en entidades BP y RP. */
+    private fun collectReferencedModels(bpDir: File, rpDir: File): Set<String> {
+        val refs = mutableSetOf<String>()
+        listOf(bpDir, rpDir).forEach { dir ->
+            if (!dir.isDirectory) return@forEach
+            dir.walkTopDown().filter { it.isFile && it.extension.equals("json", ignoreCase = true) }.forEach { jsonFile ->
+                try {
+                    val content = jsonFile.readText(Charsets.UTF_8)
+                    val json = JSONObject(content)
+                    extractModelRefs(json, refs)
+                } catch (e: Exception) { }
+            }
+        }
+        return refs
+    }
+
+    private fun extractModelRefs(obj: Any, refs: MutableSet<String>) {
+        when (obj) {
+            is JSONObject -> {
+                obj.keys().forEach { key ->
+                    val value = obj.opt(key)
+                    if (key.equals("geometry", ignoreCase = true)) {
+                        if (value is String) {
+                            refs.add(if (value.startsWith("geometry.")) "models/entity/" + value + ".json" else value)
+                        } else if (value is JSONObject) {
+                            value.keys().forEach { geoKey ->
+                                val geoValue = value.optString(geoKey).ifEmpty { null }
+                                if (geoValue != null) {
+                                    refs.add(if (geoValue.startsWith("geometry.")) "models/entity/" + geoValue + ".json" else geoValue)
+                                }
+                            }
+                        }
+                    } else {
+                        extractModelRefs(value, refs)
+                    }
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until obj.length()) {
+                    extractModelRefs(obj.opt(i), refs)
+                }
+            }
+        }
+    }
+
+    /** Inventario de modelos ya presentes en el RP fusionado. */
+    private fun collectModelInventory(rpDir: File): Set<String> {
+        val models = mutableSetOf<String>()
+        val modelsDir = File(rpDir, "models/entity")
+        if (!modelsDir.isDirectory) return models
+        modelsDir.walkTopDown().filter { it.isFile }.forEach { file ->
+            models.add(file.name)
+            models.add(file.name.removeSuffix(".json"))
+            models.add("models/entity/" + file.name)
+            models.add("models/entity/" + file.name.removeSuffix(".json"))
+        }
+        return models
+    }
+
 }
 
 

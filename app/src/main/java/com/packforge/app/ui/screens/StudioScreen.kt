@@ -139,6 +139,17 @@ fun StudioScreen(
 
     // Manejo de navegadores internos con persistencia
     activeWebSource?.let { source ->
+        // ⚡ PAUSA DE WEBS EN SEGUNDO PLANO:
+        // al salir del navegador, su WebView se detiene. Una WebView oculta
+        // sigue ejecutando JavaScript, animaciones CSS y temporizadores, así que
+        // las 3 fuentes visitadas dejaban tres páginas activas compitiendo por la
+        // CPU. Eso era la causa de que "Mis modpacks" fuera trabado sin importar
+        // cuántos modpacks hubiera. Al volver a entrar se reactivan.
+        DisposableEffect(source) {
+            viewModel.resumeAllWebViews()
+            onDispose { viewModel.pauseAllWebViews() }
+        }
+
         val site = AddonSite.fromSourceKey(source)
         val currentUrl = lastWebUrls[source] ?: ""
         val persistentWebView = viewModel.getPersistentWebView(source, LocalContext.current)

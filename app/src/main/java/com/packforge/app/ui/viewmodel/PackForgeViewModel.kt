@@ -304,6 +304,40 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         _persistentWebViews.remove(source)?.let { destroyWebView(it) }
     }
 
+    /**
+     * Pausa las WebViews persistentes cuando el navegador deja de estar visible.
+     *
+     * POR QUÉ ES NECESARIO: una WebView oculta sigue ejecutando su JavaScript,
+     * sus animaciones CSS y sus temporizadores. Con las 3 fuentes visitadas
+     * quedaban tres páginas activas compitiendo por la CPU con la interfaz, y
+     * eso se manifestaba como un scroll trabado en "Mis modpacks" **sin
+     * importar cuántos modpacks hubiera**: el coste no venía de la lista, sino
+     * de las webs vivas en segundo plano.
+     *
+     * DEBE llamarse en el hilo principal (WebView no es thread-safe).
+     * [onResumeAllWebViews] las reactiva al volver al navegador.
+     */
+    fun pauseAllWebViews() {
+        _persistentWebViews.values.toList().forEach { wv ->
+            runCatching {
+                wv.onPause()
+                wv.pauseTimers()
+            }
+        }
+    }
+
+    /** Reactiva las WebViews tras [pauseAllWebViews]. En el hilo principal. */
+    fun resumeAllWebViews() {
+        // `resumeTimers()` es de INSTANCIA (no estático), igual que
+        // `pauseTimers()`: se llama sobre cada WebView.
+        _persistentWebViews.values.toList().forEach { wv ->
+            runCatching {
+                wv.resumeTimers()
+                wv.onResume()
+            }
+        }
+    }
+
     /** Destruye con seguridad una WebView, desligándola de su parent antes. */
     private fun destroyWebView(webView: WebView) {
         try {
@@ -355,8 +389,21 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             
             val fileName = downloadUrl.substringBefore('?').substringAfterLast('/')
                 .takeIf { it.contains(".") } ?: "web_addon.mcaddon"
-            
-            addonDownloadRepository.downloadToCache(context, downloadUrl, fileName) { p ->
+
+            // Las cookies se leen en el HILO PRINCIPAL: `CookieManager` no es
+            // thread-safe y usarlo desde IO (como hacía el CookieJar anterior)
+            // dejaba el WebView COMPLETAMENTE EN BLANCO al iniciar cualquier
+            // descarga, inutilizando el navegador.
+            val cookies = withContext(Dispatchers.Main) {
+                AddonDownloadRepository.snapshotWebViewCookies(downloadUrl)
+            }
+
+            addonDownloadRepository.downloadToCache(
+                context = context,
+                downloadUrl = downloadUrl,
+                suggestedFileName = fileName,
+                cookieHeader = cookies
+            ) { p ->
                 _importProgress.value = OperationProgress.Loading("Descargando...", p)
             }.onSuccess { uri ->
                 importAddons(context, listOf(uri), fromWeb = true, sourceUrl = sourcePageUrl, sourceSite = sourceSite)
@@ -1013,9 +1060,17 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             // CRÍTICO: copiar SIEMPRE a almacenamiento interno. Los content:// URIs pierden el
             // permiso de lectura cuando la app se reinicia, así que guardamos una copia local
             // en filesDir/modpack_icons/{id}_cover.png y referenciamos esa ruta.
-            // Si no se puso portada personalizada, usar la auto-seleccionada por el orquestador.
+            //
+            // ⚡ FALLBACK DESDE LOS ADDONS (función 2): el orquestador only setea
+            // `autoCoverPath` DESPUÉS de fusionar, así que al exportar un modpack
+            // SIN portada personalizada, el historial quedaba sin portada y la
+            // biblioteca mostraba un icono gris feo. Ahora, si no hay portada
+            // ni autoCoverPath, se elige la portada del primer addon activo que
+            // tenga un icono válido y se persiste como portada del modpack.
+            // Así la biblioteca y el juego ven siempre una portada real.
             val coverToPersist = _metadata.value.coverUriString
                 ?: MergeSession.state.value.autoCoverPath
+                ?: pickCoverFromAddons(_addons.value)
             val persistentCoverPath = persistCoverToInternal(context, coverToPersist, modpackId)
             if (persistentCoverPath != null) {
                 PackForgeLog.d("PackForge", "Icono de portada persistido: $persistentCoverPath")
@@ -1205,8 +1260,22 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             val persistentCover = withContext(Dispatchers.IO) {
                 persistCoverToInternal(context, m.coverUriString, m.id)
             }
-            if (persistentCover != null) {
-                PackForgeLog.d("PackForge", "Portada cargada desde Studio: $persistentCover")
+
+            // ⚡ FALLBACK DE PORTADA DESDE LOS ADDONS (función 2):
+            // Un modpack guardado sin portada personalizada quedaba con coverUriString
+            // null, y la biblioteca mostraba el icono gris por defecto. Ahora, si
+            // después de persistir no hay portada, se elige la del primer addon
+            // activo que tenga icono y se persiste como portada del modpack. Así
+            // la biblioteca y el juego ven siempre una portada real, y al volver a
+            // editar el modpack la portada sigue estando disponible.
+            val finalCover = persistentCover ?: withContext(Dispatchers.IO) {
+                pickCoverFromAddons(restored)
+                    ?.let { path ->
+                        persistCoverToInternal(context, path, m.id)
+                    }
+            }
+            if (finalCover != null) {
+                PackForgeLog.d("PackForge", "Portada cargada desde Studio: $finalCover")
             }
 
             _addons.value = restored
@@ -1218,7 +1287,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 description = m.description,
                 iconEmoji = "",
                 tags = m.tags.split(",").filter { it.isNotBlank() },
-                coverUriString = persistentCover
+                coverUriString = finalCover
             )
 
             // Restaurar resoluciones de conflictos y estrategia guardadas.
@@ -1702,6 +1771,26 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
     fun closeUpdateDialog() {
         _updateTargetModpack.value = null
         _updateReport.value = null
+    }
+
+    /**
+     * Elige la portada del primer addon activo que tenga un icono válido.
+     *
+     * Usado como último recurso cuando un modpack se exporta SIN portada
+     * personalizada y el orquestador aún no ha seteado `autoCoverPath` (la
+     * fusión puede no haberse ejecutado). Así la biblioteca y el juego ven una
+     * portada real en lugar del icono gris por defecto.
+     */
+    private fun pickCoverFromAddons(addons: List<Addon>): String? {
+        return addons
+            .filter { it.enabled }
+            .mapNotNull { it.iconPath }
+            .firstOrNull { path ->
+                path.startsWith("/") && runCatching {
+                    val f = java.io.File(path)
+                    f.exists() && f.length() > 0
+                }.getOrDefault(false)
+            }
     }
 
     /** Deserializa el addonsJson de un modpack. */

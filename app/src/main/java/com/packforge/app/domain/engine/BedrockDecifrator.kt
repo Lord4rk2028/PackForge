@@ -103,6 +103,16 @@ object BedrockDecifrator {
         return first in roots
     }
 
+    /**
+     * Lee un JSON del pack tolerando el cebo de comentario y las claves
+     * duplicadas del addon closed-source; `null` si sigue sin ser valido.
+     */
+    private fun readJson(file: File): JSONObject? = try {
+        LenientJson.parseObject(file.readText(Charsets.UTF_8))
+    } catch (e: Exception) {
+        null
+    }
+
     /** Clave raiz que hace que un JSON sea REALMENTE util para Bedrock. */
     private fun rootSignature(json: JSONObject): String? {
         return when {
@@ -175,10 +185,7 @@ object BedrockDecifrator {
                 json.optJSONObject("minecraft:client_entity")
                     ?.optJSONObject("description")?.optString("identifier")?.ifBlank { null }
             )
-            "minecraft:geometry" -> listOfNotNull(
-                json.optJSONObject("minecraft:geometry")
-                    ?.optJSONObject("description")?.optString("identifier")?.ifBlank { null }
-            )
+            "minecraft:geometry" -> geometryIds(json)
             // ---- firmas del BEHAVIOR PACK: todas cuelgan de description.identifier ----
             "minecraft:entity", "minecraft:block", "minecraft:item" ->
                 listOfNotNull(
@@ -200,6 +207,31 @@ object BedrockDecifrator {
                     ?.ifEmpty { null }
             else -> null
         }
+    }
+
+    /**
+     * Identificadores de geometria.
+     *
+     * En Bedrock moderno `minecraft:geometry` es un ARRAY de geometrias
+     * (`[{"description":{"identifier":"geometry.x"}, "bones":[...]}]`), no un
+     * objeto. Tratarlo con `optJSONObject` devolvia `null`, la firma salia
+     * vacia, el overlap con el nombre del roto era 0 y NUNCA se emparejaba:
+     * la geometria real del addon quedaba sin restaurar. Tambien se soporta el
+     * formato de objeto unico, por si aparece.
+     */
+    private fun geometryIds(json: JSONObject): List<String>? {
+        val arr = json.optJSONArray("minecraft:geometry")
+        if (arr != null) {
+            return (0 until arr.length()).mapNotNull { i ->
+                arr.optJSONObject(i)
+                    ?.optJSONObject("description")?.optString("identifier")
+                    ?.ifBlank { null }
+            }.ifEmpty { null }
+        }
+        return listOfNotNull(
+            json.optJSONObject("minecraft:geometry")
+                ?.optJSONObject("description")?.optString("identifier")?.ifBlank { null }
+        )
     }
 
     /** Un archivo JSON en claro hallado en una ruta oculta (fuente de restauración). */
@@ -291,11 +323,7 @@ object BedrockDecifrator {
                 if (!file.isFile || !file.name.endsWith(".json", true)) continue
                 val rel = file.relativeTo(root).path.replace('\\', '/')
 
-                val json = try {
-                    JSONObject(file.readText(Charsets.UTF_8))
-                } catch (e: Exception) {
-                    null
-                }
+                val json = readJson(file)
                 val root = json?.let { rootSignature(it) }
 
                 if (root != null) {
@@ -338,11 +366,7 @@ object BedrockDecifrator {
                     if (cf.root !in accepted) continue
                     typedCandidates += cf
 
-                    val ids = try {
-                        signatureId(JSONObject(cf.file.readText(Charsets.UTF_8)), cf.root)
-                    } catch (e: Exception) {
-                        null
-                    } ?: emptyList()
+                    val ids = readJson(cf.file)?.let { signatureId(it, cf.root) } ?: emptyList()
 
                     // Afinidad = palabras del nombre del roto presentes en el id.
                     val idTokens = ids.flatMap { tokensOf(it) }.toSet()
@@ -369,16 +393,11 @@ object BedrockDecifrator {
                 val cf = match.clear
                 val rootKey = cf.root
                 val dir = File(brokenRel).parentFile?.path?.replace('\\', '/') ?: ""
-                val srcText = try {
-                    cf.file.readText(Charsets.UTF_8)
-                } catch (e: Exception) {
-                    continue
-                }
-                val srcJson = try {
-                    JSONObject(srcText)
-                } catch (e: Exception) {
-                    null
-                }
+                // El origen se PARSEA tolerando el cebo y las claves duplicadas,
+                // y se ESCRIBE normalizado. Si se volcara el texto crudo, Bedrock
+                // rechazaria el archivo por las claves duplicadas, igual que lo
+                // hace org.json.
+                val srcJson = readJson(cf.file) ?: continue
 
                 // GUARDA 1: el origen debe ser JSON valido con raiz reconocida.
                 if (srcJson == null || rootSignature(srcJson) == null) continue
@@ -388,11 +407,7 @@ object BedrockDecifrator {
 
                 // GUARDA 2: idempotencia, no reescribir un canonico ya valido.
                 if (target.exists()) {
-                    val existing = try {
-                        JSONObject(target.readText(Charsets.UTF_8))
-                    } catch (e: Exception) {
-                        null
-                    }
+                    val existing = readJson(target)
                     if (existing != null && rootSignature(existing) != null) continue
                 }
 
@@ -400,10 +415,13 @@ object BedrockDecifrator {
                 if (rootSignature(srcJson) != rootKey) continue
 
                 target.parentFile?.mkdirs()
-                target.writeText(srcText, Charsets.UTF_8)
+                // Se vuelca el JSON NORMALIZADO: sin el cebo de comentario y sin
+                // las claves duplicadas, que Bedrock rechazaria igual que org.json.
+                val outText = srcJson.toString()
+                target.writeText(outText, Charsets.UTF_8)
 
                 val id = signatureId(srcJson, rootKey)?.joinToString(",")
-                restored += RestoredFile(targetRel, rootKey, id, cf.relPath, srcText.length)
+                restored += RestoredFile(targetRel, rootKey, id, cf.relPath, outText.length)
                 PackForgeLog.d(TAG, "[$packLabel] Restaurado $targetRel <- ${cf.relPath}")
 
                 // SEÑUELO RESIDUAL: si el roto vivo en otra ruta canónica ya fue

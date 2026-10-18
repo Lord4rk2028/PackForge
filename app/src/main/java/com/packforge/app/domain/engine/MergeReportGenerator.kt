@@ -397,6 +397,11 @@ if (hasValidTwin) {
         val decryptUnrecoverableNeutralized: Int = 0,
         val decryptDecoysNeutralized: Int = 0,
         /**
+         * Resultados de PackForgeHealer.repair(): texturas/modelos copiados
+         * desde los addons originales y placeholders de geometría generados.
+         */
+        val healerNotes: List<String> = emptyList(),
+        /**
          * Auditoría del .mcaddon YA ESCRITO (manifiestos y portadas presentes,
          * separadores de ruta válidos). Es distinta de `zipValidation`, que
          * valida las referencias de entidades dentro del archivo.
@@ -490,6 +495,18 @@ if (hasValidTwin) {
             lines += "Texturas faltantes: ${vr.missingTextures.size} | Modelos faltantes: ${vr.missingModels.size} " +
                 "| Referencias reparadas: ${vr.fixedReferences} | Claves .lang añadidas: ${vr.langKeysAdded.values.sum()}"
             vr.warnings.take(10).forEach { lines += "⚠️ $it" }
+            if (vr.incompleteEntities.isNotEmpty()) {
+                lines += "🧩 Entidades incompletas (${vr.incompleteEntities.size}): " +
+                    "tienen JSON válido pero les falta geometría, texturas o definición en BP."
+                vr.incompleteEntities.take(10).forEach { lines += "   • $it" }
+                if (vr.incompleteEntities.size > 10) {
+                    lines += "   … y ${vr.incompleteEntities.size - 10} más"
+                }
+            }
+        }
+        if (inputs.healerNotes.isNotEmpty()) {
+            lines += "💊 HEALER (reparación automática):"
+            inputs.healerNotes.forEach { lines += "   • $it" }
         }
         lines += "═══════════════════════════════════════════════════════════════════════"
         return lines

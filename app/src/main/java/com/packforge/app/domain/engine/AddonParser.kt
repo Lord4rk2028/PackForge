@@ -119,11 +119,30 @@ object AddonParser {
             }
 
             // 3. Analizar el archivo ya guardado internamente mediante extracción temporal robusta
+            //
+            // Comprobación de existencia OBLIGATORIA: si el archivo desapareció
+            // (importación interrumpida, limpieza de caché, reutilización de un
+            // duplicado ya borrado), `extractAddon` devolvía null y la
+            // importación terminaba en silencio sin ningún mensaje. Ahora se
+            // registra el motivo exacto para poder diagnosticarlo.
+            if (!internalFile.exists() || internalFile.length() <= 0L) {
+                PackForgeLog.e(
+                    "AddonParser",
+                    "Archivo interno ausente o vacío tras guardar: ${internalFile.absolutePath}"
+                )
+                incoming.delete()
+                return null
+            }
+
             val parseTempDir = File(context.cacheDir, "parse_temp_${addonId}")
             parseTempDir.mkdirs()
             
             val extractedPath = AddonExtractor.extractAddon(internalFile.absolutePath, parseTempDir.absolutePath)
             if (extractedPath == null) {
+                PackForgeLog.e(
+                    "AddonParser",
+                    "No se pudo extraer el addon: ${internalFile.name} (${internalFile.length()} bytes)"
+                )
                 parseTempDir.deleteRecursively()
                 return null
             }
@@ -333,29 +352,73 @@ object AddonParser {
         // milisegundos y no escribe nada en disco salvo el icono final.
         readIconStraightFromZip(src, addonId, context)?.let { return it }
 
-        // VÍA LENTA (respaldo): addons cuyo icono no está en la raíz ni con el
-        // nombre exacto, o ZIPs con estructura anidada que exigen extraer.
+        // VÍA LENTA (respaldo): extrae el addon completo y busca el icono en
+        // cualquier profundidad, INCLUIDOS los .mcpack/.zip anidados.
+        //
+        // Es el caso de los addons que empaquetan sus packs en ZIPs internos
+        // (como los del modpack "Mini/Pack"): su pack_icon.png NO está en la
+        // raíz del archivo, sino dentro del .mcpack anidado, así que la vía
+        // rápida no lo ve y hay que descomprimir para alcanzarlo.
         val tempDir = File(context.cacheDir, "icon_recover_$addonId")
         tempDir.mkdirs()
         val extracted = AddonExtractor.extractAddon(src.absolutePath, tempDir.absolutePath) ?: run {
             tempDir.deleteRecursively()
             return null
         }
-        var iconPath: String? = null
-        // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
-        val cachedFiles = DirIndexCache.index(File(extracted)).allFiles
-        for (f in cachedFiles) {
-            if (f.name.equals("pack_icon.png", ignoreCase = true) && iconPath == null) {
-                val iconDir = File(context.filesDir, "addon_icons").apply { mkdirs() }
-                val dest = File(iconDir, "${addonId}_pack_icon.png")
-                try {
-                    FileUtils.fastCopy(f, dest)
-                    iconPath = dest.absolutePath
-                } catch (_: Exception) { /* ignorar */ }
-            }
-        }
+
+        // `extractAddon` extrae la raíz, pero los .mcpack anidados quedan como
+        // archivos ZIP sin descomprimir. `classify` es quien los expande a
+        // subcarpetas `nested_*`; se invoca para que sus iconos queden
+        // accesibles al recorrido de abajo.
+        runCatching { AddonExtractor.classify(File(extracted)) }
+
+        val extractedDir = File(extracted)
+        // Invalida el índice: `classify` acaba de crear las carpetas `nested_*`
+        // y el índice cacheado no las conoce todavía.
+        DirIndexCache.invalidate(extractedDir)
+
+        val iconPath = findIconFile(
+            DirIndexCache.index(extractedDir).allFiles,
+            addonId,
+            context
+        )
+
         tempDir.deleteRecursively()
         return iconPath
+    }
+
+    /**
+     * Busca el primer archivo con nombre de icono aceptado y lo copia a
+     * `filesDir/addon_icons`.
+     *
+     * Se ordena para que `pack_icon.*` gane sobre `icon.*`: si un addon trae
+     * ambos, el estándar de Minecraft es el primero.
+     */
+    private fun findIconFile(files: List<File>, addonId: String, context: Context): String? {
+        val candidate = files
+            .filter { it.isFile }
+            .mapNotNull { file ->
+                val fileName = file.name.lowercase()
+                val base = fileName.substringBeforeLast('.', "")
+                val ext = fileName.substringAfterLast('.', "")
+                if (base in ICON_BASE_NAMES && ext in ICON_EXTENSIONS) {
+                    Triple(file, base, ext)
+                } else {
+                    null
+                }
+            }
+            .sortedBy { if (it.second == "pack_icon") 0 else 1 }
+            .firstOrNull()
+            ?: return null
+
+        return try {
+            val iconDir = File(context.filesDir, "addon_icons").apply { mkdirs() }
+            val dest = File(iconDir, "${addonId}_pack_icon.${candidate.third}")
+            FileUtils.fastCopy(candidate.first, dest)
+            dest.absolutePath
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /**

@@ -1,5 +1,7 @@
 package com.packforge.app.domain.engine
 
+import com.packforge.app.domain.model.ConflictSeverity
+
 data class FusionIssue(
     val addonName: String,
     val failedFile: String,
@@ -34,10 +36,19 @@ object FusionReportBuilder {
         sb.appendLine("════════════════════════════════════════════")
         sb.appendLine()
 
-        // 1. Issues de la fusión
-        if (issues.isEmpty()) {
+        // 1. Issues de la fusión + VERACIDAD: un "sin errores críticos" es
+        //    falso si quedan hallazgos HIGH sin resolver en el ConflictRegistry
+        //    (integridad, referencias ZIP, modelos/texturas faltantes...).
+        val highPendientes = ConflictRegistry.conflicts.value.count {
+            !it.resolved && it.severity == ConflictSeverity.HIGH
+        }
+        if (issues.isEmpty() && highPendientes == 0) {
             sb.appendLine("✅ FUSIÓN COMPLETADA SIN ERRORES CRÍTICOS")
             sb.appendLine("   El modpack se generó correctamente.")
+        } else if (issues.isEmpty()) {
+            sb.appendLine("⚠️ FUSIÓN COMPLETADA CON $highPendientes HALLAZGOS CRÍTICOS SIN RESOLVER")
+            sb.appendLine("   El .mcaddon se generó, pero hay hallazgos HIGH en el listado de")
+            sb.appendLine("   conflictos de abajo y en la sección 6 del reporte.")
         } else {
             sb.appendLine("⚠️ ISSUES DETECTADOS (${issues.size}):")
             sb.appendLine("------------------------------------------")
