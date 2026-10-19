@@ -53,6 +53,12 @@ object DirIndexCache {
      *   - binaryFiles: png, jpg, tga, ogg, wav, etc.
      *   - filesByPath: path relativo normalizado → File
      */
+    /** Profundidad máxima de carpetas. La estructura oficial de Bedrock rara vez supera 4 niveles
+     * (textures/entity/creeper.png). Un límite de 10 es más que suficiente para cualquier addon
+     * legítimo y detiene la recursión infinita de carpetas repetidas usada como anti-análisis
+     * en addons closed-source. */
+    private const val MAX_DEPTH = 20
+
     fun index(root: File): IndexedDir {
         val key = root.absolutePath
         return cache.getOrPut(key) {
@@ -64,9 +70,13 @@ object DirIndexCache {
 
             if (root.isDirectory) {
                 fun scan(dir: File, depth: Int) {
-                    if (depth > 20) return
+                    if (depth > MAX_DEPTH) return
                     dir.listFiles()?.forEach { f ->
                         if (f.isDirectory) {
+                            // ⚠️ NO filtramos por nombre repetido: la auditoría y el decifrador
+                            // deben VER las rutas de segmentos repetidos (entities/entities/…)
+                            // para reportarlas como filler y restaurar desde ellas. La protección
+                            // contra recursión infinita la aporta MAX_DEPTH, que es suficiente.
                             scan(f, depth + 1)
                         } else {
                             all.add(f)

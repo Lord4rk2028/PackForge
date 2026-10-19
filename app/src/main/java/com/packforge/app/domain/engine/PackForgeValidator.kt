@@ -61,7 +61,10 @@ object PackForgeValidator {
         if (now - lastEmit >= EMIT_INTERVAL_MS || processed == total) {
             lastEmit = now
             _progressState.value = ProgressState(processed, total)
-            callback?.onProgress("Validando referencias... ($processed/$total)")
+            callback?.onProgress(
+                "Validando referencias... ($processed/$total)",
+                if (total > 0) (85 + processed * 4 / total).coerceIn(85, 89) else -1
+            )
         }
     }
 

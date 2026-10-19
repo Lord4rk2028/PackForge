@@ -271,6 +271,11 @@ class ResourcePathRegistry {
                     val alias = buildAlias(rel, hash)
                     committed[alias] = hash
                     renames[rel] = alias
+                    // ACOPLAMIENTO rename↔reescritura: registrar la mutación FÍSICA de ESTA
+                    // fuente para que applySourceRewrites (vía buildRewriteVariants) expanda
+                    // todas las formas de referencia (con/sin extensión, prefijo sounds/ o
+                    // relativas). Solo la ruta física; las variantes las genera el rewriter.
+                    registerSourceMutation(sourceRoot, rel, alias)
                     // Variante sin extensión (referencias lógicas de atlas Bedrock).
                     // B5b (auditoría CORE): INCLUIR sonidos — sound_definitions
                     // referencia "mob/reef/ambient", sin extensión; antes solo

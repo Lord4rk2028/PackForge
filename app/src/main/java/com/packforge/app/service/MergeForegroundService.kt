@@ -304,19 +304,21 @@ class MergeForegroundService : Service() {
     // ──────────────────────────────────────────────────────────────────────────
 
     private fun progressCallback() = object : PackForgeOrchestrator.ProgressCallback {
-        override suspend fun onProgress(message: String) {
+        override suspend fun onProgress(message: String, percent: Int) {
             val now = System.currentTimeMillis()
             val last = lastUpdateTime[message] ?: 0L
             if (now - last < 200L) return
             lastUpdateTime[message] = now
 
-            val raw = percentFor(message)
-            val percent = maxOf(raw, lastNotifiedPercent)
-            if (percent == lastNotifiedPercent && raw < lastNotifiedPercent) return
-            lastNotifiedPercent = percent
-            MergeSession.update(message, percent)
+            // Si el orchestrator proporcionó un porcentaje real, usarlo directamente.
+            // Si no, caer al mapeo por mensaje (estimado).
+            val finalPercent = if (percent >= 0) percent else percentFor(message)
+            val p = maxOf(finalPercent, lastNotifiedPercent)
+            if (p == lastNotifiedPercent && finalPercent < lastNotifiedPercent) return
+            lastNotifiedPercent = p
+            MergeSession.update(message, p)
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.notify(NOTIFICATION_ID, buildNotification(message, percent, true, ThemeAccent.colorBlocking(this@MergeForegroundService)))
+            nm.notify(NOTIFICATION_ID, buildNotification(message, p, true, ThemeAccent.colorBlocking(this@MergeForegroundService)))
         }
     }
 
@@ -447,15 +449,22 @@ class MergeForegroundService : Service() {
         raw?.trim()?.replace(Regex("[/\\\\:*?\"<>|]"), "_")?.ifBlank { "PackForge_Modpack" } ?: "PackForge_Modpack"
 
     private fun percentFor(message: String): Int = when {
-        message.contains("Extrayendo") -> 10
-        message.contains("Clasificando") -> 30
-        message.contains("Behavior") -> 45
-        message.contains("Resource") -> 65
-        message.contains("críticos") -> 72
-        message.contains("dependencias de entidades") -> 76
+        message.contains("Extrayendo") -> 4
+        message.contains("Clasificando") -> 8
+        message.contains("Actualizando referencias") -> 12
+        message.contains("Copiando archivos...") -> 15
+        message.contains("Copiando addon") -> 15
+        message.contains("Copiando archivos (Fase 1") -> 15
+        message.contains("Reparando dependencias") -> 74
+        message.contains("críticos") || message.contains("criticos") -> 76
+        message.contains("dependencias de entidades") -> 78
         message.contains("manifiestos") -> 80
-        message.contains("Validando") -> 85
-        message.contains("Empaquetando") -> 90
+        message.contains("Analizando scripts") -> 82
+        message.contains("Descifrando") -> 84
+        message.contains("Reparando texturas") -> 87
+        message.contains("Validando") -> 89
+        message.contains("integridad") -> 91
+        message.contains("Empaquetando") -> 93
         message.contains("reporte") -> 96
         message.contains("Limpiando") -> 98
         else -> 5
@@ -491,10 +500,13 @@ class MergeForegroundService : Service() {
 
     private fun buildNotification(text: String, percent: Int, ongoing: Boolean, accentColor: Int): Notification {
         ensureChannel()
+        // Muestra el porcentaje numérico exacto delante del texto de fase, para que
+        // el usuario vea el avance real y no solo una barra sin escala.
+        val percentLabel = if (percent in 0..100) "$percent% · " else ""
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_merge)
             .setContentTitle("PackForge · Fusionando modpack")
-            .setContentText(text)
+            .setContentText("$percentLabel$text")
             .setProgress(100, percent, false)
             .setOngoing(ongoing)
             .setOnlyAlertOnce(true)

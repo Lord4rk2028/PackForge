@@ -246,7 +246,9 @@ class JsonIntegritySeverityTest {
     @Test
     fun formatIntegrityFindings_rendersSeverityIcon() {
         val root = tempDir("fmt")
-        write(root, "entity/player.json", decoyText())
+        // Ruta de RELLENO (segmentos repetidos) y no canónica: Bedrock NO la lee -> LOW -> ⚠️.
+        // (entity/player.json daría HIGH; se usa una ruta filler para aislar el render del icono LOW.)
+        write(root, "scratch/scratch/.fmt.json", decoyText())
 
         val lines = MergeReportGenerator.formatIntegrityFindings(
             MergeReportGenerator.auditJsonIntegrity(root)

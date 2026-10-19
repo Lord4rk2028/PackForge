@@ -103,7 +103,7 @@ object PackForgeOrchestrator {
      * Callback para progreso de fusión
      */
     interface ProgressCallback {
-        suspend fun onProgress(message: String)
+        suspend fun onProgress(message: String, percent: Int = -1)
     }
 
     /**
@@ -118,9 +118,13 @@ object PackForgeOrchestrator {
         sourceDirs: List<String>,
         targetDir: File,
         progressCallback: ProgressCallback?,
-        resourceRegistry: ResourcePathRegistry
+        resourceRegistry: ResourcePathRegistry,
+        totalFiles: Int = 0,
+        processedCounter: java.util.concurrent.atomic.AtomicInteger = java.util.concurrent.atomic.AtomicInteger(0)
     ) {
         targetDir.mkdirs()
+
+        val localTotal = if (totalFiles > 0) totalFiles else sourceDirs.map { DirIndexCache.index(File(it)).allFiles.size }.sum()
 
         sourceDirs.forEachIndexed { index, sourcePath ->
             val sourceFile = File(sourcePath)
@@ -143,6 +147,14 @@ object PackForgeOrchestrator {
                     targetFile.outputStream().use { output ->
                         input.copyTo(output, bufferSize = 16384)
                     }
+                }
+                processedCounter.incrementAndGet()
+                if (localTotal > 0 && (fileIndex % 10 == 0 || fileIndex == cachedFiles.size - 1)) {
+                    val done = processedCounter.get()
+                    progressCallback?.onProgress(
+                        "Copiando archivos... $done/$localTotal",
+                        (done * 72 / localTotal).coerceIn(0, 72)
+                    )
                 }
             }
         }
@@ -198,6 +210,13 @@ object PackForgeOrchestrator {
                 seqByPath[rel] = seq
                 val mutatedRel = mutated.relativeTo(targetDir).path.replace('\\', '/')
                 occupied.add(mutatedRel)
+                // ⭐ REQ-B: persiste el renombre en el registro para que
+                // fastMergeAllSources (línea ~134) coloque el archivo en su ruta
+                // mutada y applySourceRewrites (Fase 1B) reescriba las referencias
+                // JSON de ESTE addon. Sin este registro, hasGlobalMutations() era
+                // false, la reescritura se saltaba y las referencias quedaban rotas
+                // al colisionar dos addons en la misma ruta.
+                resourceRegistry.registerSourceMutation(sourceFile, rel, mutatedRel)
             }
         }
         // El plan no copia nada: la caché del destino quedó obsoleta.
@@ -251,7 +270,7 @@ object PackForgeOrchestrator {
 
         try {
             // a) EXTRAER TODOS LOS ADDONS (PARALELIZADO - 3-5x más rápido)
-            progressCallback?.onProgress("Extrayendo addons en paralelo...")
+            progressCallback?.onProgress("Extrayendo addons en paralelo...", 4)
             PackForgeLog.d("PackForge_Export", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             PackForgeLog.d("PackForge_Export", "🚀 INICIANDO EXPORTACIÓN: ${addonPaths.size} addons (PARALELO)")
 
@@ -300,7 +319,7 @@ object PackForgeOrchestrator {
             }
             
             // b) CLASIFICAR ADDONS POR TIPO
-            progressCallback?.onProgress("Clasificando addons...")
+            progressCallback?.onProgress("Clasificando addons...", 8)
             PackForgeLog.d("PackForge_Debug", "Clasificando ${extractedDirs.size} addons extraídos")
             
             val bpDirs = mutableListOf<String>()
@@ -464,7 +483,7 @@ object PackForgeOrchestrator {
             // item_texture.json y description.textures del addon N apuntan a los
             // archivos que N realmente dejó en el pack fusionado.
             if (resourceRegistry.hasGlobalMutations()) {
-                progressCallback?.onProgress("Actualizando referencias de recursos...")
+                progressCallback?.onProgress("Actualizando referencias de recursos...", 12)
                 val tRewriteStart = System.currentTimeMillis()
                 val rewritten = resourceRegistry.applySourceRewrites(
                     bpDirs.map { File(it) } + rpDirs.map { File(it) }
@@ -478,14 +497,17 @@ object PackForgeOrchestrator {
             }
 
             // FASE 1C: Copia Eager - Solo copia de bytes con buffer de 16KB
-            progressCallback?.onProgress("Copiando archivos (Fase 1 - Rápida)...")
+            progressCallback?.onProgress("Copiando archivos (Fase 1 - Rápida)...", 3)
             val tEagerStart = System.currentTimeMillis()
-            fastMergeAllSources(bpDirs, mergedBpDir, progressCallback, resourceRegistry)
-            fastMergeAllSources(rpDirs, mergedRpDir, progressCallback, resourceRegistry)
+            val copyTotalFiles = (bpDirs + rpDirs).map { DirIndexCache.index(File(it)).allFiles.size }.sum()
+            val copyDone = java.util.concurrent.atomic.AtomicInteger(0)
+            fastMergeAllSources(bpDirs, mergedBpDir, progressCallback, resourceRegistry, copyTotalFiles, copyDone)
+            fastMergeAllSources(rpDirs, mergedRpDir, progressCallback, resourceRegistry, copyTotalFiles, copyDone)
             coroutineContext.ensureActive()
             PackForgeLog.d("PackForge_Perf", "⏱️ Fase 1 Eager completada en: ${(System.currentTimeMillis() - tEagerStart) / 1000.0}s")
 
             // FASE 2: Detección de huecos - Solo parsea *.entity.json del output
+            progressCallback?.onProgress("Reparando dependencias faltantes (Fase 2)...", 74)
             progressCallback?.onProgress("Reparando dependencias faltantes (Fase 2)...")
             LazyDependencyResolver.resolveAndRepair(mergedRpDir, rpDirs)
 
@@ -494,7 +516,7 @@ object PackForgeOrchestrator {
             var soundKeyRenames: Map<String, String> = emptyMap()
             var dependencyNotes: List<String> = emptyList()
             if (rpDirs.isNotEmpty() || bpDirs.isNotEmpty()) {
-                progressCallback?.onProgress("Fusionando archivos críticos (paralelo)...")
+                progressCallback?.onProgress("Fusionando archivos críticos (paralelo)...", 76)
                 val rpDirFiles = rpDirs.map { File(it) }
                 val bpDirFiles = bpDirs.map { File(it) }
                 val addonDirFiles = extractedDirs.map { File(it) }
@@ -548,7 +570,7 @@ object PackForgeOrchestrator {
                 // para ver los archivos ya fusionados.
                 if (rpDirs.isNotEmpty()) {
                     try {
-                        progressCallback?.onProgress("Resolviendo dependencias de entidades...");
+                        progressCallback?.onProgress("Resolviendo dependencias de entidades...", 78);
                         dependencyNotes = EntityDependencyResolver.resolve(
                             rpDirs.map { File(it) }, mergedRpDir
                         );
@@ -575,7 +597,7 @@ object PackForgeOrchestrator {
             val totalJsonsMerged = 0 // Se reporta en fase 3 si se desea
             
             // e) GENERAR MANIFIESTOS VINCULADOS
-            progressCallback?.onProgress("Generando manifiestos...")
+            progressCallback?.onProgress("Generando manifiestos...", 80)
             coroutineContext.ensureActive()
             val (bpUuid, rpUuid) = generateLinkedManifests(
                 bpDirs = bpDirs,
@@ -591,7 +613,7 @@ object PackForgeOrchestrator {
             PackForgeLog.d(TAG, "UUIDs generados - BP: $bpUuid, RP: $rpUuid")
 
             // f2) ANÁLISIS DE COLISIONES DE SCRIPTS (no bloqueante)
-            progressCallback?.onProgress("Analizando scripts...")
+            progressCallback?.onProgress("Analizando scripts...", 82)
             val scriptFindings = ScriptCollisionAnalyzer.analyze(File(mergedBpDir, "scripts"))
             scriptFindings.forEach {
                 PackForgeLog.w(TAG, it)
@@ -610,7 +632,7 @@ object PackForgeOrchestrator {
             // archivos canónicos rotos para que la validación vea el pack real.
             // Se procesa RP y BP: los addons cerrados también entierran copias
             // en claro dentro del behavior pack (entidades/bloques/objetos).
-            progressCallback?.onProgress("Descifrando addons closed-source...")
+            progressCallback?.onProgress("Descifrando addons closed-source...", 84)
             PackForgeLog.d("PackForge_Export", "PASO 4d: Ejecutando BedrockDecifrator...")
             val decryptReport = try {
                 BedrockDecifrator.decrypt(mergedRpDir, mergedBpDir)
@@ -634,7 +656,7 @@ object PackForgeOrchestrator {
             // estado REAL del pack. Si una geometría no está en ningún addon,
             // genera un placeholder de caja para que la entidad exista en el
             // mundo en vez de no renderizarse.
-            progressCallback?.onProgress("Reparando texturas y modelos faltantes...")
+            progressCallback?.onProgress("Reparando texturas y modelos faltantes...", 87)
             val healerRepair = try {
                 PackForgeHealer.repair(mergedBpDir, mergedRpDir, extractedDirs)
             } catch (e: Exception) {
@@ -659,7 +681,7 @@ object PackForgeOrchestrator {
             }
 
             // f) EJECUTAR VALIDADOR DE REFERENCIAS CRUZADAS
-            progressCallback?.onProgress("Validando referencias...")
+            progressCallback?.onProgress("Validando referencias...", 89)
             PackForgeLog.d("PackForge_Export", "🔧 PASO 5: Ejecutando validador de referencias...")
             val validationResult = PackForgeValidator.validate(
                 bpDir = mergedBpDir,
@@ -701,7 +723,7 @@ object PackForgeOrchestrator {
             }
 
             // g1) HEALER: análisis post-merge NO bloqueante (texturas rotas, fuzzy match)
-            progressCallback?.onProgress("Analizando integridad del pack...")
+            progressCallback?.onProgress("Analizando integridad del pack...", 91)
             PackForgeLog.d("PackForge_Export", "💊 PASO 5b: Ejecutando PackForgeHealer...")
             val healReport = try {
                 PackForgeHealer.heal(mergedBpDir, mergedRpDir)
@@ -731,7 +753,7 @@ object PackForgeOrchestrator {
              }
 
             // h) EMPAQUETAR
-            progressCallback?.onProgress("Empaquetando modpack...")
+            progressCallback?.onProgress("Empaquetando modpack...", 93)
             coroutineContext.ensureActive()
             val outputFile = File(outputDir, "$customName.mcaddon")
 
@@ -789,7 +811,7 @@ object PackForgeOrchestrator {
             }
 
             // ══ VALIDACIÓN POST-FUSIÓN + REPORTE LEGIBLE ══
-            progressCallback?.onProgress("Generando reporte de fusión...")
+            progressCallback?.onProgress("Generando reporte de fusión...", 96)
             val syntaxErrors = MergeReportGenerator.validateJsonSyntax(mergedBpDir) +
                 MergeReportGenerator.validateJsonSyntax(mergedRpDir)
 
@@ -869,7 +891,7 @@ object PackForgeOrchestrator {
             PackForgeLog.d("PackForge_Export", "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
             
             // h) LIMPIEZA
-            progressCallback?.onProgress("Limpiando temporales...")
+            progressCallback?.onProgress("Limpiando temporales...", 98)
             cleanupTempDirs(tempDir)
             val reportPath = File(outputDir, "fusion_report.txt").absolutePath
             // OJO: AÑADIR (append), no sobrescribir. El reporte detallado ya se
