@@ -65,6 +65,62 @@ object BedrockDecifrator {
 
     private fun isHiddenName(name: String) = name.startsWith(".")
 
+    /**
+     * Claves raíz REALES de Bedrock. Se usan para reconocer un señuelo por
+     * ANAGRAMA: el addon cerrado reordena las letras de cada clave
+     * (`format_version` -> `_rovmofeatrsin`), así que la clave girada no es
+     * ninguna de estas, pero sus letras sí coinciden exactamente con una.
+     */
+    private val KNOWN_ROOT_KEYS = setOf(
+        "format_version", "render_controllers", "animation_controllers", "animations",
+        "minecraft:geometry", "minecraft:client_entity", "minecraft:entity",
+        "minecraft:block", "minecraft:item", "minecraft:attachable",
+        "minecraft:particle_effect", "minecraft:spawn_rules", "minecraft:fog_settings",
+        "minecraft:material", "minecraft:variant", "minecraft:biome",
+        "minecraft:feature_rules", "minecraft:ore_feature", "minecraft:sequence_feature",
+        "minecraft:single_block_feature", "minecraft:aggregate_feature",
+        "minecraft:item_catalog", "minecraft:trading", "sound_definitions",
+        "particles", "models", "geometry", "pools"
+    )
+
+    /** Longitud mínima para que una coincidencia de anagrama sea significativa. */
+    private const val MIN_ANAGRAM_LENGTH = 6
+
+    /** Firma ordenada (letras+dígitos) de cada clave conocida. */
+    private val KNOWN_KEY_SIGNATURES: Set<String> = KNOWN_ROOT_KEYS
+        .map { key -> keySignature(key) }
+        .filter { it.length >= MIN_ANAGRAM_LENGTH }
+        .toSet()
+
+    private fun keySignature(value: String): String =
+        value.lowercase()
+            .filter { it.isLetterOrDigit() }
+            .toCharArray()
+            .sorted()
+            .joinToString("")
+
+    /**
+     * ¿El documento es un SEÑUELO con claves mezcladas?
+     *
+     * Un archivo legítimo tiene claves reales (`format_version`,
+     * `minecraft:geometry`…), que se descartan por ser conocidas. El señuelo
+     * tiene claves giradas: ninguna es conocida, pero la mitad o más de ellas
+     * son anagramas exactos de una clave real. Exigir esa proporción evita
+     * falsos positivos con una clave suelta de nombre raro.
+     */
+    private fun looksLikeScrambledDecoy(json: JSONObject): Boolean {
+        val keys = json.keys().asSequence().toList()
+        if (keys.isEmpty()) return false
+
+        val scrambled = keys.count { key ->
+            if (key.lowercase() in KNOWN_ROOT_KEYS) return@count false
+            val signature = keySignature(key)
+            signature.length >= MIN_ANAGRAM_LENGTH && signature in KNOWN_KEY_SIGNATURES
+        }
+
+        return scrambled > 0 && scrambled * 2 >= keys.size
+    }
+
     /** La ruta tiene un segmento repetido? (firma del relleno anti-analisis) */
     private fun hasRepeatedSegment(relPath: String): Boolean {
         val segs = relPath.split('/')
@@ -106,9 +162,18 @@ object BedrockDecifrator {
     /**
      * Lee un JSON del pack tolerando el cebo de comentario y las claves
      * duplicadas del addon closed-source; `null` si sigue sin ser valido.
+     *
+     * ⚠️ Se RECORTA EL BOM UTF-8 (`\uFEFF`) antes de parsear. `readText(UTF_8)`
+     * lo conserva y org.json lo trata como carácter inválido: cualquier JSON
+     * guardado con BOM (muy común: Bloc, VS Code, editores de Windows) fallaba
+     * al parsear, se clasificaba como "closed-source roto" y acababa
+     * neutralizado a `.bak` — es decir, BORRADO del pack fusionado. Medido con
+     * Alex's Mobs + New Bows: 129 bloques, 61 entidades y 249 loot_tables
+     * desaparecían del .mcaddon por este motivo.
      */
     private fun readJson(file: File): JSONObject? = try {
-        LenientJson.parseObject(file.readText(Charsets.UTF_8))
+        val text = file.readText(Charsets.UTF_8).removePrefix("\uFEFF").trimStart()
+        LenientJson.parseObject(text)
     } catch (e: Exception) {
         null
     }
@@ -129,6 +194,29 @@ object BedrockDecifrator {
             json.has("minecraft:item") -> "minecraft:item"
             json.keys().asSequence().any { it.startsWith("minecraft:recipe_") } ->
                 "minecraft:recipe"
+            // ---- B10: firmas FALTANTES (contenido legítimo destruido) ----
+            // Con esta lista incompleta, cualquier JSON válido de estas familias
+            // caía en "sin clave raíz reconocible" → neutralizado a `.bak` →
+            // fuera del .mcaddon. Se perdían loot_tables (raíz "pools"),
+            // attachables, spawn_rules, partículas, fogs, biomas, features,
+            // catálogos de items, trading, materiales y el sound_definitions.
+            json.has("pools") -> "minecraft:loot_table"
+            json.has("minecraft:loot_table") -> "minecraft:loot_table"
+            json.has("minecraft:attachable") -> "minecraft:attachable"
+            json.has("minecraft:spawn_rules") -> "minecraft:spawn_rules"
+            json.has("minecraft:particle_effect") -> "minecraft:particle_effect"
+            json.has("minecraft:fog_settings") -> "minecraft:fog"
+            json.has("minecraft:biome") -> "minecraft:biome"
+            json.has("minecraft:feature_rules") -> "minecraft:feature_rules"
+            json.has("minecraft:aggregate_feature") -> "minecraft:feature"
+            json.has("minecraft:sequence_feature") -> "minecraft:feature"
+            json.has("minecraft:single_block_feature") -> "minecraft:feature"
+            json.has("minecraft:ore_feature") -> "minecraft:feature"
+            json.has("minecraft:item_catalog") -> "minecraft:item_catalog"
+            json.has("minecraft:trading") -> "minecraft:trading"
+            json.has("minecraft:material") -> "minecraft:material"
+            json.has("minecraft:variant") -> "minecraft:variant"
+            json.has("sound_definitions") -> "sound_definitions"
             else -> null
         }
     }
@@ -400,7 +488,7 @@ object BedrockDecifrator {
                 val srcJson = readJson(cf.file) ?: continue
 
                 // GUARDA 1: el origen debe ser JSON valido con raiz reconocida.
-                if (srcJson == null || rootSignature(srcJson) == null) continue
+                if (rootSignature(srcJson) == null) continue
 
                 val targetRel = buildTargetPath(dir, rootKey, File(brokenRel).name)
                 val target = File(root, targetRel)
@@ -449,6 +537,24 @@ object BedrockDecifrator {
             val resolved = restored.map { it.targetPath }.toSet() + renamedDecoys
             broken.filter { it !in resolved }.forEach { brokenRel ->
                 val source = File(root, brokenRel)
+
+                // 🛡️ RED DE SEGURIDAD: si el archivo PARSEA como JSON, es
+                // contenido legítimo (una loot table con raíz "pools", un
+                // attachable, un spawn_rule…) y NUNCA se neutraliza. Antes
+                // bastaba con que su raíz no estuviera en una lista corta para
+                // renombrarlo a `.bak`, y eso borraba del pack cientos de
+                // archivos válidos del addon (ver B10 en rootSignature). Este
+                // guardado convierte el decifrador en fail-open: como mucho
+                // deja pasar un decoy, jamás destruye contenido real.
+                val sourceJson = readJson(source)
+                if (sourceJson != null && !looksLikeScrambledDecoy(sourceJson)) {
+                    PackForgeLog.d(
+                        TAG,
+                        "[$packLabel] JSON válido sin raíz clasificada, se conserva: $brokenRel"
+                    )
+                    return@forEach
+                }
+
                 val bak = File(root, "$brokenRel.bak")
                 if (source.exists() && !bak.exists() && source.renameTo(bak)) {
                     neutralizedUnrecoverable += brokenRel

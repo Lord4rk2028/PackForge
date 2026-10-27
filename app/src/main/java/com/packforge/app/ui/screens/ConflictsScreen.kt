@@ -76,6 +76,9 @@ import com.packforge.app.domain.model.ConflictStrategy
 import com.packforge.app.domain.model.ConflictType
 import com.packforge.app.domain.model.MergeConflict
 import com.packforge.app.ui.components.ErrorState
+import com.packforge.app.ui.theme.ExpressiveElevation
+import com.packforge.app.ui.theme.ExpressiveShapes
+import com.packforge.app.ui.theme.rememberExpressiveHaptics
 
 @Composable
 fun ConflictsScreen(
@@ -94,7 +97,9 @@ fun ConflictsScreen(
         return
     }
 
-    val resolvedCount = conflicts.count { resolutions.containsKey(it.id) }
+    val resolvedCount = conflicts.count {
+        it.resolution != com.packforge.app.domain.model.ConflictResolution.UNRESOLVED
+    }
     val totalCount = conflicts.size
 
     val listState = rememberLazyListState()
@@ -121,9 +126,13 @@ fun ConflictsScreen(
 
         // ESTRATEGIA DE CONFLICTO
         item {
+            val strategyHaptics = rememberExpressiveHaptics()
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
+                shape = ExpressiveShapes.card,
+                elevation = CardDefaults.elevatedCardElevation(
+                    defaultElevation = ExpressiveElevation.card
+                ),
                 colors = CardDefaults.elevatedCardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                 )
@@ -140,7 +149,10 @@ fun ConflictsScreen(
                             val selected = conflictStrategy == strategy
                             FilterChip(
                                 selected = selected,
-                                onClick = { onConflictStrategyChange(strategy) },
+                                onClick = {
+                                    strategyHaptics.light()
+                                    onConflictStrategyChange(strategy)
+                                },
                                 label = {
                                     Text(
                                         text = strategy.name.replace("_", " ").lowercase().replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() },
@@ -172,7 +184,8 @@ fun ConflictsScreen(
                     ConflictCard(
                         conflict = conflict,
                         addons = addons,
-                        resolution = resolutions[conflict.id],
+                        resolution = resolutions[conflict.id]
+                            ?: conflict.winnerAddonId?.takeIf { conflict.isAutoResolved },
                         onResolve = onResolve,
                         onDismiss = onDismiss
                     )
@@ -189,7 +202,13 @@ fun ConflictSummaryCard(total: Int, resolved: Int, conflicts: List<Conflict>) {
     val progress = if (total > 0) resolved.toFloat() / total else 0f
     val criticalUnresolved = conflicts.count { it.severity == ConflictSeverity.CRITICAL && it.resolution == ConflictResolution.UNRESOLVED }
 
-    ElevatedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = ExpressiveShapes.card,
+        elevation = CardDefaults.elevatedCardElevation(
+            defaultElevation = ExpressiveElevation.card
+        )
+    ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.conflict_resolution_title), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -210,7 +229,7 @@ fun ConflictSummaryCard(total: Int, resolved: Int, conflicts: List<Conflict>) {
                 ).forEach { (severity, color) ->
                     val count = conflicts.count { it.severity == severity }
                     Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Surface(shape = RoundedCornerShape(8.dp), color = color.copy(alpha = 0.15f)) {
+                        Surface(shape = ExpressiveShapes.statChip, color = color.copy(alpha = 0.15f)) {
                             Text(
                                 text = count.toString(),
                                 style = MaterialTheme.typography.titleSmall,
@@ -279,13 +298,17 @@ fun SeverityHeader(severity: ConflictSeverity) {
 fun ConflictCard(conflict: Conflict, addons: List<Addon>, resolution: String?, onResolve: (String, String) -> Unit, onDismiss: (String) -> Unit) {
     var expanded by remember { mutableStateOf(resolution == null) }
     val isResolved = resolution != null
+    val haptics = rememberExpressiveHaptics()
 
     ElevatedCard(
-        modifier = Modifier.fillMaxWidth().border(1.dp, if (isResolved) MaterialTheme.colorScheme.primary.copy(0.4f) else Color.Transparent, RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp)
+        modifier = Modifier.fillMaxWidth().border(1.dp, if (isResolved) MaterialTheme.colorScheme.primary.copy(0.4f) else Color.Transparent, ExpressiveShapes.card),
+        shape = ExpressiveShapes.card,
+        elevation = CardDefaults.elevatedCardElevation(
+            defaultElevation = ExpressiveElevation.card
+        )
     ) {
         Column {
-            Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().clickable { haptics.light(); expanded = !expanded }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(if (isResolved) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (isResolved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
@@ -313,8 +336,8 @@ fun ConflictCard(conflict: Conflict, addons: List<Addon>, resolution: String?, o
                     affected.forEach { addon ->
                         val selected = resolution == addon.id
                         Surface(
-                            modifier = Modifier.fillMaxWidth().clickable { onResolve(conflict.id, addon.id) },
-                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { haptics.medium(); onResolve(conflict.id, addon.id) },
+                            shape = ExpressiveShapes.action,
                             color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                             border = borderStroke(selected)
                         ) {
@@ -332,8 +355,8 @@ fun ConflictCard(conflict: Conflict, addons: List<Addon>, resolution: String?, o
                     if (conflict.type == ConflictType.FILE_OVERLAP) {
                         val isMerge = resolution == "merge"
                         Surface(
-                            modifier = Modifier.fillMaxWidth().clickable { onResolve(conflict.id, "merge") },
-                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { haptics.medium(); onResolve(conflict.id, "merge") },
+                            shape = ExpressiveShapes.action,
                             color = if (isMerge) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
                             border = borderStroke(isMerge, MaterialTheme.colorScheme.secondary)
                         ) {
@@ -513,13 +536,14 @@ fun ConflictBattleCard(
 
     val isResolved = conflict.resolved
     val resolvedResolution = conflict.resolution
+    val battleHaptics = rememberExpressiveHaptics()
 
     Card(
         border = BorderStroke(
             2.dp,
             if (isResolved) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else borderColor
         ),
-        shape = RoundedCornerShape(16.dp),
+        shape = ExpressiveShapes.card,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = if (isResolved) 
@@ -552,7 +576,7 @@ fun ConflictBattleCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Surface(shape = RoundedCornerShape(8.dp), color = if (isResolved) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else borderColor.copy(alpha = 0.15f)) {
+                Surface(shape = ExpressiveShapes.statChip, color = if (isResolved) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else borderColor.copy(alpha = 0.15f)) {
                     Text(
                         text = if (isResolved) "RESUELTO" else conflict.severity.name,
                         style = MaterialTheme.typography.labelSmall,
@@ -607,7 +631,7 @@ fun ConflictBattleCard(
             // ── Fusionar ambos ───────────────────────────────
             val isMerge = resolvedResolution == MergeConflict.RESOLUTION_MERGE
             TextButton(
-                onClick = { if (!isResolved) onResolve(MergeConflict.RESOLUTION_MERGE) },
+                onClick = { if (!isResolved) { battleHaptics.medium(); onResolve(MergeConflict.RESOLUTION_MERGE) } },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isResolved,
                 colors = ButtonDefaults.textButtonColors(
@@ -654,11 +678,12 @@ fun BattleSide(
     onClick: () -> Unit,
     enabled: Boolean = true
 ) {
+    val haptics = rememberExpressiveHaptics()
     Surface(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled) { onClick() },
-        shape = RoundedCornerShape(12.dp),
+            .clip(ExpressiveShapes.action)
+            .clickable(enabled = enabled) { haptics.medium(); onClick() },
+        shape = ExpressiveShapes.action,
         color = if (selected) color.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface,
         border = BorderStroke(
             if (selected) 2.dp else 1.dp,

@@ -27,6 +27,8 @@ import kotlin.math.abs
 object PackForgeHealer {
     private const val TAG = "PackForge_Healer"
     private const val FUZZY_THRESHOLD = 0.85
+    /** Umbral para auto-reparar referencias rotas sin intervención del usuario (>= 95% de similitud). */
+    private const val AUTO_REPAIR_THRESHOLD = 0.95
     /** El healer es diagnóstico: nunca debe retener la exportación por miles de avisos similares. */
     private const val MAX_REFERENCE_REPORTS = 100
 
@@ -56,15 +58,18 @@ object PackForgeHealer {
     data class RepairResult(
         val texturesCopied: Int = 0,
         val modelsCopied: Int = 0,
+        /** Referencias de textura auto-reparadas por fuzzy-match >= 0.95. */
+        val autoRepairedReferences: Int = 0,
         /** Geometría placeholder generada (caja 8x8x8) para entidades sin geometría en ningún addon. */
         val placeholdersGenerated: Int = 0,
         val stillMissingTextures: List<String> = emptyList(),
         val stillMissingModels: List<String> = emptyList()
     ) {
-        val totalFixed get() = texturesCopied + modelsCopied
+        val totalFixed get() = texturesCopied + modelsCopied + autoRepairedReferences
         val hasRemainingIssues get() = stillMissingTextures.isNotEmpty() || stillMissingModels.isNotEmpty()
         val summary get() = "Healer.repair: ${texturesCopied} textura(s) copiada(s), " +
             "${modelsCopied} modelo(s) copiado(s) [$placeholdersGenerated placeholder(s) de geometría], " +
+            "${autoRepairedReferences} referencia(s) auto-reparada(s), " +
             "${stillMissingTextures.size + stillMissingModels.size} aún faltante(s)"
     }
 
@@ -95,9 +100,13 @@ object PackForgeHealer {
             val textureInventory = collectTextureInventory(mergedRpDir)
 
             for (texRef in textureRefs) {
-                if (texRef in textureInventory) continue
+                // Normalizar: quitar prefijo "textures/" para comparar con el inventario
+                // del disco (que almacena rutas relativas sin el prefijo "textures/").
+                val normalizedTexRef = texRef.removePrefix("textures/")
+                if (normalizedTexRef in textureInventory) continue
 
-                val stem = texRef.removePrefix("textures/").substringBeforeLast('.')
+                // stem = solo el nombre de archivo sin extensión (ej. "mob0", no "entity/mob0")
+                val stem = normalizedTexRef.substringAfterLast('/').substringBeforeLast('.')
                 var copied = false
 
                 for (ext in TEXTURE_EXTENSIONS) {
@@ -126,9 +135,12 @@ object PackForgeHealer {
             val modelInventory = collectModelInventory(mergedRpDir)
 
             for (modelRef in modelRefs) {
-                if (modelRef in modelInventory) continue
+                // modelRef puede venir como "models/entity/geometry.foo" o solo "geometry.foo";
+                // el inventario de disco guarda nombres de archivo sin prefijo "models/entity/".
+                val normalizedModelRef = modelRef.removePrefix("models/entity/")
+                if (normalizedModelRef in modelInventory) continue
 
-                val fileName = modelRef.substringAfterLast('/')
+                val fileName = normalizedModelRef.substringAfterLast('/')
                 var copied = false
 
                 for (ext in MODEL_EXTENSIONS) {
@@ -648,7 +660,7 @@ object PackForgeHealer {
     }
 
     /** Extrae referencias de textura recursivamente de un JSONObject. */
-    private fun extractTextureRefs(obj: Any, refs: MutableSet<String>) {
+    private fun extractTextureRefs(obj: Any?, refs: MutableSet<String>) {
         when (obj) {
             is JSONObject -> {
                 obj.keys().forEach { key ->
@@ -695,7 +707,7 @@ object PackForgeHealer {
         return refs
     }
 
-    private fun extractModelRefs(obj: Any, refs: MutableSet<String>) {
+    private fun extractModelRefs(obj: Any?, refs: MutableSet<String>) {
         when (obj) {
             is JSONObject -> {
                 obj.keys().forEach { key ->
@@ -738,6 +750,245 @@ object PackForgeHealer {
         return models
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // AUTO-REPARACIÓN DE REFERENCIAS ROTAS (fuzzy-match >= 0.95)
+    // ═══════════════════════════════════════════════════════════════════
+
+    fun autoRepairReferences(
+        mergedRpDir: File,
+        originalAddonPaths: List<String>
+    ): Int {
+        if (!mergedRpDir.isDirectory) return 0
+
+        val textureInventory = collectTextureInventory(mergedRpDir)
+        val allTextures = collectAllAvailableTextures(originalAddonPaths)
+        var repairedCount = 0
+
+        mergedRpDir.walkTopDown()
+            .filter { it.isFile && it.extension.equals("json", ignoreCase = true) }
+            .forEach { jsonFile ->
+                try {
+                    val originalContent = jsonFile.readText(StandardCharsets.UTF_8)
+                    val modifiedContent = repairTextureRefsInJson(
+                        originalContent,
+                        textureInventory,
+                        allTextures
+                    )
+                    if (modifiedContent != originalContent) {
+                        jsonFile.writeText(modifiedContent, StandardCharsets.UTF_8)
+                        repairedCount++
+                        PackForgeLog.d(TAG, "🔧 Auto-reparado: ${jsonFile.name}")
+                    }
+                } catch (e: Exception) {
+                    PackForgeLog.w(TAG, "No se pudo auto-reparar ${jsonFile.name}: ${e.message}")
+                }
+            }
+
+        return repairedCount
+    }
+
+    private fun collectAllAvailableTextures(originalAddonPaths: List<String>): Map<String, String> {
+        val textures = hashMapOf<String, String>()
+        originalAddonPaths.forEach { root ->
+            val dir = File(root)
+            if (!dir.isDirectory) return@forEach
+            dir.walkTopDown()
+                .filter { it.isFile && it.extension.lowercase() in listOf("png", "tga", "jpg") }
+                .forEach { file ->
+                    val name = file.nameWithoutExtension
+                    textures.putIfAbsent(name, file.invariantSeparatorsPath)
+                }
+        }
+        return textures
+    }
+
+    private fun repairTextureRefsInJson(
+        content: String,
+        textureInventory: Set<String>,
+        allTextures: Map<String, String>
+    ): String {
+        var modified = false
+        var result = content
+
+        val refs = mutableListOf<Pair<String, String>>()
+        try {
+            extractTextureRefsWithPaths(JSONObject(result), "", refs)
+        } catch (e: Exception) {
+            return content
+        }
+
+        for ((keyPath, texRef) in refs) {
+            val normalized = texRef.removePrefix("textures/")
+            if (normalized in textureInventory) continue
+
+            val stem = normalized.substringAfterLast('/').substringBeforeLast('.')
+            val bestMatch = findBestTextureMatch(stem, allTextures)
+
+            if (bestMatch != null) {
+                val (candidateName, _) = bestMatch
+                val replacement = if (texRef.startsWith("textures/")) {
+                    "textures/$candidateName"
+                } else {
+                    candidateName
+                }
+                result = replaceTextureRefAtPath(result, keyPath, replacement)
+                modified = true
+                PackForgeLog.d(TAG, "  Auto-reparada referencia: '$texRef' → '$replacement'")
+            }
+        }
+
+        return if (modified) result else content
+    }
+
+    private fun extractTextureRefsWithPaths(
+        obj: Any?,
+        currentPath: String,
+        refs: MutableList<Pair<String, String>>
+    ) {
+        when (obj) {
+            is JSONObject -> {
+                obj.keys().forEach { key ->
+                    val newPath = if (currentPath.isEmpty()) key else "$currentPath.$key"
+                    val value = obj.opt(key)
+                    when (value) {
+                        is String -> {
+                            val str = value
+                            if (isTextureReference(str)) {
+                                refs.add(Pair(newPath, str))
+                            }
+                        }
+                        is JSONObject, is JSONArray -> {
+                            extractTextureRefsWithPaths(value, newPath, refs)
+                        }
+                        else -> Unit
+                    }
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until obj.length()) {
+                    val newPath = "$currentPath[$i]"
+                    extractTextureRefsWithPaths(obj.opt(i), newPath, refs)
+                }
+            }
+        }
+    }
+
+    private fun isTextureReference(str: String): Boolean {
+        val lower = str.lowercase()
+        return (lower.contains("texture") || lower.contains("textures/") ||
+            lower.endsWith(".png") || lower.endsWith(".tga") || lower.endsWith(".jpg")) &&
+            str.length > 2 && str.length < 200
+    }
+
+    private fun findBestTextureMatch(
+        stem: String,
+        allTextures: Map<String, String>
+    ): Pair<String, String>? {
+        if (allTextures.isEmpty()) return null
+
+        var bestScore = 0.0
+        var bestCandidate: String? = null
+
+        allTextures.keys.forEach { candidateName ->
+            val score = similarityScore(stem, candidateName)
+            if (score > bestScore) {
+                bestScore = score
+                bestCandidate = candidateName
+            }
+        }
+
+        return if (bestScore >= AUTO_REPAIR_THRESHOLD && bestCandidate != null) {
+            Pair(bestCandidate, allTextures[bestCandidate]!!)
+        } else {
+            null
+        }
+    }
+
+    private fun similarityScore(a: String, b: String): Double {
+        if (a.isEmpty() && b.isEmpty()) return 1.0
+        if (a.isEmpty() || b.isEmpty()) return 0.0
+
+        val aLower = a.lowercase()
+        val bLower = b.lowercase()
+
+        if (aLower == bLower) return 1.0
+
+        if (aLower.contains(bLower) || bLower.contains(aLower)) {
+            val shorter = if (aLower.length < bLower.length) aLower.length else bLower.length
+            val longer = if (aLower.length > bLower.length) aLower.length else bLower.length
+            return shorter.toDouble() / longer
+        }
+
+        val distance = levenshteinDistance(aLower, bLower)
+        val maxLen = maxOf(aLower.length, bLower.length)
+        return if (maxLen == 0) 1.0 else 1.0 - (distance.toDouble() / maxLen)
+    }
+
+    private fun levenshteinDistance(s1: String, s2: String): Int {
+        val dp = Array(s1.length + 1) { IntArray(s2.length + 1) }
+        for (i in 0..s1.length) dp[i][0] = i
+        for (j in 0..s2.length) dp[0][j] = j
+
+        for (i in 1..s1.length) {
+            for (j in 1..s2.length) {
+                val cost = if (s1[i - 1] == s2[j - 1]) 0 else 1
+                dp[i][j] = minOf(
+                    dp[i - 1][j] + 1,
+                    dp[i][j - 1] + 1,
+                    dp[i - 1][j - 1] + cost
+                )
+            }
+        }
+        return dp[s1.length][s2.length]
+    }
+
+    private fun replaceTextureRefAtPath(
+        json: String,
+        keyPath: String,
+        replacement: String
+    ): String {
+        val keys = keyPath.split(".")
+        try {
+            val obj = JSONObject(json)
+            val target = navigateToParent(obj, keys.dropLast(1))
+            if (target != null && jsonObjectHasKey(target, keys.last())) {
+                target.put(keys.last(), replacement)
+                return obj.toString(2)
+            }
+        } catch (e: Exception) {
+            return replaceTextSimple(json, keyPath, replacement)
+        }
+        return json
+    }
+
+    private fun navigateToParent(obj: JSONObject, keys: List<String>): JSONObject? {
+        var current: Any? = obj
+        for (key in keys) {
+            if (current is JSONObject) {
+                current = current.opt(key)
+            } else {
+                return null
+            }
+        }
+        return current as? JSONObject
+    }
+
+    private fun jsonObjectHasKey(obj: JSONObject, key: String): Boolean {
+        val keysIter = obj.keys()
+        while (keysIter.hasNext()) {
+            if (keysIter.next() == key) return true
+        }
+        return false
+    }
+
+    private fun replaceTextSimple(json: String, keyPath: String, replacement: String): String {
+        val lastKey = keyPath.substringAfterLast(".")
+        val regex = Regex("\"$lastKey\"\\s*:\\s*\"[^\"]*\"")
+        return regex.replace(json) { match ->
+            val oldValue = match.value.substringAfterLast('"').substringBeforeLast('"')
+            match.value.replace(oldValue, replacement)
+        }
+    }
 }
 
 

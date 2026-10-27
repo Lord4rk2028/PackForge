@@ -14,6 +14,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import com.packforge.app.ui.components.bounceClick
+import com.packforge.app.ui.components.ExpressiveAlertDialog
+import com.packforge.app.ui.components.ExpressiveDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -90,6 +92,7 @@ import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.AddonUpdateState
 import com.packforge.app.domain.model.ModpackUpdateReport
 import com.packforge.app.domain.model.UpdatePhase
+import com.packforge.app.domain.model.withSafeLists
 import com.packforge.app.ui.viewmodel.PackForgeViewModel
 import com.packforge.app.ui.viewmodel.ThemeViewModel
 import java.io.File
@@ -211,7 +214,7 @@ fun StudioScreen(
             checkingUpdatesForId = checkingUpdatesForId
         )
         modpackToRegenerate?.let { target ->
-            AlertDialog(
+            ExpressiveAlertDialog(
                 onDismissRequest = { modpackToRegenerate = null },
                 title = { Text(stringResource(R.string.studio_regenerate_title), fontWeight = FontWeight.Bold) },
                 text = {
@@ -775,7 +778,7 @@ fun MyModpacksScreen(
 
     // Diálogo con bordes de colores para compartir modpacks
     if (showShareDialog) {
-        androidx.compose.ui.window.Dialog(
+        ExpressiveDialog(
             onDismissRequest = { showShareDialog = false }
         ) {
             Surface(
@@ -1047,12 +1050,17 @@ fun MyModpacksScreen(
                     // JSON por tarjeta; hacerlo en el hilo principal en cada
                     // pasada de composición era trabajo de decenas de
                     // milisegundos justo mientras se desliza la lista.
-                    var source by remember(modpack.id) { mutableStateOf<ModpackSource?>(null) }
+                    //
+                    // El valor inicial sale de la caché (peek): sin eso, cada
+                    // vez que una tarjeta reaparecía al scrollear se volvía a
+                    // empezar en `null` y el badge de origen poppeaba 1-2
+                    // frames después —un "parpadeo" perceptible en el scroll.
+                    val sourceHead = modpack.sourceJsonHead
+                    var source by remember(modpack.id) { mutableStateOf(ModpackParsingCache.cachedSource(sourceHead)?.value as? ModpackSource) }
                     LaunchedEffect(modpack.id) {
-                        val head = modpack.sourceJsonHead
-                        if (head.isNotBlank()) {
+                        if (sourceHead.isNotBlank()) {
                             source = withContext(Dispatchers.Default) {
-                                extractModpackSource(head)
+                                extractModpackSource(sourceHead)
                             }
                         }
                     }
@@ -1077,9 +1085,8 @@ fun MyModpacksScreen(
     }
 
     modpackToDelete?.let { m ->
-        AlertDialog(onDismissRequest = { modpackToDelete = null }, title = { Text(stringResource(R.string.studio_delete_title)) },
+        ExpressiveAlertDialog(onDismissRequest = { modpackToDelete = null }, title = { Text(stringResource(R.string.studio_delete_title)) },
             text = { Text(stringResource(R.string.studio_delete_message, m.name)) },
-            shape = ExpressiveShapes.dialog,
             confirmButton = {
                 TextButton(onClick = {
                     haptics.heavy()
@@ -1298,11 +1305,16 @@ fun ModpackLibraryCard(
     val coverPath = modpack.coverUriString
     // Coil necesita un File (no un String de ruta absoluta) para cargar la
     // portada persistida en almacenamiento interno; un content:// se pasa tal cual.
-    val coverModel: Any? = when {
-        coverPath == null -> null
-        coverPath.startsWith("/") -> File(coverPath)
-        coverPath.startsWith("file://") -> try { File(java.net.URI(coverPath)) } catch (e: Exception) { coverPath }
-        else -> coverPath
+    // ⚡ MEMOIZADO: sin `remember`, cada recomposición (scroll, redraw, resize)
+    // volvía a ejecutar startsWith + exception handling + constructor de File.
+    // Ahora se calcula solo cuando coverPath cambia realmente.
+    val coverModel: Any? = remember(coverPath) {
+        when {
+            coverPath == null -> null
+            coverPath.startsWith("/") -> File(coverPath)
+            coverPath.startsWith("file://") -> try { File(java.net.URI(coverPath)) } catch (e: Exception) { coverPath }
+            else -> coverPath
+        }
     }
 
     // ── Borde con el COLOR DOMINANTE de la portada ─────────────────
@@ -1382,7 +1394,7 @@ fun ModpackLibraryCard(
         } else {
             // Mientras carga la fila completa: ventana con indicador, para que
             // el toque tenga respuesta inmediata en lugar de no hacer nada.
-            androidx.compose.ui.window.Dialog(onDismissRequest = { showAddonsDialog = false }) {
+            ExpressiveDialog(onDismissRequest = { showAddonsDialog = false }) {
                 Surface(
                     shape = ExpressiveShapes.dialog,
                     color = MaterialTheme.colorScheme.surface
@@ -1651,11 +1663,20 @@ fun ModpackLibraryCard(
 
 private fun formatModpackDate(timestamp: Long): String {
     return try {
-        SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
-            .format(Date(timestamp))
+        // UN solo formato compartido: crear `SimpleDateFormat` por tarjeta y
+        // por pasada de composición inicializa datos de locale en el hilo
+        // principal justo cuando una tarjeta entra al viewport durante el
+        // scroll. Se usa exclusivamente desde el hilo principal (Composable),
+        // donde SimpleDateFormat no necesita sincronización.
+        ModpackDateCache.format.format(Date(timestamp))
     } catch (e: Exception) {
         ""
     }
+}
+
+/** Inicialización cara amortizada fuera del hot path de scroll. */
+private object ModpackDateCache {
+    val format = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
 }
 
 /** Origen web de un addon dentro de un modpack guardado. */
@@ -1683,7 +1704,7 @@ fun decodeModpackAddons(addonsJson: String): List<Addon> {
             ?: emptyList()
     } catch (e: Exception) {
         emptyList()
-    }
+    }.withSafeLists()
 }
 
 /**

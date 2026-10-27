@@ -2,6 +2,9 @@ package com.packforge.app
 
 import com.packforge.app.R
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.res.stringResource
 import android.content.Intent
@@ -10,6 +13,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,8 +46,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavOptions
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -56,6 +62,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.wrapContentWidth
 import com.packforge.app.domain.model.OperationProgress
 import com.packforge.app.ui.components.PackForgeTopBar
+import com.packforge.app.ui.components.ExpressiveAlertDialog
 import com.packforge.app.ui.navigation.Screen
 import com.packforge.app.ui.navigation.getScreenFromRoute
 import com.packforge.app.ui.screens.ConflictsScreen
@@ -68,6 +75,9 @@ import com.packforge.app.ui.theme.PackForgeTheme
 import com.packforge.app.ui.viewmodel.PackForgeEvent
 import com.packforge.app.ui.viewmodel.PackForgeViewModel
 import com.packforge.app.ui.viewmodel.ThemeViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collectLatest
 import com.packforge.app.ui.components.FloatingBottomBar
 import com.packforge.app.ui.navigation.createEnterTransition
@@ -135,69 +145,77 @@ class MainActivity : ComponentActivity() {
         }
         if (uris.isEmpty()) return
 
-        // Validar archivos: .mcaddon/.mcpack siempre válidos, .zip solo si tiene estructura de addon
-        val valid = uris.filter { uri ->
-            val p = uri.toString().lowercase()
-            val seg = uri.lastPathSegment?.lowercase() ?: ""
+        // La validación abre streams y escanea el contenido del ZIP. Hacerlo
+        // en el hilo principal (onCreate/onNewIntent) congelaba la arrancada
+        // al abrir archivos desde "abrir con": ahora corre en IO y solo los
+        // resultados vuelven a Main.
+        lifecycleScope.launch(Dispatchers.IO) {
+            // Validar archivos: .mcaddon/.mcpack siempre válidos, .zip solo si tiene estructura de addon
+            val valid = uris.filter { uri ->
+                val p = uri.toString().lowercase()
+                val seg = uri.lastPathSegment?.lowercase() ?: ""
 
-            // .mcaddon y .mcpack son siempre válidos
-            if (p.endsWith(".mcaddon") || seg.endsWith(".mcaddon") ||
-                p.endsWith(".mcpack") || seg.endsWith(".mcpack")) {
-                return@filter true
-            }
+                // .mcaddon y .mcpack son siempre válidos
+                if (p.endsWith(".mcaddon") || seg.endsWith(".mcaddon") ||
+                    p.endsWith(".mcpack") || seg.endsWith(".mcpack")) {
+                    return@filter true
+                }
 
-            // .zip: verificar si tiene estructura de addon (pack.json o manifest.json)
-            // o contiene .mcpack/.mcaddon anidados (RP+BP separados dentro del .zip)
-            if (p.endsWith(".zip") || seg.endsWith(".zip")) {
-                try {
-                    contentResolver.openInputStream(uri)?.use { inputStream ->
-                        java.util.zip.ZipInputStream(inputStream).use { zip ->
-                            var entry = zip.nextEntry
-                            while (entry != null) {
-                                val name = entry.name.lowercase()
-                                // pack.json o manifest.json en cualquier nivel
-                                if (name.endsWith("/pack.json") || name == "pack.json" ||
-                                    name.endsWith("/manifest.json") || name == "manifest.json") {
-                                    return@filter true
+                // .zip: verificar si tiene estructura de addon (pack.json o manifest.json)
+                // o contiene .mcpack/.mcaddon anidados (RP+BP separados dentro del .zip)
+                if (p.endsWith(".zip") || seg.endsWith(".zip")) {
+                    try {
+                        contentResolver.openInputStream(uri)?.use { inputStream ->
+                            java.util.zip.ZipInputStream(inputStream).use { zip ->
+                                var entry = zip.nextEntry
+                                while (entry != null) {
+                                    val name = entry.name.lowercase()
+                                    // pack.json o manifest.json en cualquier nivel
+                                    if (name.endsWith("/pack.json") || name == "pack.json" ||
+                                        name.endsWith("/manifest.json") || name == "manifest.json") {
+                                        return@filter true
+                                    }
+                                    // .mcpack / .mcaddon anidados dentro del .zip (RP+BP separados)
+                                    if (name.endsWith(".mcpack") || name.endsWith(".mcaddon")) {
+                                        return@filter true
+                                    }
+                                    zip.closeEntry()
+                                    entry = zip.nextEntry
                                 }
-                                // .mcpack / .mcaddon anidados dentro del .zip (RP+BP separados)
-                                if (name.endsWith(".mcpack") || name.endsWith(".mcaddon")) {
-                                    return@filter true
-                                }
-                                zip.closeEntry()
-                                entry = zip.nextEntry
                             }
                         }
+                    } catch (e: Exception) {
+                        // Si hay error al leer, rechazar
                     }
-                } catch (e: Exception) {
-                    // Si hay error al leer, rechazar
+                    return@filter false
                 }
-                return@filter false
+
+                // Otros formatos: rechazar
+                false
             }
 
-            // Otros formatos: rechazar
-            false
+            withContext(Dispatchers.Main) {
+                // Si no hay ninguno válido, mostrar Toast (con delay para que la ventana esté lista)
+                if (valid.isEmpty()) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        android.widget.Toast.makeText(
+                            this@MainActivity, "Solo se aceptan archivos .mcaddon y .mcpack", android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }, 600)
+                    return@withContext
+                }
+
+                // Guardar en SharedPreferences para que el ViewModel los recoja
+                val prefs = getSharedPreferences("pf_share_pending", MODE_PRIVATE)
+                // NO limpiar: permitir acumulación si el usuario comparte rápido
+                val current = prefs.getStringSet("uris", emptySet<String>())?.toMutableSet() ?: mutableSetOf()
+                valid.map { it.toString() }.forEach { current.add(it) }
+                prefs.edit().putStringSet("uris", current).apply()
+
+                // Notificar a la UI que hay nuevos URIs pendientes
+                shareTrigger.intValue++
+            }
         }
-
-        // Si no hay ninguno válido, mostrar Toast (con delay para que la ventana esté lista)
-        if (valid.isEmpty()) {
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                android.widget.Toast.makeText(
-                    this, "Solo se aceptan archivos .mcaddon y .mcpack", android.widget.Toast.LENGTH_LONG
-                ).show()
-            }, 600)
-            return
-        }
-
-        // Guardar en SharedPreferences para que el ViewModel los recoja
-        val prefs = getSharedPreferences("pf_share_pending", MODE_PRIVATE)
-        // NO limpiar: permitir acumulación si el usuario comparte rápido
-        val current = prefs.getStringSet("uris", emptySet<String>())?.toMutableSet() ?: mutableSetOf()
-        valid.map { it.toString() }.forEach { current.add(it) }
-        prefs.edit().putStringSet("uris", current).apply()
-
-        // Notificar a la UI que hay nuevos URIs pendientes
-        shareTrigger.intValue++
     }
 }
 
@@ -211,21 +229,14 @@ fun PackForgeApp(
     val haptic = LocalHapticFeedback.current
     val navController = rememberNavController()
 
-    val addons by packForgeViewModel.addons.collectAsStateWithLifecycle()
-    val conflicts by packForgeViewModel.conflicts.collectAsStateWithLifecycle()
-    val resolutions by packForgeViewModel.resolutions.collectAsStateWithLifecycle()
-    val metadata by packForgeViewModel.metadata.collectAsStateWithLifecycle()
-    val isImporting by packForgeViewModel.isImporting.collectAsStateWithLifecycle()
-    val exportState by packForgeViewModel.exportState.collectAsStateWithLifecycle()
-    val isMinecraftInstalled by packForgeViewModel.isMinecraftInstalled.collectAsStateWithLifecycle()
-    val minecraftVersion by packForgeViewModel.minecraftVersion.collectAsStateWithLifecycle()
-    val compatibilityScore by packForgeViewModel.compatibilityScore.collectAsStateWithLifecycle()
+    // ─── ESTADO DEL SHELL ──────────────────────────────────────
+    // Solo lo que la carcasa necesita de verdad: visibilidad de las barras y
+    // el contador del badge. El resto de flows (addons, progreso, export…)
+    // se colecta DENTRO de cada destino de navegación: aquí arriba, cada
+    // tick de progreso de importación/exportación disparaba una
+    // recomposición de Scaffold + NavHost + pantalla completa (tormenta de
+    // recomposición raíz), que era la fuente del jank generalizado.
     val criticalCount by packForgeViewModel.criticalConflictsCount.collectAsStateWithLifecycle()
-    val importProgress by packForgeViewModel.importProgress.collectAsStateWithLifecycle()
-    val webImportError by packForgeViewModel.webImportError.collectAsStateWithLifecycle()
-    val minecraftUri by packForgeViewModel.minecraftUri.collectAsStateWithLifecycle()
-    val conflictStrategy by packForgeViewModel.conflictStrategy.collectAsStateWithLifecycle()
-    val mergeConflicts by packForgeViewModel.mergeConflicts.collectAsStateWithLifecycle()
     val activeWebSource by packForgeViewModel.activeWebSource.collectAsStateWithLifecycle()
     val showMyModpacks by packForgeViewModel.showMyModpacks.collectAsStateWithLifecycle()
     val showThemeSettings by packForgeViewModel.showThemeSettings.collectAsStateWithLifecycle()
@@ -321,33 +332,7 @@ fun PackForgeApp(
                         }
                         Screen.Conflicts -> {
                             {
-                                val unresolvedCount = conflicts.count { !resolutions.containsKey(it.id) } +
-                                    mergeConflicts.count { it.resolution.isNullOrBlank() }
-                                val conflictState = when {
-                                    addons.isEmpty() && conflicts.isEmpty() && mergeConflicts.isEmpty() -> 0 // Grey
-                                    unresolvedCount > 0 -> 2 // Red
-                                    else -> 1 // Green
-                                }
-
-                                Crossfade(
-                                    targetState = conflictState,
-                                    animationSpec = tween(durationMillis = 350),
-                                    label = "ConflictTitleCrossfade"
-                                ) { state ->
-                                    val drawableRes = when (state) {
-                                        0 -> R.drawable.title_conflictos_grey
-                                        1 -> R.drawable.title_conflictos_green
-                                        else -> R.drawable.title_conflictos_red
-                                    }
-                                    Image(
-                                        painter = painterResource(id = drawableRes),
-                                        contentDescription = "CONFLICTOS",
-                                        contentScale = ContentScale.Fit,
-                                        modifier = Modifier
-                                            .height(32.dp)
-                                            .wrapContentWidth(Alignment.Start)
-                                    )
-                                }
+                                ConflictTitle(packForgeViewModel = packForgeViewModel)
                             }
                         }
                         Screen.Export -> {
@@ -412,41 +397,52 @@ fun PackForgeApp(
         Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
             // Sistema de transiciones optimizado: rápido, fluido y adaptativo
             val motionLevel = LocalMotionLevel.current
-            
+
+            // Memorizadas: sin `remember`, cada recomposición de la carcasa
+            // creaba 4 lambdas nuevas y el NavHost (parámetro inestable)
+            // re-ejecutaba TODOS los destinos aunque nada hubiera cambiado.
+            // La dirección se deriva del orden de pestañas dentro de la
+            // lambda, así que la misma pareja sirve para los 4 hooks.
+            val navEnter: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition) =
+                remember(motionLevel) {
+                    {
+                        val transitionType = getTransitionType(
+                            initialState.destination.route,
+                            targetState.destination.route
+                        )
+                        createEnterTransition(transitionType, motionLevel)
+                    }
+                }
+            val navExit: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition) =
+                remember(motionLevel) {
+                    {
+                        val transitionType = getTransitionType(
+                            initialState.destination.route,
+                            targetState.destination.route
+                        )
+                        createExitTransition(transitionType, motionLevel)
+                    }
+                }
+
             NavHost(
                 navController = navController,
                 startDestination = Screen.Import.route,
-                modifier = Modifier.fillMaxSize(),
-                enterTransition = {
-                    val transitionType = getTransitionType(
-                        initialState.destination.route,
-                        targetState.destination.route
-                    )
-                    createEnterTransition(transitionType, motionLevel)
-                },
-                exitTransition = {
-                    val transitionType = getTransitionType(
-                        initialState.destination.route,
-                        targetState.destination.route
-                    )
-                    createExitTransition(transitionType, motionLevel)
-                },
-                popEnterTransition = {
-                    val transitionType = getTransitionType(
-                        targetState.destination.route,
-                        initialState.destination.route
-                    )
-                    createEnterTransition(transitionType, motionLevel)
-                },
-                popExitTransition = {
-                    val transitionType = getTransitionType(
-                        targetState.destination.route,
-                        initialState.destination.route
-                    )
-                    createExitTransition(transitionType, motionLevel)
-                }
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
+                enterTransition = navEnter,
+                exitTransition = navExit,
+                popEnterTransition = navEnter,
+                popExitTransition = navExit
             ) {
                 composable(Screen.Import.route) {
+                    // Colectado AQUÍ: este destino se recompone solo, sin
+                    // arrastrar al resto del árbol con cada tick de progreso.
+                    val addons by packForgeViewModel.addons.collectAsStateWithLifecycle()
+                    val conflicts by packForgeViewModel.conflicts.collectAsStateWithLifecycle()
+                    val isImporting by packForgeViewModel.isImporting.collectAsStateWithLifecycle()
+                    val importProgress by packForgeViewModel.importProgress.collectAsStateWithLifecycle()
+                    val compatibilityScore by packForgeViewModel.compatibilityScore.collectAsStateWithLifecycle()
                     ImportScreen(
                         addons = addons, conflicts = conflicts, isImporting = isImporting,
                         importProgress = importProgress, compatibilityScore = compatibilityScore,
@@ -461,6 +457,11 @@ fun PackForgeApp(
                     )
                 }
                 composable(Screen.Conflicts.route) {
+                    val addons by packForgeViewModel.addons.collectAsStateWithLifecycle()
+                    val conflicts by packForgeViewModel.conflicts.collectAsStateWithLifecycle()
+                    val resolutions by packForgeViewModel.resolutions.collectAsStateWithLifecycle()
+                    val conflictStrategy by packForgeViewModel.conflictStrategy.collectAsStateWithLifecycle()
+                    val mergeConflicts by packForgeViewModel.mergeConflicts.collectAsStateWithLifecycle()
                     ConflictsScreen(
                         conflicts = conflicts, addons = addons, resolutions = resolutions,
                         onResolve = { cId, wId -> packForgeViewModel.resolveConflict(cId, wId) },
@@ -472,6 +473,14 @@ fun PackForgeApp(
                     )
                 }
                 composable(Screen.Export.route) {
+                    val metadata by packForgeViewModel.metadata.collectAsStateWithLifecycle()
+                    val addons by packForgeViewModel.addons.collectAsStateWithLifecycle()
+                    val conflicts by packForgeViewModel.conflicts.collectAsStateWithLifecycle()
+                    val resolutions by packForgeViewModel.resolutions.collectAsStateWithLifecycle()
+                    val exportState by packForgeViewModel.exportState.collectAsStateWithLifecycle()
+                    val isMinecraftInstalled by packForgeViewModel.isMinecraftInstalled.collectAsStateWithLifecycle()
+                    val minecraftVersion by packForgeViewModel.minecraftVersion.collectAsStateWithLifecycle()
+                    val minecraftUri by packForgeViewModel.minecraftUri.collectAsStateWithLifecycle()
                     ExportSetupScreen(
                         viewModel = packForgeViewModel,
                         metadata = metadata, addons = addons, conflicts = conflicts,
@@ -496,6 +505,9 @@ fun PackForgeApp(
                 }
                 composable(Screen.Studio.route) {
                     val savedModpacks by packForgeViewModel.savedModpacks.collectAsStateWithLifecycle()
+                    val isImporting by packForgeViewModel.isImporting.collectAsStateWithLifecycle()
+                    val importProgress by packForgeViewModel.importProgress.collectAsStateWithLifecycle()
+                    val webImportError by packForgeViewModel.webImportError.collectAsStateWithLifecycle()
                     StudioScreen(
                         viewModel = packForgeViewModel,
                         themeViewModel = themeViewModel,
@@ -530,7 +542,7 @@ fun PackForgeApp(
 
             // ── Diálogo al compartir un modpack de PackForge desde apps de terceros ──
             pendingShareModpacks?.let { modpacks ->
-                AlertDialog(
+                ExpressiveAlertDialog(
                     onDismissRequest = {
                         pendingShareModpacks = null
                         pendingShareAddons = emptyList()
@@ -625,6 +637,52 @@ fun PackForgeApp(
                 )
             }
         }
+    }
+}
+
+/**
+ * Título de la pestaña Conflictos (logo que cambia entre gris/verde/rojo).
+ *
+ * Colecta SUS flows internamente en lugar de recibirlos de la raíz de
+ * [PackForgeApp]: así solo se recompone cuando cambian los conflictos, y no
+ * con cada tick de progreso de importación/exportación. El cálculo de
+ * "cuántos sin resolver" vive aquí, también, para no arrastrar listas a la
+ * carcasa en cada fotograma.
+ */
+@Composable
+private fun ConflictTitle(packForgeViewModel: PackForgeViewModel) {
+    val addons by packForgeViewModel.addons.collectAsStateWithLifecycle()
+    val conflicts by packForgeViewModel.conflicts.collectAsStateWithLifecycle()
+    val resolutions by packForgeViewModel.resolutions.collectAsStateWithLifecycle()
+    val mergeConflicts by packForgeViewModel.mergeConflicts.collectAsStateWithLifecycle()
+
+    val unresolvedCount = conflicts.count {
+        it.resolution == com.packforge.app.domain.model.ConflictResolution.UNRESOLVED
+    } + mergeConflicts.count { it.resolution.isNullOrBlank() }
+    val conflictState = when {
+        addons.isEmpty() && conflicts.isEmpty() && mergeConflicts.isEmpty() -> 0 // Grey
+        unresolvedCount > 0 -> 2 // Red
+        else -> 1 // Green
+    }
+
+    Crossfade(
+        targetState = conflictState,
+        animationSpec = tween(durationMillis = 350),
+        label = "ConflictTitleCrossfade"
+    ) { state ->
+        val drawableRes = when (state) {
+            0 -> R.drawable.title_conflictos_grey
+            1 -> R.drawable.title_conflictos_green
+            else -> R.drawable.title_conflictos_red
+        }
+        Image(
+            painter = painterResource(id = drawableRes),
+            contentDescription = "CONFLICTOS",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .height(32.dp)
+                .wrapContentWidth(Alignment.Start)
+        )
     }
 }
 

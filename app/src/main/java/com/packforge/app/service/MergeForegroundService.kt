@@ -18,6 +18,7 @@ import com.packforge.app.R
 import com.packforge.app.data.PackForgeDatabase
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.SavedModpack
+import com.packforge.app.domain.model.withSafeLists
 import com.packforge.app.domain.engine.PackForgeOrchestrator
 import com.packforge.app.ui.viewmodel.ThemeAccent
 import com.packforge.app.util.PackForgeLog
@@ -173,6 +174,19 @@ class MergeForegroundService : Service() {
             val outUri = intent.getStringExtra(EXTRA_OUT_URI)
             val editId = intent.getStringExtra(EXTRA_EDIT_ID)
 
+            // Decisiones explícitas del usuario (ruta relativa → id del ganador)
+            // para aplicarlas archivo por archivo al final de la fusión.
+            val addonIds = intent.getStringArrayListExtra(EXTRA_ADDON_IDS).orEmpty()
+            val fileWinners: Map<String, String> = intent.getStringExtra(EXTRA_FILE_WINNERS)
+                ?.takeIf { it.isNotBlank() }
+                ?.let { json ->
+                    runCatching {
+                        val type = object : com.google.gson.reflect.TypeToken<Map<String, String>>() {}.type
+                        Gson().fromJson<Map<String, String>>(json, type)
+                    }.getOrNull()
+                }
+                .orEmpty()
+
             if (paths.isEmpty()) { fail("No hay addons para fusionar", null, null); return }
 
             PackForgeLog.d(TAG, "Servicio: iniciando exportación de ${paths.size} addons")
@@ -186,7 +200,9 @@ class MergeForegroundService : Service() {
                 customAuthor = author,
                 customVersion = version.ifBlank { "1.0.0" },
                 customDescription = desc,
-                customIconPath = iconPath
+                customIconPath = iconPath,
+                addonIds = addonIds,
+                fileWinners = fileWinners
             )
             iconPath?.let { File(it).delete() }
 
@@ -203,7 +219,7 @@ class MergeForegroundService : Service() {
             // addons serializados al Intent del Service.
             val outputFile = File(result.outputPath)
             val dest = finalizeArtifacts(outputFile, name, outUri)
-            val reportPath = publishReport(result.reportPath, name, outUri == null)
+            val reportPath = publishReport(result.reportPath, name, dest)
             val internalPath = dest.internalPath
             val visiblePath = dest.visiblePath ?: outputFile.absolutePath
 
@@ -217,7 +233,7 @@ class MergeForegroundService : Service() {
                 reportPath = reportPath, regenerateId = null,
                 autoCoverPath = result.autoCoverPath
             )
-            notifyFinal(true, "Guardado en ${dest.whereLabel}. Reporte: ${reportHint(reportPath)}", accentColor)
+            notifyFinal(true, "Guardado en ${dest.whereLabel}. ${reportHint(reportPath, dest)}", accentColor)
         } catch (e: CancellationException) {
             PackForgeLog.d(TAG, "Export cancelled")
             throw e
@@ -274,7 +290,7 @@ class MergeForegroundService : Service() {
 
             val outputFile = File(result.outputPath)
             val dest = finalizeArtifacts(outputFile, name, outUri = null)
-            val reportPath = publishReport(result.reportPath, name, true)
+            val reportPath = publishReport(result.reportPath, name, dest)
 
             // Anti-obsolescencia: misma fila, artifacts reemplazados y fecha actualizada.
             db.savedModpackDao().insert(
@@ -287,7 +303,7 @@ class MergeForegroundService : Service() {
                 fileName = row.fileName, outputPath = dest.visiblePath,
                 reportPath = reportPath, regenerateId = modpackId
             )
-            notifyFinal(true, "Regenerado con el motor actual. ${reportHint(reportPath)}", accentColor)
+            notifyFinal(true, "Regenerado con el motor actual. ${reportHint(reportPath, dest)}", accentColor)
         } catch (e: CancellationException) {
             PackForgeLog.d(TAG, "Regeneration cancelled")
             throw e
@@ -322,12 +338,22 @@ class MergeForegroundService : Service() {
         }
     }
 
-    private class ArtifactDest(val visiblePath: String?, val internalPath: String?, val whereLabel: String)
+    private class ArtifactDest(
+        val visiblePath: String?,
+        val internalPath: String?,
+        val whereLabel: String,
+        /** Carpeta SAF elegida por el usuario, si el destino fue una carpeta. */
+        val treeUri: android.net.Uri? = null,
+        /** Carpeta visible real (Descargas) donde dejamos también el reporte. */
+        val publicDir: java.io.File? = null
+    )
 
-    /** Copia el .mcaddon a Descargas (o SAF) y garantiza copia interna permanente. */
+    /** Copia el .mcaddon a Descargas (o a la carpeta elegida) y garantiza copia interna. */
     private fun finalizeArtifacts(outputFile: File, name: String, outUri: String?): ArtifactDest {
         var visible: String? = null
         var label = "almacenamiento interno"
+        var tree: android.net.Uri? = null
+        var publicDir: File? = null
 
         if (outUri == null) {
             try {
@@ -336,16 +362,40 @@ class MergeForegroundService : Service() {
                 outputFile.copyTo(target, overwrite = true)
                 visible = target.absolutePath
                 label = "Descargas"
+                publicDir = downloadsDir
             } catch (e: Exception) {
                 PackForgeLog.e(TAG, "Error al copiar a Downloads: ${e.message}")
             }
         } else {
+            val uri = android.net.Uri.parse(outUri)
             try {
-                contentResolver.openOutputStream(android.net.Uri.parse(outUri))?.use { out ->
-                    outputFile.inputStream().copyTo(out)
+                if (android.provider.DocumentsContract.isTreeUri(uri)) {
+                    // El usuario eligió una CARPETA: se crea el .mcaddon dentro.
+                    // Antes se abría el árbol como si fuera un archivo, lo que
+                    // fallaba y dejaba el ZIP vacío creado al elegir la ruta.
+                    val targetUri = createOrReplaceDocument(
+                        treeUri = uri,
+                        fileName = "$name.mcaddon",
+                        mimeType = "application/octet-stream"
+                    )
+                    if (targetUri != null) {
+                        contentResolver.openOutputStream(targetUri, "wt")?.use { out ->
+                            outputFile.inputStream().use { it.copyTo(out) }
+                        }
+                        visible = targetUri.toString()
+                        tree = uri
+                        label = folderLabelOf(uri)
+                    } else {
+                        PackForgeLog.e(TAG, "No se pudo crear el .mcaddon en la carpeta elegida")
+                    }
+                } else {
+                    // URI de documento suelto (compatibilidad con versiones previas).
+                    contentResolver.openOutputStream(uri)?.use { out ->
+                        outputFile.inputStream().use { it.copyTo(out) }
+                    }
+                    visible = outUri
+                    label = "la ubicación elegida"
                 }
-                visible = outUri
-                label = "ubicación seleccionada"
             } catch (e: Exception) {
                 PackForgeLog.e(TAG, "Error al guardar en ubicación seleccionada: ${e.message}")
             }
@@ -360,14 +410,87 @@ class MergeForegroundService : Service() {
         } catch (e: Exception) {
             PackForgeLog.e(TAG, "No se pudo copiar a almacenamiento interno: ${e.message}")
         }
-        return ArtifactDest(visible, internal, label)
+        return ArtifactDest(visible, internal, label, tree, publicDir)
+    }
+
+    /** Nombre legible de la carpeta SAF elegida (`primary:Documents/Pack` → `Documents/Pack`). */
+    private fun folderLabelOf(treeUri: android.net.Uri): String {
+        val docId = runCatching {
+            android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+        }.getOrNull() ?: return "la carpeta elegida"
+
+        val path = docId.substringAfter(':', "").trim('/')
+        if (path.isNotBlank()) return path
+
+        return treeUri.lastPathSegment?.substringAfterLast(':')?.takeIf { it.isNotBlank() }
+            ?: "la carpeta elegida"
     }
 
     /**
-     * Publica el fusion_report.txt junto al .mcaddon cuando el destino es
-     * Descargas (visible para el usuario) y SIEMPRE en filesDir/reports/.
+     * Crea (o reutiliza) un documento dentro de la carpeta SAF elegida.
+     * Reutilizar evita que cada exportación deje `nombre (1).mcaddon`.
      */
-    private fun publishReport(sourceReportPath: String?, baseName: String, alsoDownloads: Boolean): String? {
+    private fun createOrReplaceDocument(
+        treeUri: android.net.Uri,
+        fileName: String,
+        mimeType: String
+    ): android.net.Uri? {
+        val parentDocId = android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+        val parentUri = android.provider.DocumentsContract
+            .buildDocumentUriUsingTree(treeUri, parentDocId)
+
+        val existing = findChildInFolder(treeUri, parentDocId, fileName)
+        if (existing != null) return existing
+
+        return try {
+            android.provider.DocumentsContract.createDocument(
+                contentResolver, parentUri, mimeType, fileName
+            )
+        } catch (e: Exception) {
+            PackForgeLog.e(TAG, "No se pudo crear '$fileName': ${e.message}")
+            null
+        }
+    }
+
+    /** Busca un hijo por nombre dentro de la carpeta SAF. */
+    private fun findChildInFolder(
+        treeUri: android.net.Uri,
+        parentDocId: String,
+        fileName: String
+    ): android.net.Uri? {
+        return try {
+            val childrenUri = android.provider.DocumentsContract
+                .buildChildDocumentsUriUsingTree(treeUri, parentDocId)
+            contentResolver.query(
+                childrenUri,
+                arrayOf(
+                    android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME
+                ),
+                null, null, null
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val display = cursor.getString(1)
+                    if (display.equals(fileName, ignoreCase = true)) {
+                        return android.provider.DocumentsContract
+                            .buildDocumentUriUsingTree(treeUri, cursor.getString(0))
+                    }
+                }
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Publica el fusion_report.txt junto al .mcaddon y SIEMPRE en filesDir/reports/.
+     */
+    private fun publishReport(
+        sourceReportPath: String?,
+        baseName: String,
+        dest: ArtifactDest
+    ): String? {
         if (sourceReportPath == null) return null
         val src = File(sourceReportPath)
         if (!src.exists()) return null
@@ -380,15 +503,33 @@ class MergeForegroundService : Service() {
             published = internalCopy.absolutePath
         } catch (_: Exception) {}
 
-        if (alsoDownloads) {
+        // Junto al modpack, para que el usuario lo tenga donde lo buscó.
+        val reportName = "${baseName}_fusion_report.txt"
+        if (dest.treeUri != null) {
             try {
-                val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                src.copyTo(File(downloadsDir, "${baseName}_fusion_report.txt"), overwrite = true)
+                val targetUri = createOrReplaceDocument(
+                    treeUri = dest.treeUri,
+                    fileName = reportName,
+                    mimeType = "text/plain"
+                )
+                if (targetUri != null) {
+                    contentResolver.openOutputStream(targetUri, "wt")?.use { out ->
+                        src.inputStream().use { it.copyTo(out) }
+                    }
+                    PackForgeLog.d(TAG, "Reporte publicado en la carpeta elegida")
+                }
+            } catch (e: Exception) {
+                PackForgeLog.e(TAG, "No se pudo publicar el reporte en la carpeta: ${e.message}")
+            }
+        } else if (dest.publicDir != null) {
+            try {
+                src.copyTo(File(dest.publicDir, reportName), overwrite = true)
                 PackForgeLog.d(TAG, "Reporte publicado en Descargas")
             } catch (e: Exception) {
                 PackForgeLog.e(TAG, "No se pudo publicar reporte en Descargas: ${e.message}")
             }
         }
+
         return published
     }
 
@@ -403,7 +544,7 @@ class MergeForegroundService : Service() {
             val persistedCover = persistCover(cover, modpackId)
             // Extraer nombres reales de addons desde addonsJson
             val addonNamesJson = try {
-                val addons = Gson().fromJson(addonsJson, Array<Addon>::class.java)
+                val addons = Gson().fromJson(addonsJson, Array<Addon>::class.java).toList().withSafeLists()
                 Gson().toJson(addons.map { it.name })
             } catch (_: Exception) {
                 Gson().toJson(List<String>(addonCount) { "" }) // fallback
@@ -442,7 +583,7 @@ class MergeForegroundService : Service() {
     }
 
     private fun parseAddons(json: String): List<Addon> = try {
-        Gson().fromJson(json, Array<Addon>::class.java).toList()
+        Gson().fromJson(json, Array<Addon>::class.java).toList().withSafeLists()
     } catch (_: Exception) { emptyList() }
 
     private fun sanitizeName(raw: String?): String =
@@ -476,9 +617,12 @@ class MergeForegroundService : Service() {
         notifyFinal(false, message, ThemeAccent.colorBlocking(this))
     }
 
-    private fun reportHint(reportPath: String?): String = when {
-        reportPath != null -> "Reporte en files/reports."
-        else -> ""
+    /** Dónde quedó el reporte, según el destino real de la fusión. */
+    private fun reportHint(reportPath: String?, dest: ArtifactDest? = null): String = when {
+        reportPath == null -> ""
+        dest?.treeUri != null -> "Reporte en la misma carpeta."
+        dest?.publicDir != null -> "Reporte en Descargas."
+        else -> "Reporte en files/reports."
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -565,6 +709,12 @@ class MergeForegroundService : Service() {
         const val EXTRA_TAGS = "tags"
         const val EXTRA_OUT_URI = "outUri"
         const val EXTRA_EDIT_ID = "editId"
+
+        /** Ids de los addons, en el mismo orden que los paths. */
+        const val EXTRA_ADDON_IDS = "addonIds"
+
+        /** JSON `ruta relativa → id del ganador` de las decisiones del usuario. */
+        const val EXTRA_FILE_WINNERS = "fileWinners"
         const val EXTRA_REGENERATE_ID = "regenerateId"
         // El ID del archivo de cache donde se serializó la lista de paths de addons
         // (un path por línea). Esto evita el TransactionTooLargeException al pasar

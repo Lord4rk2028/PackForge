@@ -27,74 +27,57 @@ Normalmente, combinar addons de forma manual implica abrir archivos comprimidos,
 
 ---
 
-## 📱 Recorrido por la Aplicación (Screenshots dinámicos)
+## 📱 Recorrido por la Aplicación
 
-Explora las capacidades de PackForge paso a paso mediante su interfaz moderna en Material 3:
+Explora cada fase del flujo de PackForge a través de su interfaz en Jetpack Compose & Material 3:
 
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>1️⃣ Importación & Diagnóstico Inicial</h3>
-      <p>Selecciona o arrastra múltiples archivos <code>.mcaddon</code>, <code>.mcpack</code> o <code>.zip</code>.</p>
-      <ul>
-        <li><b>Detección instantánea:</b> Desempaquetado seguro y parseo rápido de manifests.</li>
-        <li><b>Soporte multiformato:</b> Compatible con addons empaquetados simples o combinados (RP + BP).</li>
-        <li><b>Acceso a exploradores:</b> Integración con el selector de archivos del sistema Android.</li>
-      </ul>
-    </td>
-    <td width="50%" align="center" valign="middle">
-      <img src="screenshots/01-import.jpg" width="240" alt="Pantalla de Importación de Addons" style="border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);"/>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center" valign="middle">
-      <img src="screenshots/03-studio.jpg" width="240" alt="Mesa de Crafteo y Diagnóstico de Compatibilidad" style="border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);"/>
-    </td>
-    <td width="50%" valign="top">
-      <h3>2️⃣ Mesa de Crafteo & Compatibilidad</h3>
-      <p>Supervisa todos los addons cargados y evalúa su viabilidad de fusión.</p>
-      <ul>
-        <li><b>Mesa de Crafteo 3x3:</b> Cuadrícula interactiva para organizar y gestionar tus addons activos.</li>
-        <li><b>Diagnóstico predictivo de compatibilidad:</b> Indicador dinámico (p. ej. 90% compatibilidad) que evalúa versiones de Bedrock, schemas y dependencias.</li>
-        <li><b>Conteo de salud:</b> Diferenciación visual entre alertas críticas y avisos leves que no impiden jugar.</li>
-      </ul>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>3️⃣ Centro de Resolución de Conflictos</h3>
-      <p>Controla al milímetro cómo interactúan los addons duplicados o superpuestos.</p>
-      <ul>
-        <li><b>Métricas por severidad:</b> Clasificación detallada en <i>Critical</i>, <i>High</i>, <i>Medium</i>, <i>Low</i> y <i>Warning</i>.</li>
-        <li><b>Estrategias de resolución rápida:</b>
-          <ul>
-            <li><code>Keep first</code>: Da prioridad al addon cargado primero.</li>
-            <li><code>Keep last</code>: Sobrescribe con el último addon añadido.</li>
-            <li><code>Log and skip</code>: Omite colisiones manteniendo registro de auditoría.</li>
-          </ul>
-        </li>
-        <li><b>Conflictos específicos:</b> Visor expandible de texturas, sonidos, animaciones y entidades en conflicto con indicación del ganador.</li>
-      </ul>
-    </td>
-    <td width="50%" align="center" valign="middle">
-      <img src="screenshots/02-conflicts.jpg" width="240" alt="Pantalla de Resolución de Conflictos" style="border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);"/>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center" valign="middle">
-      <img src="screenshots/04-theme.jpg" width="240" alt="Personalización de Tema y Colores" style="border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);"/>
-    </td>
-    <td width="50%" valign="top">
-      <h3>4️⃣ Studio & Ajustes de Personalización</h3>
-      <p>Adapta PackForge a tu estilo y gestiona tus recursos con comodidad.</p>
-      <ul>
-        <li><b>Selector de color dinámico:</b> Elige cualquier color mediante espectro visual, barra de tono y código HEX con soporte de portapapeles.</li>
-        <li><b>Paletas temáticas Bedrock:</b> Variedad de estilos predefinidos inspirados en el universo Minecraft.</li>
-        <li><b>Modo Oscuro / Claro fluido:</b> Animaciones optimizadas en Jetpack Compose con transiciones suaves.</li>
-      </ul>
-    </td>
-  </tr>
-</table>
+---
+
+### 1️⃣ Importación & Taller de Addons
+> **Carga rápida y soporte multiformato:** Arrastra o selecciona archivos `.mcaddon`, `.mcpack` o `.zip` directamente desde el almacenamiento.
+
+<div align="center">
+  <img src="screenshots/01-import.jpg" width="300" alt="Pantalla Importar Addons" style="max-width: 85%; border-radius: 16px; border: 1px solid #333;" />
+</div>
+
+- 📂 **Explorador integrado:** Compatible con SAF (*Storage Access Framework*) y exploradores de archivos externos.
+- ⚡ **Extracción segura:** Desempaquetado optimizado en segundo plano con validación de manifests.
+
+---
+
+### 2️⃣ Mesa de Crafteo & Diagnóstico de Compatibilidad
+> **Supervisión predictiva del modpack:** Organiza visualmente tus paquetes activos y mide su tasa de compatibilidad antes de fusionar.
+
+<div align="center">
+  <img src="screenshots/03-studio.jpg" width="300" alt="Mesa de Crafteo y Diagnóstico" style="max-width: 85%; border-radius: 16px; border: 1px solid #333;" />
+</div>
+
+- 🧱 **Mesa 3x3 Interactiva:** Visualiza las miniaturas y estados de hasta 9 addons activos a la vez.
+- 📈 **Índice de Compatibilidad:** Algoritmo que calcula el % de éxito (p. ej. *90% de viabilidad*) clasificando avisos leves vs. errores críticos.
+
+---
+
+### 3️⃣ Centro de Resolución de Conflictos
+> **Toma el control absoluto de las colisiones:** Elige estrategias automáticas o inspecciona recurso por recurso.
+
+<div align="center">
+  <img src="screenshots/02-conflicts.jpg" width="300" alt="Pantalla de Resolución de Conflictos" style="max-width: 85%; border-radius: 16px; border: 1px solid #333;" />
+</div>
+
+- 🎯 **Estrategias en un toque:** Alterna entre `Keep first`, `Keep last` o `Log and skip` para archivos no fusionables.
+- 🔍 **Auditoría granular:** Revisa colisiones de texturas, sonidos, animaciones y scripts con indicación del addon ganador.
+
+---
+
+### 4️⃣ Personalización de Interfaz & Temas Bedrock
+> **Tu taller, tu estilo:** Personaliza la estética de la app con colores dinámicos y temas inspirados en Minecraft.
+
+<div align="center">
+  <img src="screenshots/04-theme.jpg" width="300" alt="Selector de Tema y Paleta de Colores" style="max-width: 85%; border-radius: 16px; border: 1px solid #333;" />
+</div>
+
+- 🎨 **Espectro HEX:** Selector cromático completo con soporte de copia y pegado de código hexadecimal.
+- 🌙 **Modo Oscuro Adaptativo:** Optimizado para pantallas AMOLED con consumo mínimo de batería.
 
 ---
 

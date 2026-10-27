@@ -20,6 +20,11 @@ gson = "2.11.0"
 coil = "2.6.0"
 datastore = "1.1.1"
 room = "2.8.4"
+# Instala el perfil de arranque del APK al instalarlo: acelera el primer
+# lanzamiento en release (JIT precalentado). Ya llegaba transitivamente
+# desde ui/activity/material; se fija explícitamente para documentarlo.
+# (No existe 1.5.0: 1.4.0 es la última publicada.)
+profileinstaller = "1.4.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -45,6 +50,7 @@ androidx-datastore-preferences = { group = "androidx.datastore", name = "datasto
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "profileinstaller" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 json = { group = "org.json", name = "json", version = "20240303" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }

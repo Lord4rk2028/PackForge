@@ -648,35 +648,70 @@ object BedrockCriticalFilesMerger {
     }
 
     // =====================================================================
-    // 10. FLIPBOOK TEXTURES - Texturas animadas (agua, lava, algunos bloques)
-    //     Fusiona textures/flipbook_textures.json deduplicando por flipbook_texture
+    // 10. FLIPBOOK TEXTURES - Texturas animadas (agua, lava, bloques animados)
     // =====================================================================
+    /** Campos que definen CÓMO se anima un flipbook. */
+    private val FLIPBOOK_ANIMATION_FIELDS = listOf(
+        "ticks_per_frame",
+        "frames",
+        "blend_frames",
+        "replicate",
+        "atlas_index",
+        "atlas_tile"
+    )
+
+    /**
+     * Fusiona `textures/flipbook_textures.json` de todos los RPs.
+     *
+     * Cada entrada describe UNA textura animada, así que la identidad es su
+     * ruta (`flipbook_texture`) —o `atlas_tile` + `atlas_index` cuando se anima
+     * una baldosa concreta del atlas—.
+     *
+     * Mejoras sobre la versión anterior:
+     *  - Acepta también el formato de **array raíz** (`[ {...}, {...} ]`), que
+     *    algunos addons usan y antes se descartaba por completo.
+     *  - Normaliza la ruta antes de comparar (`\` → `/`, sin `./`, sin
+     *    mayúsculas): `./textures/blocks/x` y `textures/blocks/x` son la misma
+     *    textura y antes se duplicaban.
+     *  - Cuando dos addons animan la MISMA textura se conserva la primera (el
+     *    orden de fusión ya deja delante al de mayor prioridad), pero si la
+     *    animación difiere (`ticks_per_frame`, `frames`, `blend_frames`…) se
+     *    registra el conflicto. Antes se descartaba en silencio y el resultado
+     *    era una textura "congelada" o animando a la velocidad de otro addon.
+     */
     fun mergeFlipbookTextures(rpDirs: List<File>, destDir: File) {
         val mergedArray = JSONArray()
-        val seenKeys = mutableSetOf<String>()
+        val owners = mutableMapOf<String, Pair<JSONObject, String>>()
         var processedCount = 0
+        var duplicateCount = 0
 
         rpDirs.forEach { rpDir ->
             val flipbookFile = File(rpDir, "textures/flipbook_textures.json")
-            if (flipbookFile.exists()) {
-                try {
-                    val json = JsonDeepMerger.cleanJsonObject(JSONObject(flipbookFile.readText(Charsets.UTF_8)))
-                    processedCount++
-                    json.optJSONArray("flipbook_textures")?.let { entries ->
-                        for (i in 0 until entries.length()) {
-                            val entry = entries.optJSONObject(i) ?: continue
-                            val key = entry.optString("flipbook_texture")
-                                .ifEmpty { entry.optString("atlas_tile") }
-                                .sanitizeKey()
-                            if (key.isEmpty() || seenKeys.add(key)) {
-                                mergedArray.put(JsonDeepMerger.cleanJsonValue(entry))
-                            } else {
-                                PackForgeLog.w("PackForge_Flipbook", "Flipbook duplicado: $key (manteniendo primero)")
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    PackForgeLog.e("PackForge_Flipbook", "Error procesando flipbook_textures.json: ${e.message}")
+            if (!flipbookFile.exists()) return@forEach
+
+            val entries = readFlipbookEntries(flipbookFile, rpDir.name) ?: return@forEach
+            processedCount++
+
+            for (i in 0 until entries.length()) {
+                val entry = entries.optJSONObject(i) ?: continue
+                val key = flipbookKey(entry)
+
+                if (key.isEmpty()) {
+                    // Sin ruta ni atlas reconocible: se conserva para no perder
+                    // contenido, aunque no se pueda deduplicar.
+                    mergedArray.put(JsonDeepMerger.cleanJsonValue(entry))
+                    continue
+                }
+
+                val previous = owners[key]
+                if (previous == null) {
+                    val clean = JsonDeepMerger.cleanJsonValue(entry)
+                    val stored = clean as? JSONObject ?: entry
+                    owners[key] = stored to rpDir.name
+                    mergedArray.put(clean)
+                } else {
+                    duplicateCount++
+                    reportFlipbookCollision(key, previous.second, rpDir.name, previous.first, entry)
                 }
             }
         }
@@ -691,7 +726,93 @@ object BedrockCriticalFilesMerger {
                 it.write(merged.toString())
             }
         }
-        PackForgeLog.d("PackForge_Flipbook", "flipbook_textures.json fusionado desde $processedCount RPs con ${mergedArray.length()} animaciones")
+
+        PackForgeLog.d(
+            "PackForge_Flipbook",
+            "flipbook_textures.json: $processedCount RP(s), ${mergedArray.length()} animación(es), " +
+                "$duplicateCount duplicada(s)"
+        )
+    }
+
+    /** Lee las entradas aceptando `{"flipbook_textures":[…]}` o un array raíz. */
+    private fun readFlipbookEntries(file: File, addonName: String): JSONArray? {
+        return try {
+            val raw = file.readText(Charsets.UTF_8)
+            val sanitized = BedrockUiMerger.sanitizeJsonComments(raw)
+                .trimStart('\uFEFF', ' ', '\n', '\r', '\t')
+
+            if (sanitized.startsWith("[")) {
+                JSONArray(sanitized)
+            } else {
+                JsonDeepMerger.cleanJsonObject(JSONObject(sanitized))
+                    .optJSONArray("flipbook_textures")
+            }
+        } catch (e: Exception) {
+            PackForgeLog.e(
+                "PackForge_Flipbook",
+                "Error leyendo flipbook_textures.json de $addonName: ${e.message}"
+            )
+            null
+        }
+    }
+
+    /** Clave de identidad de una entrada de flipbook, normalizada. */
+    private fun flipbookKey(entry: JSONObject): String {
+        val path = entry.optString("flipbook_texture")
+        if (path.isNotBlank()) {
+            return path.replace('\\', '/')
+                .removePrefix("./")
+                .trim()
+                .lowercase(java.util.Locale.ROOT)
+        }
+        val atlas = entry.optString("atlas_tile")
+        if (atlas.isNotBlank()) {
+            val index = entry.optInt("atlas_index", -1)
+            return "atlas:${atlas.trim().lowercase(java.util.Locale.ROOT)}#$index"
+        }
+        return ""
+    }
+
+    /** Registra el duplicado, detallando qué cambia en la animación. */
+    private fun reportFlipbookCollision(
+        key: String,
+        firstAddon: String,
+        secondAddon: String,
+        first: JSONObject,
+        second: JSONObject
+    ) {
+        val differences = FLIPBOOK_ANIMATION_FIELDS.mapNotNull { field ->
+            val a = first.opt(field)
+            val b = second.opt(field)
+            if (a?.toString() != b?.toString()) {
+                "$field: ${a ?: "—"} → ${b ?: "—"}"
+            } else {
+                null
+            }
+        }
+
+        if (differences.isEmpty()) {
+            PackForgeLog.d(
+                "PackForge_Flipbook",
+                "Flipbook duplicado idéntico '$key' en '$secondAddon': se conserva '$firstAddon'"
+            )
+            return
+        }
+
+        val detail = differences.joinToString("; ")
+        PackForgeLog.w(
+            "PackForge_Flipbook",
+            "Flipbook duplicado '$key': se conserva '$firstAddon'; '$secondAddon' define $detail"
+        )
+        ConflictRegistry.logConflict(
+            severity = ConflictSeverity.LOW,
+            type = "FLIPBOOK_DUPLICATE",
+            file = "textures/flipbook_textures.json",
+            addon1 = firstAddon,
+            addon2 = secondAddon,
+            description = "La textura animada '$key' está definida en dos addons con " +
+                "animación distinta. Se conserva la de '$firstAddon'. Diferencias: $detail"
+        )
     }
 
     // =====================================================================
@@ -1285,11 +1406,19 @@ object BedrockCriticalFilesMerger {
             if (!root.isDirectory) return@forEach
             // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
             val cachedFiles = DirIndexCache.index(root).jsonFiles
-            for (file in cachedFiles) {
+            fileLoop@ for (file in cachedFiles) {
                 try {
                     val text = file.readText(Charsets.UTF_8)
                     if (text.contains("\"$oldId\"")) {
                         val json = JSONObject(text)
+
+                        // 🛡️ NUNCA tocar una DEFINICIÓN de partícula. Su
+                        // `identifier` es propio y ya se resolvió al escribirla;
+                        // si se reescribe aquí, la definición del addon ANTERIOR
+                        // (ya copiada al destino) se renombra al identificador
+                        // nuevo y las dos partículas colapsan en una sola.
+                        if (json.has("particle_effect")) continue@fileLoop
+
                         val probe = JSONObject(json.toString())
                         ResourcePathRegistry.applyRenames(probe, mapOf(oldId to newId))
                         OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8).use { it.write(probe.toString()) }
@@ -1297,6 +1426,163 @@ object BedrockCriticalFilesMerger {
                 } catch (_: Exception) {}
             }
         }
+    }
+
+    // =====================================================================
+    // 20. BIOMES_CLIENT - Config de cliente por bioma (biomes_client.json)
+    //     Es un mapa `biomes: { "ns:bioma": { colores... } }`. Sin fusión, el
+    //     copiado genérico dejaba solo los biomas del ÚLTIMO addon y los demás
+    //     perdían agua/niebla/cielo personalizados.
+    // =====================================================================
+    fun mergeBiomesClient(rpDirs: List<File>, destDir: File): Int {
+        val mergedBiomes = JSONObject()
+        val owners = mutableMapOf<String, String>()
+        var found = 0
+
+        rpDirs.forEach { rpDir ->
+            val file = listOf(
+                File(rpDir, "biomes_client.json"),
+                File(rpDir, "worldgen/biomes_client.json")
+            ).firstOrNull { it.isFile } ?: return@forEach
+
+            val json = try {
+                JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+            } catch (e: Exception) {
+                PackForgeLog.e("PackForge_Biomes", "Error en ${rpDir.name}: ${e.message}")
+                return@forEach
+            }
+            val biomes = json.optJSONObject("biomes") ?: return@forEach
+            found++
+
+            biomes.keys().forEach { key ->
+                val cleanKey = key.sanitizeKey()
+                val value = biomes.get(key)
+                val previousOwner = owners[cleanKey]
+                when {
+                    previousOwner == null -> {
+                        mergedBiomes.put(cleanKey, value)
+                        owners[cleanKey] = rpDir.name
+                    }
+                    // No se renombra el bioma: su nombre es una REFERENCIA que usan
+                    // los archivos de bioma/entidades. Se conserva el primero y se
+                    // informa, en vez de romper las referencias del addon ganador.
+                    mergedBiomes.get(cleanKey).toString() != value.toString() -> {
+                        PackForgeLog.w(
+                            "PackForge_Biomes",
+                            "biomes_client: '$cleanKey' duplicado; se conserva el de '$previousOwner'"
+                        )
+                        ConflictRegistry.logConflict(
+                            severity = ConflictSeverity.LOW,
+                            type = "BIOME_CLIENT_DUPLICATE",
+                            file = "biomes_client.json",
+                            addon1 = previousOwner,
+                            addon2 = rpDir.name,
+                            description = "El bioma '$cleanKey' tiene configuración de cliente " +
+                                "distinta en dos addons. Se conserva la de '$previousOwner'."
+                        )
+                    }
+                }
+            }
+        }
+
+        if (found == 0) return 0
+        writeJsonFile(File(destDir, "biomes_client.json"), JSONObject().put("biomes", mergedBiomes))
+        PackForgeLog.d("PackForge_Biomes", "✅ biomes_client.json fusionado (${mergedBiomes.length()} biomas de $found addon(s))")
+        return mergedBiomes.length()
+    }
+
+    // =====================================================================
+    // 21. FONTS - Páginas de glifos personalizados (font/*.json)
+    //     Cada archivo es un array de códigos de carácter. Si dos addons usan el
+    //     mismo nombre de página, gana el último y se pierden glifos del otro.
+    // =====================================================================
+    fun mergeFontGlyphMaps(rpDirs: List<File>, destDir: File): Int {
+        val byFileName = linkedMapOf<String, JSONArray>()
+        var mergedFiles = 0
+
+        rpDirs.forEach { rpDir ->
+            val fontDir = File(rpDir, "font")
+            if (!fontDir.isDirectory) return@forEach
+
+            fontDir.listFiles()
+                ?.filter { it.isFile && it.extension.equals("json", true) }
+                ?.forEach { file ->
+                    val parsed = try {
+                        JSONArray(file.readText(Charsets.UTF_8))
+                    } catch (_: Exception) {
+                        // Formato no-array (objeto de configuración): no se puede
+                        // unir con fiabilidad, así que se conserva el primero.
+                        PackForgeLog.w(
+                            "PackForge_Fonts",
+                            "font/${file.name} no es un array de glifos; se conserva el primero"
+                        )
+                        return@forEach
+                    }
+
+                    val existing = byFileName[file.name]
+                    byFileName[file.name] = if (existing == null) {
+                        parsed
+                    } else {
+                        unionStringArray(existing, parsed)
+                    }
+                    mergedFiles++
+                }
+        }
+
+        if (byFileName.isEmpty()) return 0
+        val destFontDir = File(destDir, "font").apply { mkdirs() }
+        byFileName.forEach { (name, array) ->
+            writeJsonArrayFile(File(destFontDir, name), array)
+        }
+        PackForgeLog.d("PackForge_Fonts", "✅ $mergedFiles página(s) de glifos fusionadas en ${byFileName.size} archivo(s)")
+        return byFileName.size
+    }
+
+    // =====================================================================
+    // 22. TEXTURES_LIST - Índice plano de texturas (textures/textures_list.json)
+    // =====================================================================
+    fun mergeTexturesList(rpDirs: List<File>, destDir: File): Int {
+        var merged: JSONArray? = null
+
+        rpDirs.forEach { rpDir ->
+            val file = File(rpDir, "textures/textures_list.json")
+            if (!file.isFile) return@forEach
+            val parsed = try {
+                JSONArray(file.readText(Charsets.UTF_8))
+            } catch (e: Exception) {
+                PackForgeLog.e("PackForge_TexturesList", "Error en ${rpDir.name}: ${e.message}")
+                return@forEach
+            }
+            merged = merged?.let { unionStringArray(it, parsed) } ?: parsed
+        }
+
+        val result = merged ?: return 0
+        writeJsonArrayFile(File(destDir, "textures/textures_list.json"), result)
+        PackForgeLog.d("PackForge_TexturesList", "✅ textures_list.json fusionado (${result.length()} entradas)")
+        return result.length()
+    }
+
+    /** Unión de dos arrays preservando el orden y sin duplicados (por valor). */
+    private fun unionStringArray(base: JSONArray, extra: JSONArray): JSONArray {
+        val seen = linkedSetOf<String>()
+        val result = JSONArray()
+        listOf(base, extra).forEach { array ->
+            for (i in 0 until array.length()) {
+                val value = array.opt(i)?.toString() ?: continue
+                if (seen.add(value)) result.put(array.opt(i))
+            }
+        }
+        return result
+    }
+
+    private fun writeJsonFile(file: File, json: JSONObject) {
+        file.parentFile?.mkdirs()
+        OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8).use { it.write(json.toString()) }
+    }
+
+    private fun writeJsonArrayFile(file: File, array: JSONArray) {
+        file.parentFile?.mkdirs()
+        OutputStreamWriter(FileOutputStream(file), StandardCharsets.UTF_8).use { it.write(array.toString()) }
     }
 
     // =====================================================================

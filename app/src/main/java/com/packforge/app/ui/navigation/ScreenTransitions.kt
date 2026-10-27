@@ -6,252 +6,165 @@ import androidx.compose.ui.unit.IntOffset
 import com.packforge.app.ui.theme.MotionLevel
 
 /**
- * Sistema de transiciones optimizado para navegación entre pantallas.
- * 
- * Características:
- * - Transiciones rápidas y fluidas (200ms base)
- * - Diferentes estilos según el contexto de navegación
- * - Adaptativo al MotionLevel del dispositivo
- * - Usa Material Motion System con easings profesionales
- */
-
-/**
- * Especificaciones de animación optimizadas para transiciones de pantalla.
- * Usa EmphasizedEasing (Material Design 3) para movimiento natural y rápido.
+ * Sistema de transiciones de pantalla optimizado y accesible.
+ *
+ * Principios:
+ * 1. Respeto total a "Reducir movimiento" (MotionLevel.MINIMAL / NONE):
+ *    Cuando el usuario activa "Reducir movimiento" en la app o sistema,
+ *    NO se ejecutan desplazamientos laterales ni verticales. Se realiza
+ *    un Crossfade suave (fadeIn + fadeOut) o cambio instantáneo (NONE),
+ *    evitando Mareo por movimiento, superposiciones extrañas y saltos de offset.
+ *
+ * 2. Transiciones estilo Material 3 Shared Axis (MotionLevel.FULL / MODERATE):
+ *    - Avance (SLIDE_FORWARD): La nueva pantalla entra desde la derecha (+100% offscreen)
+ *      mientras la anterior se desplaza ligeramente a la izquierda (-30%) con atenuación.
+ *    - Retroceso (SLIDE_BACKWARD): La nueva pantalla entra desde la izquierda (-100% offscreen)
+ *      mientras la anterior se desplaza a la derecha (+30%) con atenuación.
+ *    - Al entrar desde +100%/-100%, la pantalla que entra nunca se dibuja superpuesta
+ *      sobre la actual en el centro de la vista.
+ *
+ * 3. Modales (MODAL_OPEN / MODAL_CLOSE):
+ *    Entrada limpia desde abajo (+100% vertical offscreen) y salida hacia abajo (+100%).
  */
 object TransitionSpecs {
-    // Easing emphasize para entrada (más rápido al inicio, suave al final)
-    private val EmphasizedEasing = CubicBezierEasing(0.2f, 0.0f, 0.0f, 1.0f)
-    
-    // Easing emphasize acelerado para salida (inicio suave, salida rápida)
-    private val EmphasizedAccelerateEasing = CubicBezierEasing(0.3f, 0.0f, 0.8f, 0.15f)
-    
-    // Easing estándar para transiciones simétricas
-    private val StandardEasing = CubicBezierEasing(0.4f, 0.0f, 0.2f, 1.0f)
 
-    /**
-     * Duración base de transiciones de pantalla según MotionLevel.
-     * Más rápido que las constantes antiguas para mejor sensación.
-     */
+    /** Curva estándar de movimiento suave para Compose (Material 3). */
+    private val MotionCurve = CubicBezierEasing(0.2f, 0.0f, 0.0f, 1.0f)
+
+    /** Duración por MotionLevel. */
     fun screenTransitionDuration(motionLevel: MotionLevel): Int = when (motionLevel) {
-        MotionLevel.FULL -> 250        // Óptimo para transiciones fluidas
-        MotionLevel.MODERATE -> 200    // Más rápido en equipos medios
-        MotionLevel.MINIMAL -> 150     // Mínimo para gama baja
-        MotionLevel.NONE -> 0          // Sin animación
-    }
-
-    /**
-     * Duración para transiciones rápidas (ej: popBackStack).
-     */
-    fun quickTransitionDuration(motionLevel: MotionLevel): Int = when (motionLevel) {
-        MotionLevel.FULL -> 200
-        MotionLevel.MODERATE -> 150
-        MotionLevel.MINIMAL -> 100
+        MotionLevel.FULL -> 220
+        MotionLevel.MODERATE -> 180
+        MotionLevel.MINIMAL -> 140
         MotionLevel.NONE -> 0
     }
 
-    fun enterSpec(motionLevel: MotionLevel) = tween<IntOffset>(
+    fun slideSpec(motionLevel: MotionLevel): TweenSpec<IntOffset> = tween(
         durationMillis = screenTransitionDuration(motionLevel),
-        easing = EmphasizedEasing
+        easing = MotionCurve
     )
 
-    fun exitSpec(motionLevel: MotionLevel) = tween<IntOffset>(
-        durationMillis = quickTransitionDuration(motionLevel),
-        easing = EmphasizedAccelerateEasing
-    )
-
-    fun fadeEnterSpec(motionLevel: MotionLevel) = tween<Float>(
+    fun fadeSpec(motionLevel: MotionLevel): TweenSpec<Float> = tween(
         durationMillis = screenTransitionDuration(motionLevel),
-        easing = StandardEasing
-    )
-
-    fun fadeExitSpec(motionLevel: MotionLevel) = tween<Float>(
-        durationMillis = quickTransitionDuration(motionLevel),
-        easing = StandardEasing
+        easing = MotionCurve
     )
 }
 
-/**
- * Tipos de transición según el contexto de navegación.
- */
+/** Tipos de transición según el contexto de navegación. */
 enum class TransitionType {
-    /** Transición estándar hacia adelante (Import → Export) */
+    /** Hacia adelante según el orden de las pestañas (entra por la derecha). */
     SLIDE_FORWARD,
-    
-    /** Transición hacia atrás (volver) */
+
+    /** Hacia atrás según el orden de las pestañas (entra por la izquierda). */
     SLIDE_BACKWARD,
-    
-    /** Transición lateral (Import ↔ Studio) */
-    SLIDE_LATERAL,
-    
-    /** Transición vertical hacia arriba (abrir modal/conflictos) */
-    SLIDE_UP,
-    
-    /** Transición de fade para cambios sutiles */
+
+    /** Abrir el modal de conflictos (sube desde abajo). */
+    MODAL_OPEN,
+
+    /** Cerrar el modal de conflictos. */
+    MODAL_CLOSE,
+
+    /** Crossfade entre destinos sin relación espacial conocida. */
     FADE
 }
 
+/** Orden físico de las pestañas en la barra inferior (izquierda → derecha). */
+private fun orderOf(route: String?): Int? = when (route) {
+    Screen.Import.route -> 0
+    Screen.Conflicts.route -> 1
+    Screen.Export.route -> 2
+    Screen.Studio.route -> 3
+    else -> null
+}
+
 /**
- * Calcula el tipo de transición según las rutas origen y destino.
+ * Calcula el tipo de transición de [initialRoute] a [targetRoute].
  */
 fun getTransitionType(initialRoute: String?, targetRoute: String?): TransitionType {
     if (initialRoute == null || targetRoute == null) return TransitionType.FADE
-    
+
+    if (targetRoute == Screen.Conflicts.route) return TransitionType.MODAL_OPEN
+    if (initialRoute == Screen.Conflicts.route) return TransitionType.MODAL_CLOSE
+
+    val from = orderOf(initialRoute)
+    val to = orderOf(targetRoute)
+    if (from == null || to == null) return TransitionType.FADE
+
     return when {
-        // Import ↔ Export (flujo principal)
-        initialRoute == Screen.Import.route && targetRoute == Screen.Export.route -> 
-            TransitionType.SLIDE_FORWARD
-        initialRoute == Screen.Export.route && targetRoute == Screen.Import.route -> 
-            TransitionType.SLIDE_BACKWARD
-        
-        // Import/Export → Conflicts (modal desde abajo)
-        (initialRoute == Screen.Import.route || initialRoute == Screen.Export.route) 
-            && targetRoute == Screen.Conflicts.route -> 
-            TransitionType.SLIDE_UP
-        
-        // Conflicts → Import/Export (cerrar modal)
-        initialRoute == Screen.Conflicts.route 
-            && (targetRoute == Screen.Import.route || targetRoute == Screen.Export.route) -> 
-            TransitionType.SLIDE_UP
-        
-        // Import ↔ Studio (navegación lateral)
-        (initialRoute == Screen.Import.route && targetRoute == Screen.Studio.route) ||
-        (initialRoute == Screen.Studio.route && targetRoute == Screen.Import.route) -> 
-            TransitionType.SLIDE_LATERAL
-        
-        // Studio ↔ Export (navegación lateral)
-        (initialRoute == Screen.Studio.route && targetRoute == Screen.Export.route) ||
-        (initialRoute == Screen.Export.route && targetRoute == Screen.Studio.route) -> 
-            TransitionType.SLIDE_LATERAL
-        
+        to > from -> TransitionType.SLIDE_FORWARD
+        to < from -> TransitionType.SLIDE_BACKWARD
         else -> TransitionType.FADE
     }
 }
 
 /**
- * Crea la transición de entrada optimizada según el tipo y dirección.
+ * Transición de entrada.
  */
 fun createEnterTransition(
     transitionType: TransitionType,
     motionLevel: MotionLevel
 ): EnterTransition {
-    if (motionLevel == MotionLevel.NONE) {
-        return EnterTransition.None
+    if (motionLevel == MotionLevel.NONE) return EnterTransition.None
+
+    // Con "Reducir movimiento" (MINIMAL), usar solo Fade (sin desplazamientos)
+    if (motionLevel == MotionLevel.MINIMAL || transitionType == TransitionType.FADE) {
+        return fadeIn(TransitionSpecs.fadeSpec(motionLevel))
     }
 
     return when (transitionType) {
-        TransitionType.SLIDE_FORWARD -> {
-            // Slide desde la derecha con fade
-            slideInHorizontally(
-                animationSpec = TransitionSpecs.enterSpec(motionLevel),
-                initialOffsetX = { fullWidth -> fullWidth / 3 }
-            ) + fadeIn(
-                animationSpec = TransitionSpecs.fadeEnterSpec(motionLevel),
-                initialAlpha = 0.3f
-            )
-        }
-        
-        TransitionType.SLIDE_BACKWARD -> {
-            // Slide desde la izquierda con fade (para pop)
-            slideInHorizontally(
-                animationSpec = TransitionSpecs.enterSpec(motionLevel),
-                initialOffsetX = { fullWidth -> -fullWidth / 4 }
-            ) + fadeIn(
-                animationSpec = TransitionSpecs.fadeEnterSpec(motionLevel),
-                initialAlpha = 0.5f
-            )
-        }
-        
-        TransitionType.SLIDE_LATERAL -> {
-            // Slide lateral suave
-            slideInHorizontally(
-                animationSpec = TransitionSpecs.enterSpec(motionLevel),
-                initialOffsetX = { fullWidth -> fullWidth / 4 }
-            ) + fadeIn(
-                animationSpec = TransitionSpecs.fadeEnterSpec(motionLevel),
-                initialAlpha = 0.4f
-            )
-        }
-        
-        TransitionType.SLIDE_UP -> {
-            // Slide desde abajo (modal)
-            slideInVertically(
-                animationSpec = TransitionSpecs.enterSpec(motionLevel),
-                initialOffsetY = { fullHeight -> fullHeight / 3 }
-            ) + fadeIn(
-                animationSpec = TransitionSpecs.fadeEnterSpec(motionLevel),
-                initialAlpha = 0.3f
-            )
-        }
-        
-        TransitionType.FADE -> {
-            fadeIn(
-                animationSpec = TransitionSpecs.fadeEnterSpec(motionLevel)
-            )
-        }
+        TransitionType.SLIDE_FORWARD -> slideInHorizontally(
+            animationSpec = TransitionSpecs.slideSpec(motionLevel),
+            initialOffsetX = { fullWidth -> fullWidth }
+        ) + fadeIn(TransitionSpecs.fadeSpec(motionLevel), initialAlpha = 0.2f)
+
+        TransitionType.SLIDE_BACKWARD -> slideInHorizontally(
+            animationSpec = TransitionSpecs.slideSpec(motionLevel),
+            initialOffsetX = { fullWidth -> -fullWidth }
+        ) + fadeIn(TransitionSpecs.fadeSpec(motionLevel), initialAlpha = 0.2f)
+
+        TransitionType.MODAL_OPEN -> slideInVertically(
+            animationSpec = TransitionSpecs.slideSpec(motionLevel),
+            initialOffsetY = { fullHeight -> fullHeight }
+        ) + fadeIn(TransitionSpecs.fadeSpec(motionLevel), initialAlpha = 0.2f)
+
+        TransitionType.MODAL_CLOSE -> fadeIn(TransitionSpecs.fadeSpec(motionLevel))
+
+        TransitionType.FADE -> fadeIn(TransitionSpecs.fadeSpec(motionLevel))
     }
 }
 
 /**
- * Crea la transición de salida optimizada según el tipo y dirección.
+ * Transición de salida.
  */
 fun createExitTransition(
     transitionType: TransitionType,
     motionLevel: MotionLevel
 ): ExitTransition {
-    if (motionLevel == MotionLevel.NONE) {
-        return ExitTransition.None
+    if (motionLevel == MotionLevel.NONE) return ExitTransition.None
+
+    // Con "Reducir movimiento" (MINIMAL), usar solo Fade (sin desplazamientos)
+    if (motionLevel == MotionLevel.MINIMAL || transitionType == TransitionType.FADE) {
+        return fadeOut(TransitionSpecs.fadeSpec(motionLevel))
     }
 
     return when (transitionType) {
-        TransitionType.SLIDE_FORWARD -> {
-            // Slide hacia la izquierda con fade
-            slideOutHorizontally(
-                animationSpec = TransitionSpecs.exitSpec(motionLevel),
-                targetOffsetX = { fullWidth -> -fullWidth / 4 }
-            ) + fadeOut(
-                animationSpec = TransitionSpecs.fadeExitSpec(motionLevel),
-                targetAlpha = 0.5f
-            )
-        }
-        
-        TransitionType.SLIDE_BACKWARD -> {
-            // Slide hacia la derecha con fade (para pop)
-            slideOutHorizontally(
-                animationSpec = TransitionSpecs.exitSpec(motionLevel),
-                targetOffsetX = { fullWidth -> fullWidth / 3 }
-            ) + fadeOut(
-                animationSpec = TransitionSpecs.fadeExitSpec(motionLevel),
-                targetAlpha = 0.3f
-            )
-        }
-        
-        TransitionType.SLIDE_LATERAL -> {
-            // Slide lateral con scale sutil
-            slideOutHorizontally(
-                animationSpec = TransitionSpecs.exitSpec(motionLevel),
-                targetOffsetX = { fullWidth -> -fullWidth / 5 }
-            ) + fadeOut(
-                animationSpec = TransitionSpecs.fadeExitSpec(motionLevel),
-                targetAlpha = 0.6f
-            )
-        }
-        
-        TransitionType.SLIDE_UP -> {
-            // Slide hacia abajo (cerrar modal)
-            slideOutVertically(
-                animationSpec = TransitionSpecs.exitSpec(motionLevel),
-                targetOffsetY = { fullHeight -> fullHeight / 3 }
-            ) + fadeOut(
-                animationSpec = TransitionSpecs.fadeExitSpec(motionLevel),
-                targetAlpha = 0.3f
-            )
-        }
-        
-        TransitionType.FADE -> {
-            fadeOut(
-                animationSpec = TransitionSpecs.fadeExitSpec(motionLevel)
-            )
-        }
+        TransitionType.SLIDE_FORWARD -> slideOutHorizontally(
+            animationSpec = TransitionSpecs.slideSpec(motionLevel),
+            targetOffsetX = { fullWidth -> -(fullWidth * 0.3f).toInt() }
+        ) + fadeOut(TransitionSpecs.fadeSpec(motionLevel), targetAlpha = 0f)
+
+        TransitionType.SLIDE_BACKWARD -> slideOutHorizontally(
+            animationSpec = TransitionSpecs.slideSpec(motionLevel),
+            targetOffsetX = { fullWidth -> (fullWidth * 0.3f).toInt() }
+        ) + fadeOut(TransitionSpecs.fadeSpec(motionLevel), targetAlpha = 0f)
+
+        TransitionType.MODAL_OPEN -> fadeOut(TransitionSpecs.fadeSpec(motionLevel), targetAlpha = 0f)
+
+        TransitionType.MODAL_CLOSE -> slideOutVertically(
+            animationSpec = TransitionSpecs.slideSpec(motionLevel),
+            targetOffsetY = { fullHeight -> fullHeight }
+        ) + fadeOut(TransitionSpecs.fadeSpec(motionLevel), targetAlpha = 0f)
+
+        TransitionType.FADE -> fadeOut(TransitionSpecs.fadeSpec(motionLevel))
     }
 }

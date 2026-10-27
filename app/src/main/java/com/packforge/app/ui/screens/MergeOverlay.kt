@@ -9,6 +9,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import com.packforge.app.ui.components.FADE_SLOW_SPEC
 import com.packforge.app.ui.components.SLIDE_SLOW_SPEC
+import com.packforge.app.ui.components.ExpressiveAlertDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -149,7 +150,7 @@ fun MergeOverlay() {
     }
 
     if (showConfirmCancel && visible) {
-        AlertDialog(
+        ExpressiveAlertDialog(
             onDismissRequest = { showConfirmCancel = false },
             title = { Text(stringResource(R.string.merge_cancel_reload_title), fontWeight = FontWeight.Bold) },
             text = { Text(stringResource(R.string.merge_cancel_reload_message)) },

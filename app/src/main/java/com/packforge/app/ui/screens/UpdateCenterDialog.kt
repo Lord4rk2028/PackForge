@@ -65,6 +65,8 @@ import com.packforge.app.domain.model.SourceMatch
 import com.packforge.app.domain.model.UpdatePhase
 import com.packforge.app.ui.components.AddonSite
 import com.packforge.app.ui.components.CachedAsyncImage
+import com.packforge.app.ui.components.ExpressiveDialog
+import com.packforge.app.ui.theme.ExpressiveShapes
 import java.io.File
 import java.util.Locale
 
@@ -108,7 +110,7 @@ fun UpdateCenterDialog(
 ) {
     var expandedAddonId by remember { mutableStateOf<String?>(null) }
 
-    Dialog(
+    ExpressiveDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
@@ -116,7 +118,7 @@ fun UpdateCenterDialog(
             modifier = Modifier
                 .fillMaxWidth(0.94f)
                 .heightIn(max = 640.dp),
-            shape = RoundedCornerShape(22.dp),
+            shape = ExpressiveShapes.dialog,
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {

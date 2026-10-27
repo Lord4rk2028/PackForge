@@ -18,6 +18,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import com.packforge.app.ui.components.CachedAsyncImage
 import com.packforge.app.ui.components.MinecraftProgressBar
 import com.packforge.app.ui.components.bounceClick
+import com.packforge.app.ui.components.ExpressiveAlertDialog
+import com.packforge.app.ui.theme.ExpressiveElevation
+import com.packforge.app.ui.theme.ExpressiveShapes
+import com.packforge.app.ui.theme.rememberExpressiveHaptics
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -89,9 +93,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -116,9 +122,16 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipEntry
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.Conflict
+import com.packforge.app.domain.model.ConflictResolution
 import com.packforge.app.domain.model.ConflictSeverity
 import com.packforge.app.domain.model.ExportState
 import com.packforge.app.domain.model.ModpackMetadata
+import com.packforge.app.domain.engine.ExportCompatibilityGate
+import com.packforge.app.domain.engine.ScriptFlowAnalyzer
+import com.packforge.app.domain.engine.ScriptGateDecision
+import com.packforge.app.domain.engine.ScriptRiskLevel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -142,6 +155,7 @@ fun ExportSetupScreen(
 ) {
     val conflictStrategy by viewModel.conflictStrategy.collectAsStateWithLifecycle()
     val mergeResult by viewModel.mergeResult.collectAsStateWithLifecycle()
+    val haptics = rememberExpressiveHaptics()
 
     // ── ESTADOS ─────────────────────────────────────────────
     var importToMinecraft by remember { mutableStateOf(minecraftUri != null) }
@@ -151,10 +165,10 @@ fun ExportSetupScreen(
     val activeAddons = addons.filter { it.enabled }
     val unresolvedCritical = conflicts.count {
         it.severity == ConflictSeverity.CRITICAL &&
-        !resolutions.containsKey(it.id)
+        it.resolution == ConflictResolution.UNRESOLVED
     }
     val unresolvedTotal = conflicts.count {
-        !resolutions.containsKey(it.id)
+        it.resolution == ConflictResolution.UNRESOLVED
     }
 
     val safeFileName = metadata.name
@@ -181,9 +195,10 @@ fun ExportSetupScreen(
         }
     }
 
-    // ── PORTADAS DE LOS ADDONS (para ciclarlas con las flechas) ──────────
-    // Portadas de los addons activos, en orden de prioridad. Se usan como
-    // alternativa rápida cuando el modpack no tiene portada personalizada.
+    // ── PORTADAS DISPONIBLES (la del modpack primero, luego las de los addons) ──
+    // Al EDITAR un modpack ya guardado, su portada debe seguir siendo la actual:
+    // antes un LaunchedEffect la sustituía por la del primer addon nada más
+    // entrar, así que el usuario perdía la portada que tenía.
     val addonCoverCandidates: List<String> = remember(addons) {
         addons
             .filter { it.enabled }
@@ -194,21 +209,37 @@ fun ExportSetupScreen(
             }
             .distinct()
     }
-    // Índice de la portada actualmente mostrada (solo cuando es de un addon).
+
+    var coverCandidates by remember(addonCoverCandidates) {
+        mutableStateOf(
+            buildList {
+                metadata.coverUriString
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { add(it) }
+                addAll(addonCoverCandidates)
+            }.distinct()
+        )
+    }
+    // Índice de la portada mostrada en la previsualización.
     var coverIndex by remember { mutableStateOf(0) }
 
     /**
      * Portada efectiva a mostrar en la previsualización del exportador:
-     * 1. La portada personalizada del usuario, si existe.
-     * 2. Si no, la portada del addon actualmente seleccionada por índice.
-     * 3. Si no hay ninguna, null (se muestra el icono por defecto).
+     * 1. La portada seleccionada del carrusel (la del modpack por defecto).
+     * 2. La portada del modpack si aún no hay carrusel.
      */
-    val effectiveCover: String? = when {
-        !metadata.coverUriString.isNullOrEmpty() -> metadata.coverUriString
-        addonCoverCandidates.isNotEmpty() -> addonCoverCandidates.getOrNull(
-            coverIndex.coerceIn(0, addonCoverCandidates.size - 1)
-        )
-        else -> null
+    val effectiveCover: String? = coverCandidates.getOrNull(
+        coverIndex.coerceIn(0, (coverCandidates.size - 1).coerceAtLeast(0))
+    ) ?: metadata.coverUriString?.takeIf { it.isNotBlank() }
+
+    // Si el usuario elige una portada nueva con el selector de archivos, entra
+    // al carrusel en primera posición (sin borrar las de los addons).
+    LaunchedEffect(metadata.coverUriString) {
+        val current = metadata.coverUriString?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        if (current !in coverCandidates) {
+            coverCandidates = listOf(current) + coverCandidates
+            coverIndex = 0
+        }
     }
 
     /**
@@ -219,22 +250,36 @@ fun ExportSetupScreen(
      * la portada personalizada que el usuario elija con "elegir portada".
      */
     fun cycleCover(next: Boolean) {
-        if (addonCoverCandidates.isEmpty()) return
-        val size = addonCoverCandidates.size
+        if (coverCandidates.isEmpty()) return
+        val size = coverCandidates.size
         val newIndex = if (next) {
             (coverIndex + 1) % size
         } else {
             (coverIndex - 1 + size) % size
         }
         coverIndex = newIndex
-        val chosen = addonCoverCandidates[newIndex]
+        val chosen = coverCandidates[newIndex]
         onMetadataChange(metadata.copy(coverUriString = chosen))
     }
 
-    val createDocumentLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/zip")
+    // ⚠️ ANTES se usaba CreateDocument("application/zip"): eso CREA el archivo
+    // en el instante en que el usuario elige la ruta (de ahí que apareciera un
+    // ZIP en la carpeta sin haber fusionado) y además fuerza el formato ZIP.
+    // Ahora se elige una CARPETA y el .mcaddon se crea al terminar la fusión.
+    val context = LocalContext.current
+    val pickFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
         if (uri != null) {
+            // Permiso persistente: sin esto, el servicio no puede escribir en la
+            // carpeta cuando la app se reinicia o la actividad se recrea.
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
             customUri = uri
             useCustomPath = true
         }
@@ -270,7 +315,7 @@ fun ExportSetupScreen(
             item {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = ExpressiveShapes.container,
                     color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.8f),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f))
                 ) {
@@ -325,7 +370,10 @@ fun ExportSetupScreen(
         item {
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
+                shape = ExpressiveShapes.card,
+                elevation = CardDefaults.elevatedCardElevation(
+                    defaultElevation = ExpressiveElevation.card
+                ),
                 colors = CardDefaults.elevatedCardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                 )
@@ -368,7 +416,10 @@ fun ExportSetupScreen(
                     )
 
                     val previewUri = effectiveCover
-                    val hasAddonCovers = addonCoverCandidates.isNotEmpty()
+                    // Hay carrusel si existe más de una portada (la del modpack
+                    // + las de los addons): así al editar se puede volver a la
+                    // portada original después de pasar por las demás.
+                    val hasAddonCovers = coverCandidates.size > 1
 
                     // ⚡ FLECHAS DE CAMBIO DE PORTADA (función 3):
                     // Al lado del rectángulo, ← y → recorren las portadas de los
@@ -384,7 +435,7 @@ fun ExportSetupScreen(
                         horizontalArrangement = Arrangement.Center
                     ) {
                         IconButton(
-                            onClick = { cycleCover(false) },
+                            onClick = { haptics.light(); cycleCover(false) },
                             enabled = hasAddonCovers
                         ) {
                             Icon(
@@ -408,7 +459,10 @@ fun ExportSetupScreen(
                                     MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
                                     RoundedCornerShape(20.dp)
                                 )
-                                .bounceClick(scaleDown = 0.98f) { coverPickerLauncher.launch("image/*") },
+                                .bounceClick(scaleDown = 0.98f, hapticFeedback = false) {
+                                    haptics.light()
+                                    coverPickerLauncher.launch("image/*")
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             when {
@@ -474,7 +528,7 @@ fun ExportSetupScreen(
                         }
 
                         IconButton(
-                            onClick = { cycleCover(true) },
+                            onClick = { haptics.light(); cycleCover(true) },
                             enabled = hasAddonCovers
                         ) {
                             Icon(
@@ -491,8 +545,7 @@ fun ExportSetupScreen(
                     // Indicador de cuántas portadas hay disponibles
                     if (hasAddonCovers) {
                         Text(
-                            text = "${coverIndex + 1} / ${addonCoverCandidates.size} portadas de addons" +
-                                if (!metadata.coverUriString.isNullOrEmpty()) " (personalizada)" else "",
+                            text = "${coverIndex + 1} / ${coverCandidates.size} portadas disponibles",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                             modifier = Modifier.padding(start = 4.dp, top = 2.dp)
@@ -662,7 +715,10 @@ fun ExportSetupScreen(
         item {
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp)
+                shape = ExpressiveShapes.card,
+                elevation = CardDefaults.elevatedCardElevation(
+                    defaultElevation = ExpressiveElevation.card
+                )
             ) {
                 Column(
                     modifier = Modifier
@@ -690,17 +746,14 @@ fun ExportSetupScreen(
 
                     DestinationOption(
                         icon = Icons.Default.FolderOpen,
-                        title = "Elegir ubicación",
+                        title = "Elegir carpeta",
                         subtitle = if (customUri != null)
-                            "Ubicación seleccionada"
+                            "${folderPathLabel(customUri!!)}/${safeFileName}_v${metadata.version}.mcaddon"
                         else
-                            "Elige dónde guardar el archivo",
+                            "Elige la carpeta donde guardar el modpack",
                         selected = useCustomPath,
                         onClick = {
-                            createDocumentLauncher.launch(
-                                "${safeFileName}" +
-                                "_v${metadata.version}.mcaddon"
-                            )
+                            pickFolderLauncher.launch(null)
                         }
                     )
                 }
@@ -713,7 +766,10 @@ fun ExportSetupScreen(
 
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
+                shape = ExpressiveShapes.card,
+                elevation = CardDefaults.elevatedCardElevation(
+                    defaultElevation = ExpressiveElevation.card
+                ),
                 colors = CardDefaults.elevatedCardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                 )
@@ -854,7 +910,10 @@ fun ExportSetupScreen(
         item {
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp)
+                shape = ExpressiveShapes.card,
+                elevation = CardDefaults.elevatedCardElevation(
+                    defaultElevation = ExpressiveElevation.card
+                )
             ) {
                 Column(
                     modifier = Modifier
@@ -909,16 +968,38 @@ fun ExportSetupScreen(
 
         // BOTÓN EXPORTAR
         item {
+            // ── COMPATIBILITY GATE ──
+            val gateDecision = ExportCompatibilityGate.evaluate(
+                addons = activeAddons,
+                conflicts = conflicts
+            )
+
+            // El análisis de scripts abre los addons (ZIP/carpeta): se hace fuera
+            // del hilo principal para no congelar la UI al entrar en Exportación.
+            val scriptGateDecision by produceState(
+                initialValue = ScriptGateDecision.safe(),
+                key1 = activeAddons
+            ) {
+                value = withContext(Dispatchers.IO) {
+                    ScriptFlowAnalyzer.getGateDecision(
+                        bpDirs = activeAddons.map { it.sourceFilePath }
+                    )
+                }
+            }
+
             val canExport = metadata.name.isNotBlank() &&
                 metadata.author.isNotBlank() &&
-                activeAddons.isNotEmpty()
-            
+                activeAddons.isNotEmpty() &&
+                gateDecision.canExport &&
+                scriptGateDecision.canExecute
+
+            var showCompatDialog by remember { mutableStateOf(false) }
             val isExporting = exportState is ExportState.Loading || exportState is ExportState.Progress
             var showCancelDialog by remember { mutableStateOf(false) }
 
             // ── DIÁLOGO DE CONFIRMACIÓN DE CANCELACIÓN ──
             if (showCancelDialog) {
-                androidx.compose.material3.AlertDialog(
+                ExpressiveAlertDialog(
                     onDismissRequest = { showCancelDialog = false },
                     title = {
                         Text(
@@ -935,19 +1016,22 @@ fun ExportSetupScreen(
                     },
                     confirmButton = {
                         val context = LocalContext.current
-                        Button(
-                            onClick = {
-                                com.packforge.app.service.MergeForegroundService.stop(context)
-                                onResetExport()
-                                showCancelDialog = false
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
+                        TextButton(onClick = {
+                            com.packforge.app.service.MergeForegroundService.stop(context)
+                            onResetExport()
+                            showCancelDialog = false
+                        }) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.error
                             )
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(stringResource(R.string.export_cancel_merge))
+                            Text(
+                                stringResource(R.string.export_cancel_merge),
+                                color = MaterialTheme.colorScheme.error
+                            )
                         }
                     },
                     dismissButton = {
@@ -958,12 +1042,176 @@ fun ExportSetupScreen(
                 )
             }
 
+            // ── DIÁLOGO DE COMPATIBILIDAD ANTES DE EXPORTAR ──
+            if (showCompatDialog) {
+                // Determine compatibility dialog title text
+                val dialogTitle = when {
+                    scriptGateDecision.riskLevel == ScriptRiskLevel.BLOCKED &&
+                        gateDecision.level != ExportCompatibilityGate.ExportLevel.OPTIMAL ->
+                        "Exportación Bloqueada (Script)"
+                    gateDecision.level == ExportCompatibilityGate.ExportLevel.BLOCKED ->
+                        "Exportación Bloqueada"
+                    scriptGateDecision.riskLevel == ScriptRiskLevel.WARNING &&
+                        gateDecision.level != ExportCompatibilityGate.ExportLevel.OPTIMAL ->
+                        "Compatibilidad Riesgosa (Script)"
+                    gateDecision.level == ExportCompatibilityGate.ExportLevel.RISKY ->
+                        "Compatibilidad Riesgosa"
+                    else -> "Advertencia de Compatibilidad"
+                }
+                
+                ExpressiveAlertDialog(
+                    onDismissRequest = { showCompatDialog = false },
+                    title = {
+                        Text(
+                            text = dialogTitle,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = when (gateDecision.level) {
+                                ExportCompatibilityGate.ExportLevel.BLOCKED -> MaterialTheme.colorScheme.error
+                                ExportCompatibilityGate.ExportLevel.RISKY -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.primary
+                            }
+                        )
+                    },
+                    text = {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = gateDecision.summary,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            if (gateDecision.blockers.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Bloqueos:",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                gateDecision.blockers.take(5).forEach { blocker ->
+                                    Text(
+                                        text = "• $blocker",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        maxLines = 2
+                                    )
+                                }
+                            }
+                            if (gateDecision.warnings.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Advertencias:",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
+                                gateDecision.warnings.take(5).forEach { warning ->
+                                    Text(
+                                        text = "• $warning",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2
+                                    )
+                                }
+                            }
+                            if (scriptGateDecision.blockers.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Bloqueos de script:",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                ScriptFlowAnalyzer.describeBlockers(scriptGateDecision.blockers)
+                                    .forEach { description ->
+                                        Text(
+                                            text = "• $description",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                            maxLines = 3
+                                        )
+                                    }
+                            }
+                            if (scriptGateDecision.warnings.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Advertencias de script:",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
+                                scriptGateDecision.warnings.take(4).forEach { warning ->
+                                    Text(
+                                        text = "• ${warning.description}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "Puntaje de compatibilidad: ${gateDecision.score}/100",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        val context = LocalContext.current
+                        val exportAllowed = gateDecision.canExport && scriptGateDecision.canExecute
+                        Button(
+                            onClick = {
+                                showCompatDialog = false
+                                if (exportAllowed) {
+                                    haptics.heavy()
+                                    onExport(
+                                        if (useCustomPath) customUri else null,
+                                        importToMinecraft
+                                    )
+                                }
+                            },
+                            enabled = exportAllowed,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (exportAllowed)
+                                    MaterialTheme.colorScheme.primary
+                                else
+                                    MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Text(
+                                text = if (exportAllowed) "Sí, exportar de todos modos" else "Entendido",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showCompatDialog = false }) {
+                            Text(stringResource(R.string.common_cancel))
+                        }
+                    }
+                )
+            }
+
             if (exportState is ExportState.Progress) {
                 ElevatedCard(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp)
+                        // Solo un BORDE con el color primario: el relleno primario
+                        // completo se veía como un bloque de color y competía con
+                        // la propia barra de progreso.
+                        .border(
+                            1.5.dp,
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                            ExpressiveShapes.container
+                        ),
+                    shape = ExpressiveShapes.container,
                     colors = androidx.compose.material3.CardDefaults.elevatedCardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                     )
                 ) {
                     Column(
@@ -996,10 +1244,15 @@ fun ExportSetupScreen(
 
             Button(
                 onClick = {
-                    onExport(
-                        if (useCustomPath) customUri else null,
-                        importToMinecraft
-                    )
+                    haptics.heavy()
+                    if (gateDecision.blockers.isNotEmpty() || gateDecision.warnings.isNotEmpty()) {
+                        showCompatDialog = true
+                    } else {
+                        onExport(
+                            if (useCustomPath) customUri else null,
+                            importToMinecraft
+                        )
+                    }
                 },
                 enabled = canExport && !isExporting,
                 modifier = Modifier
@@ -1047,7 +1300,19 @@ fun ExportSetupScreen(
                             "Agrega al menos un addon"
                         metadata.name.isBlank() ->
                             "El nombre es obligatorio"
-                        else -> "El autor es obligatorio"
+                        metadata.author.isBlank() ->
+                            "El autor es obligatorio"
+                        // El resto de bloqueos vienen del gate de compatibilidad.
+                        // ANTES cualquier bloqueo del gate caía en el `else` y se
+                        // mostraba "El autor es obligatorio" aunque el autor
+                        // estuviera escrito: el usuario no podía saber que lo que
+                        // le frenaba era un conflicto crítico sin resolver.
+                        unresolvedCritical > 0 ->
+                            "Resuelve los ${unresolvedCritical} conflicto(s) crítico(s) en la pestaña Conflictos"
+                        gateDecision.blockers.isNotEmpty() ->
+                            "Exportación bloqueada: ${gateDecision.blockers.first()}"
+                        else ->
+                            "Exportación bloqueada por compatibilidad (${gateDecision.score}/100)"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
@@ -1437,8 +1702,8 @@ fun ModpackPreviewCard(
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), RoundedCornerShape(22.dp)),
-        shape = RoundedCornerShape(22.dp),
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f), ExpressiveShapes.card),
+        shape = ExpressiveShapes.card,
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         )
@@ -1552,12 +1817,16 @@ fun DestinationOption(
     selected: Boolean,
     onClick: () -> Unit
 ) {
+    val haptics = rememberExpressiveHaptics()
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .bounceClick(scaleDown = 0.98f) { onClick() },
-        shape = RoundedCornerShape(16.dp),
+            .clip(ExpressiveShapes.action)
+            .bounceClick(scaleDown = 0.98f, hapticFeedback = false) {
+                haptics.light()
+                onClick()
+            },
+        shape = ExpressiveShapes.action,
         border = BorderStroke(
             if (selected) 1.5.dp else 1.dp,
             if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
@@ -2092,4 +2361,23 @@ private fun IconDebugDialog(
             }
         }
     )
+}
+
+/**
+ * Ruta legible de una carpeta SAF elegida (`primary:Documents/Pack` →
+ * `Documents/Pack`). Android no expone la ruta real del sistema de archivos,
+ * así que se muestra la parte útil del documentId.
+ */
+private fun folderPathLabel(uri: android.net.Uri): String {
+    val docId = runCatching {
+        android.provider.DocumentsContract.getTreeDocumentId(uri)
+    }.getOrNull() ?: return "Carpeta elegida"
+
+    val path = docId.substringAfter(':', "").trim('/')
+    if (path.isNotBlank()) return path
+
+    return uri.lastPathSegment
+        ?.substringAfterLast(':')
+        ?.takeIf { it.isNotBlank() }
+        ?: "Carpeta elegida"
 }

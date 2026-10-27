@@ -6,6 +6,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
@@ -36,6 +37,7 @@ fun CachedAsyncImage(
     cornerRadius: Dp = 16.dp,
     decodeSize: Dp? = null,
     crossfade: Boolean = false,
+    colorFilter: ColorFilter? = null,
     onError: () -> Unit = {}
 ) {
     val density = LocalDensity.current
@@ -54,6 +56,7 @@ fun CachedAsyncImage(
                 .fillMaxSize()
                 .clip(RoundedCornerShape(cornerRadius)),
             contentScale = contentScale,
+            colorFilter = colorFilter,
             onError = { onError() }
         )
     }

@@ -20,6 +20,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import kotlin.math.sin
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
@@ -28,15 +34,32 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.AddonType
+import com.packforge.app.ui.theme.LocalMotionLevel
+import com.packforge.app.ui.theme.MotionLevel
+import com.packforge.app.ui.theme.bouncySpringOf
 import java.io.File
 
 @Composable
 fun CraftingTableLayout(
     addons: List<Addon>,
+    displayItems: List<AddonDisplayItem> = addons.map { AddonDisplayItem.Single(it) },
     onAddAddon: () -> Unit,
     onExport: () -> Unit,
     showResultSlot: Boolean = true
 ) {
+    val activeItems = displayItems.filter {
+        when (it) {
+            is AddonDisplayItem.Single -> it.addon.enabled
+            is AddonDisplayItem.Pair -> it.bp.enabled && it.rp.enabled
+        }
+    }
+    val activeCount = activeItems.sumOf {
+        when (it) {
+            is AddonDisplayItem.Single -> 1
+            is AddonDisplayItem.Pair -> 2
+        }
+    }
+
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -56,7 +79,7 @@ fun CraftingTableLayout(
                     color = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     Text(
-                        text = "${addons.size}/9",
+                        text = "$activeCount/9",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -94,8 +117,11 @@ fun CraftingTableLayout(
             ) {
                 items(9) { index ->
                     when {
-                        index < addons.size -> AddonSlot(addon = addons[index])
-                        index == addons.size -> AddEmptySlot(onAddAddon)
+                        index < displayItems.size -> when (val item = displayItems[index]) {
+                            is AddonDisplayItem.Single -> AddonSlot(addon = item.addon)
+                            is AddonDisplayItem.Pair -> AddonPairSlot(pair = item)
+                        }
+                        index == displayItems.size -> AddEmptySlot(onAddAddon)
                         else -> EmptySlot()
                     }
                 }
@@ -107,7 +133,7 @@ fun CraftingTableLayout(
 
             // ── Slot de resultado con brillo animado ──────────
             ResultSlot(
-                addonCount = addons.size,
+                addonCount = activeCount,
                 onClick = onExport
             )
         }
@@ -115,14 +141,125 @@ fun CraftingTableLayout(
 }
 
 @Composable
-fun AddonSlot(addon: Addon) {
+fun AddonPairSlot(pair: AddonDisplayItem.Pair) {
+    val bothEnabled = pair.bp.enabled && pair.rp.enabled
+
+    // Se muestra la portada real de la pareja (BP si la tiene, si no la del RP)
+    // en vez de un panel de color con iconos: el fondo tonal se veía como un
+    // bloque "invertido" que no tenía nada que ver con la portada del addon.
+    val coverPath = pair.bp.iconPath ?: pair.rp.iconPath
+    val disabledFilter = remember(bothEnabled) {
+        if (bothEnabled) null
+        else ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
             .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.primaryContainer)
-            .border(1.5.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp)),
+            .background(
+                if (coverPath != null) Color.Transparent
+                else MaterialTheme.colorScheme.tertiaryContainer
+            )
+            .border(
+                1.5.dp,
+                if (bothEnabled) MaterialTheme.colorScheme.tertiary.copy(alpha = 0.9f)
+                else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                RoundedCornerShape(8.dp)
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (coverPath != null) {
+            CachedAsyncImage(
+                model = File(coverPath),
+                contentDescription = pair.pairKey,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                colorFilter = disabledFilter
+            )
+        } else {
+            Text(
+                text = pair.pairKey.take(1).uppercase(),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (bothEnabled) MaterialTheme.colorScheme.onTertiaryContainer
+                else MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.5f)
+            )
+        }
+
+        // Distintivo discreto de que son dos packs (BP + RP).
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(4.dp),
+            shape = RoundedCornerShape(6.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f)
+        ) {
+            Text(
+                text = "BP + RP",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun MiniAddonIcon(addon: Addon, smallSize: androidx.compose.ui.unit.Dp) {
+    if (addon.iconPath != null) {
+        CachedAsyncImage(
+            model = File(addon.iconPath),
+            contentDescription = addon.name,
+            modifier = Modifier
+                .size(smallSize)
+                .clip(androidx.compose.foundation.shape.CircleShape),
+            contentScale = ContentScale.Crop
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .size(smallSize)
+                .clip(androidx.compose.foundation.shape.CircleShape)
+                .background(MaterialTheme.colorScheme.secondaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = addon.name.first().toString(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+        }
+    }
+}
+
+@Composable
+fun AddonSlot(addon: Addon) {
+    val disabledFilter = remember(addon.enabled) {
+        if (addon.enabled) null
+        else ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(8.dp))
+            // Sin fondo detrás de la portada: si el PNG es transparente debe
+            // verse el fondo de la mesa, no un bloque de color.
+            .background(
+                if (addon.iconPath != null) Color.Transparent
+                else MaterialTheme.colorScheme.primaryContainer
+            )
+            .border(
+                1.5.dp,
+                if (addon.enabled) MaterialTheme.colorScheme.outline
+                else MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                RoundedCornerShape(8.dp)
+            ),
         contentAlignment = Alignment.Center
     ) {
         if (addon.iconPath != null) {
@@ -130,41 +267,41 @@ fun AddonSlot(addon: Addon) {
                 model = File(addon.iconPath),
                 contentDescription = addon.name,
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
+                contentScale = ContentScale.Crop,
+                colorFilter = disabledFilter
             )
         } else {
             Text(
                 text = addon.name.first().toString(),
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+                color = if (addon.enabled) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.5f)
             )
         }
-        if (!addon.enabled) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = stringResource(R.string.cd_addon_disabled),
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
+        // Desactivado = portada en gris. Antes se pintaba una capa oscura con
+        // una X encima, que tapaba la portada y se veía como una píldora negra.
     }
 }
 
 @Composable
 fun AddEmptySlot(onAddAddon: () -> Unit) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 0.9f, targetValue = 1.1f,
-        animationSpec = infiniteRepeatable(tween(1000), RepeatMode.Reverse), label = "pulse"
-    )
+    // Entrada única: el "+" aparece con un rebote suave y luego queda quieto.
+    // Antes aquí había un `rememberInfiniteTransition` con pulso permanente:
+    // la casilla se ANIMABA sin cesar mientras la pantalla de inicio estaba
+    // abierta — un coste continuo de CPU/GPU en reposo sin beneficio.
+    val motionLevel = LocalMotionLevel.current
+    val scale = if (motionLevel == MotionLevel.NONE) {
+        1f
+    } else {
+        var appeared by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { appeared = true }
+        animateFloatAsState(
+            targetValue = if (appeared) 1f else 0.9f,
+            animationSpec = bouncySpringOf<Float>(motionLevel),
+            label = "addSlotEntrance"
+        ).value
+    }
 
     Box(
         modifier = Modifier
@@ -297,47 +434,16 @@ fun MinecraftProgressBar(
                 )
         ) {
             val progressValue = progress.coerceIn(0f, 1f)
+
+            // Relleno SÓLIDO en color primario (sin gradiente y sin dibujos
+            // dentro): una barra limpia, solo color.
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
                     .fillMaxWidth(progressValue)
                     .clip(RoundedCornerShape(9.dp))
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
-                                MaterialTheme.colorScheme.primary,
-                                MaterialTheme.colorScheme.primaryContainer
-                            )
-                        )
-                    )
+                    .background(MaterialTheme.colorScheme.primary)
             )
-            
-            // Efecto de olas (patrón dinámico)
-            if (progressValue > 0 && progressValue < 1f) {
-                val infiniteTransition = rememberInfiniteTransition(label = "waveAnimation")
-                val waveOffset by infiniteTransition.animateFloat(
-                    initialValue = 0f,
-                    targetValue = 1f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(1500, easing = LinearEasing),
-                        repeatMode = RepeatMode.Restart
-                    ),
-                    label = "waveOffset"
-                )
-                
-                val waveColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val waveWidth = 8.dp.toPx()
-                    val startX = (progressValue * size.width - waveWidth + (waveOffset * waveWidth * 2)) % (waveWidth * 2)
-                    
-                    drawRect(
-                        color = waveColor,
-                        topLeft = Offset(startX, 0f),
-                        size = Size(waveWidth, size.height)
-                    )
-                }
-            }
         }
         
         Row(

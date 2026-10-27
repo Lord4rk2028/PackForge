@@ -35,6 +35,44 @@ build_result.txt
 compile.log
 write_gradle.py
 
+# ─── Scripts locales de un solo uso (herramientas de desarrollo) ───
+# No son parte de la app: se ejecutan a mano y no deben versionarse.
+apply_changes.py
+extract_all_keys.py
+extract_all_keys_regex.py
+extract_all_keys_v2.py
+extract_all_keys_v3.py
+list_folders.py
+
+# ─── Volcados de consola / temporales de sesión ───
+tasks.txt
+tmp_*
+*.orig
+*.rej
+
+# ─── Python (scripts auxiliares) ───
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ─── Artefactos de empaquetado (se regeneran) ───
+*.apk
+*.aab
+*.ap_
+*.dex
+release/
+out/
+
+# ─── Evidencia del decifrador (se crea en el dispositivo durante las pruebas) ───
+*.bak
+
+# ─── Asistentes de IA locales ───
+.claude/
+.cursor/
+.windsurf/
+.history/
+
 # ─── Seguridad (¡CRÍTICO!) ───
 *.jks
 *.keystore
@@ -51,3 +89,6 @@ Thumbs.db
 *~
 *.hprof
 keystore.properties
+
+# ─── Datos vanilla generados (no versionar) ───
+vanilla_*.txt

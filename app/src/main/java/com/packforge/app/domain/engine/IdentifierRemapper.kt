@@ -96,15 +96,20 @@ object IdentifierRemapper {
             if (dirsByOwner.size < 2) return emptyList()
 
             // ── 2) Recolectar identificadores DECLARADOS por cada addon ──
-            // Solo cuentan los declarados en behavior packs (evita que el BP y el
-            // RP del MISMO addon se "colisionen" a sí mismos).
-            // OPTIMIZACIÓN H1: barrido barato con filtro de texto previo al parseo
-            // (un JSON que declara un id SIEMPRE contiene "identifier"), de modo
-            // que en un pack sin colisiones el costo es O(bytes leídos), no
-            // O(JSON parseados). El diseño histórico bloqueaba la UI 10+ min
-            // porque parseaba TODOS los JSON de TODOS los addons sin filtro.
+            // ⚠️ SOLO se escanean los BEHAVIOR packs. Un addon declara el mismo
+            // identificador en su BP (`minecraft:entity`) y en su RP
+            // (`minecraft:client_entity` / `minecraft:attachable`); si se
+            // escaneasen los dos, el RP "colisionaría consigo mismo" y el
+            // renamespacer renombraría el id del RP a `pf:xxxx_*` dejando el BP
+            // con el id original. Eso rompía el vínculo BP↔RP (entidades
+            // invisibles, texturas ausentes) y generaba miles de renombrados
+            // inútiles. El RP SIGUE reescribiéndose como referencia (paso 4).
+            val declaringOwners = LinkedHashMap<String, MutableList<File>>()
+            behaviorDirs.forEach { dir ->
+                declaringOwners.getOrPut(ownerKey(dir)) { mutableListOf() }.add(dir)
+            }
             val declaredByOwner = LinkedHashMap<String, MutableMap<String, File>>()
-            dirsByOwner.forEach { (owner, dirs) ->
+            declaringOwners.forEach { (owner, dirs) ->
                 progress?.invoke("Analizando identificadores de ${shortOwner(owner)}...")
                 dirs.forEach { dir ->
                     collectDeclaredIds(dir)?.forEach { (id, file) ->
@@ -264,6 +269,11 @@ object IdentifierRemapper {
         // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
         val cachedFiles = DirIndexCache.index(dir).allFiles
         for (file in cachedFiles) {
+            // El índice cacheado puede quedar obsoleto respecto al disco: los
+            // renombrados de `renameCollidingFiles` y los ficheros ya movidos
+            // hacían que `readText` fallara con ENOENT y se registrara como
+            // ERROR (ruido que ocultaba fallos reales en el log del usuario).
+            if (!file.isFile) continue
             val ext = file.extension.lowercase(Locale.ROOT)
             if (ext !in setOf("json", "lang", "mcfunction", "txt") + SCRIPT_EXTENSIONS) continue
             try {
@@ -272,6 +282,9 @@ object IdentifierRemapper {
                     "lang" -> rewriteIdentifiersInLang(file, oldId, newId)
                     else -> rewriteIdentifiersWithWordBoundary(file, oldIdRegex, newId)
                 }
+            } catch (e: java.io.FileNotFoundException) {
+                // Fichero renombrado/eliminado por otra pasada: no es un error.
+                PackForgeLog.d(TAG, "  · omitido (ya no existe): ${file.name}")
             } catch (e: Exception) {
                 PackForgeLog.e(TAG, "No se pudo reescribir ${file.name}: ${e.message}")
             }
@@ -321,12 +334,18 @@ object IdentifierRemapper {
         val cachedFiles = DirIndexCache.index(dir).jsonFiles
         for (file in cachedFiles) {
             if (file.name.equals("manifest.json", true)) continue
+            if (!file.isFile) continue
 
-            val declaresOldId = try {
-                readDeclaredIdentifier(file) == oldId
+            // Lectura única + filtro de texto: solo se parsea el JSON cuando el
+            // fichero realmente puede declarar el id viejo. Antes se parseaba
+            // CADA json del pack por cada id renombrado (O(ids × archivos)).
+            val text = try {
+                file.readText(StandardCharsets.UTF_8)
             } catch (e: Exception) {
-                false
+                continue
             }
+            val declaresOldId = text.contains("identifier") &&
+                readDeclaredIdentifier(file, text) == oldId
             val baseMatches = if (declaresOldId) false else {
                 // Sin incluir sufijos de tipo: entity, client, behaviour, etc.
                 val stem = file.nameWithoutExtension

@@ -88,6 +88,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -104,6 +105,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.packforge.app.ui.components.CachedAsyncImage
@@ -113,6 +115,13 @@ import com.packforge.app.ui.components.AddonDisplayItem
 import com.packforge.app.ui.components.AddonPairCard
 import com.packforge.app.ui.components.AddonPairDialog
 import com.packforge.app.ui.components.buildAddonDisplayItems
+import com.packforge.app.ui.theme.ExpressiveAnimations
+import com.packforge.app.ui.theme.ExpressiveElevation
+import com.packforge.app.ui.theme.ExpressiveShapes
+import com.packforge.app.ui.theme.LocalMotionLevel
+import com.packforge.app.ui.theme.MotionLevel
+import com.packforge.app.ui.theme.mediumTweenOf
+import com.packforge.app.ui.theme.rememberExpressiveHaptics
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.AddonType
 import com.packforge.app.domain.model.Conflict
@@ -157,6 +166,17 @@ fun ImportScreen(
 
     // ─── Agrupación visual BP+RP en "minicarpeta morada" (solo UI) ───
     val displayItems = remember(addons) { buildAddonDisplayItems(addons) }
+
+    // Claves ya mostradas esta sesión: solo las tarjetas NUEVAS (recién
+    // importadas) rebotan al aparecer. Las que vuelven a componerse al
+    // desplazar NO repiten la animación — en Fase 2 se retiró
+    // `animateItem()` de la biblioteca precisamente por ese coste de
+    // fotogramas sin beneficio visible durante el scroll.
+    //
+    // ⚡ OPTIMIZADO: antes `mutableStateOf<Set<String>>` con `seenItemKeys.value + itemKey`
+    // creaba un nuevo objeto Set IMMUTABLE en cada tecla (alloc + copy). Con
+    // `mutableStateMapOf` la mutación es in-place y no hay alloc intermedio.
+    val seenItemKeys = remember { mutableStateMapOf<String, Boolean>() }
     var openPairKey by remember { mutableStateOf<String?>(null) }
     val openPair = displayItems
         .filterIsInstance<AddonDisplayItem.Pair>()
@@ -167,12 +187,24 @@ fun ImportScreen(
         if (openPair == null) openPairKey = null
     }
 
+    // El `blur` es un RenderEffect de GPU caro (sobre todo en gama baja):
+    // con movimiento reducido o en MINIMAL se sustituye por atenuar la
+    // lista, que da el mismo efecto de "foco en el diálogo" sin el coste.
+    val blurAllowed = LocalMotionLevel.current == MotionLevel.FULL ||
+        LocalMotionLevel.current == MotionLevel.MODERATE
+
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .then(if (openPair != null) Modifier.blur(14.dp) else Modifier),
+                .then(
+                    when {
+                        openPair == null -> Modifier
+                        blurAllowed -> Modifier.blur(14.dp)
+                        else -> Modifier.graphicsLayer { alpha = 0.55f }
+                    }
+                ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
         ) {
@@ -196,6 +228,7 @@ fun ImportScreen(
             item {
                 CraftingTableLayout(
                     addons = addons,
+                    displayItems = displayItems,
                     onAddAddon = { launcher.launch(arrayOf("*/*")) },
                     onExport = {},
                     showResultSlot = false
@@ -246,35 +279,62 @@ fun ImportScreen(
                 }
             }
         ) { item ->
-            when (item) {
-                is AddonDisplayItem.Single -> {
-                    val addon = item.addon
-                    val addonConflicts = conflictsByAddonId[addon.id].orEmpty()
-                    val onToggle = remember(addon.id) { { onToggleAddon(addon.id) } }
-                    val onMoveUp = remember(addon.id) { { onMoveAddon(addon.id, -1) } }
-                    val onMoveDown = remember(addon.id) { { onMoveAddon(addon.id, 1) } }
-                    val onRemove = remember(addon.id) { { onRemoveAddon(addon.id) } }
+            val itemKey = when (item) {
+                is AddonDisplayItem.Single -> item.addon.id
+                is AddonDisplayItem.Pair -> "pair_${item.pairKey}"
+            }
+            // Capturado UNA vez por identidad de ítem: aunque seenItemKeys
+            // cambie en el mismo fotograma, esta rama no parpadea.
+            val animateEntrance = remember(itemKey) { !seenItemKeys.contains(itemKey) }
+            val itemMotionLevel = LocalMotionLevel.current
+            var entered by remember(itemKey) { mutableStateOf(false) }
+            LaunchedEffect(itemKey) {
+                seenItemKeys[itemKey] = true
+                entered = true
+            }
 
-                    AddonCard(
-                        addon = addon,
-                        index = addon.priority,
-                        total = addons.size,
-                        conflictCount = addonConflicts.size,
-                        hasCritical = addonConflicts.any {
-                            it.severity == ConflictSeverity.CRITICAL
-                        },
-                        onToggle = onToggle,
-                        onMoveUp = onMoveUp,
-                        onMoveDown = onMoveDown,
-                        onRemove = onRemove
-                    )
+            val itemContent: @Composable () -> Unit = {
+                when (item) {
+                    is AddonDisplayItem.Single -> {
+                        val addon = item.addon
+                        val addonConflicts = conflictsByAddonId[addon.id].orEmpty()
+                        val onToggle = remember(addon.id) { { onToggleAddon(addon.id) } }
+                        val onMoveUp = remember(addon.id) { { onMoveAddon(addon.id, -1) } }
+                        val onMoveDown = remember(addon.id) { { onMoveAddon(addon.id, 1) } }
+                        val onRemove = remember(addon.id) { { onRemoveAddon(addon.id) } }
+
+                        AddonCard(
+                            addon = addon,
+                            index = addon.priority,
+                            total = addons.size,
+                            conflictCount = addonConflicts.size,
+                            hasCritical = addonConflicts.any {
+                                it.severity == ConflictSeverity.CRITICAL
+                            },
+                            onToggle = onToggle,
+                            onMoveUp = onMoveUp,
+                            onMoveDown = onMoveDown,
+                            onRemove = onRemove
+                        )
+                    }
+                    is AddonDisplayItem.Pair -> {
+                        AddonPairCard(
+                            pair = item,
+                            onOpen = { openPairKey = item.pairKey }
+                        )
+                    }
                 }
-                is AddonDisplayItem.Pair -> {
-                    AddonPairCard(
-                        pair = item,
-                        onOpen = { openPairKey = item.pairKey }
-                    )
+            }
+
+            if (animateEntrance && itemMotionLevel != MotionLevel.NONE) {
+                AnimatedVisibility(
+                    visible = entered,
+                    enter = ExpressiveAnimations.scaleInBounce(itemMotionLevel)
+                ) {
+                    itemContent()
                 }
+            } else {
+                itemContent()
             }
         }
 
@@ -333,8 +393,10 @@ fun ImportDropZone(
             .bounceClick(scaleDown = 0.98f, hapticFeedback = false) {
                 if (!isImporting) onImportClick()
             },
-        shape = RoundedCornerShape(24.dp),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp),
+        shape = ExpressiveShapes.card,
+        elevation = CardDefaults.elevatedCardElevation(
+            defaultElevation = ExpressiveElevation.raised
+        ),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow
         )
@@ -348,7 +410,7 @@ fun ImportDropZone(
                         .align(Alignment.TopEnd)
                         .padding(12.dp)
                         .size(40.dp)
-                        .bounceClick(scaleDown = 0.88f) { onClearAll() },
+                        .bounceClick(scaleDown = 0.88f),
                     colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer,
                         contentColor = MaterialTheme.colorScheme.onErrorContainer
@@ -462,6 +524,15 @@ private fun LevitatingFourPointStar(
     color: Color,
     size: androidx.compose.ui.unit.Dp
 ) {
+    // Con movimiento reducido o en gama baja la estrella queda estática:
+    // antes llevaba DOS animaciones infinitas permanentes en el estado
+    // vacío — un gasto continuo de CPU/GPU sin motivo.
+    val motionLevel = LocalMotionLevel.current
+    if (motionLevel == MotionLevel.NONE || motionLevel == MotionLevel.MINIMAL) {
+        FourPointStarShape(color = color, size = size)
+        return
+    }
+
     val t = rememberInfiniteTransition(label = "levitatingStar")
     val offsetY by t.animateFloat(
         initialValue = -6f, targetValue = 6f,
@@ -477,27 +548,37 @@ private fun LevitatingFourPointStar(
         modifier = Modifier.offset(y = offsetY.dp).graphicsLayer { scaleX = scale; scaleY = scale },
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.size(size)) {
-            val canvasSize = this@Canvas.size
-            val cx = canvasSize.width / 2f; val cy = canvasSize.height / 2f
-            val r = canvasSize.minDimension / 2f * 0.92f; val mid = r * 0.30f
-            val path = androidx.compose.ui.graphics.Path().apply {
-                moveTo(cx, cy - r)
-                cubicTo(cx + mid, cy - mid, cx + mid, cy - mid, cx + r, cy)
-                cubicTo(cx + mid, cy + mid, cx + mid, cy + mid, cx, cy + r)
-                cubicTo(cx - mid, cy + mid, cx - mid, cy + mid, cx - r, cy)
-                cubicTo(cx - mid, cy - mid, cx - mid, cy - mid, cx, cy - r)
-                close()
-            }
-            drawPath(path, color)
+        FourPointStarShape(color = color, size = size)
+    }
+}
+
+/** Trazado de la estrella de 4 puntas, compartido por la versión animada y la estática. */
+@Composable
+private fun FourPointStarShape(color: Color, size: androidx.compose.ui.unit.Dp) {
+    Canvas(modifier = Modifier.size(size)) {
+        val canvasSize = this@Canvas.size
+        val cx = canvasSize.width / 2f; val cy = canvasSize.height / 2f
+        val r = canvasSize.minDimension / 2f * 0.92f; val mid = r * 0.30f
+        val path = androidx.compose.ui.graphics.Path().apply {
+            moveTo(cx, cy - r)
+            cubicTo(cx + mid, cy - mid, cx + mid, cy - mid, cx + r, cy)
+            cubicTo(cx + mid, cy + mid, cx + mid, cy + mid, cx, cy + r)
+            cubicTo(cx - mid, cy + mid, cx - mid, cy + mid, cx - r, cy)
+            cubicTo(cx - mid, cy - mid, cx - mid, cy - mid, cx, cy - r)
+            close()
         }
+        drawPath(path, color)
     }
 }
 
 /**
  * Indicador circular con efecto de "Ola" (Wave) estilo Material 3.
  * - Si progress es null: arco animado rotatorio con pulso de onda (indeterminado).
- * - Si progress es conocido: arco determinista semitransparente + arco de onda brillante + texto % con pulso sutil.
+ * - Si progress es conocido: arco determinista semitransparente + texto % estático.
+ *
+ * ⚡ OPTIMIZACIÓN: las animaciones decorativas (rotación, onda, pulso de texto)
+ * SOLO se ejecutan en modo INDETERMINADO. En determinista, el arco de progreso ya
+ * comunica el estado y las animaciones eran trabajo innecesario por fotograma.
  */
 @Composable
 private fun AnimatedWaveProgress(
@@ -508,40 +589,68 @@ private fun AnimatedWaveProgress(
     val trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
     val strokeWidth = 6.dp
 
-    val infiniteTransition = rememberInfiniteTransition(label = "waveProgress")
+    // Con movimiento reducido o en gama baja NO hay infinitos: el arco se
+    // queda fijo y el % de al lado comunica el progreso. (Antes eran TRES
+    // animaciones permanentes + redibujado del Canvas en cada fotograma
+    // mientras la importación corría, encima de la recomposición de la UI.)
+    val motionLevel = LocalMotionLevel.current
+    val rotation: Float
+    val waveArc: Float
+    val textScale: Float
+    
+    // Solo animar cuando el progreso es indeterminado (null).
+    // En determinista, el porcentaje y el arco ya comunican el estado.
+    val isIndeterminate = progress == null
+    
+    if (motionLevel == MotionLevel.FULL || motionLevel == MotionLevel.MODERATE) {
+        if (isIndeterminate) {
+            // Modo indeterminado: animaciones decorativas activas
+            val infiniteTransition = rememberInfiniteTransition(label = "waveProgress")
 
-    // Rotación continua 360° a velocidad constante
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "waveRotation"
-    )
+            // Rotación continua 360° a velocidad constante
+            rotation = infiniteTransition.animateFloat(
+                initialValue = 0f,
+                targetValue = 360f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(1500, easing = LinearEasing),
+                    repeatMode = RepeatMode.Restart
+                ),
+                label = "waveRotation"
+            ).value
 
-    // Pulso de onda: arco crece y se encoge (efecto Ola)
-    val waveArc by infiniteTransition.animateFloat(
-        initialValue = 20f,
-        targetValue = 130f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "waveArc"
-    )
+            // Pulso de onda: arco crece y se encoge (efecto Ola)
+            waveArc = infiniteTransition.animateFloat(
+                initialValue = 20f,
+                targetValue = 130f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(1500, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "waveArc"
+            ).value
 
-    // Pulso sutil del texto %
-    val textScale by infiniteTransition.animateFloat(
-        initialValue = 0.95f,
-        targetValue = 1.05f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "textPulse"
-    )
+            // Pulso sutil del texto %
+            textScale = infiniteTransition.animateFloat(
+                initialValue = 0.95f,
+                targetValue = 1.05f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(800, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "textPulse"
+            ).value
+        } else {
+            // Modo determinista: sin animaciones decorativas (ahorro de fotogramas)
+            rotation = 0f
+            waveArc = 0f
+            textScale = 1f
+        }
+    } else {
+        // Sin movimiento: arco fijo
+        rotation = 0f
+        waveArc = if (isIndeterminate) 90f else 0f
+        textScale = 1f
+    }
 
     val determinateProgress = progress ?: 0f
 
@@ -569,14 +678,17 @@ private fun AnimatedWaveProgress(
                 )
             }
 
-            // Arco de onda (siempre animado, brillante)
-            drawArc(
-                color = color,
-                startAngle = rotation - 90f,
-                sweepAngle = waveArc,
-                useCenter = false,
-                style = Stroke(strokePx, cap = StrokeCap.Round)
-            )
+            // Arco de onda (solo cuando hay animación activa: modo indeterminado)
+// En determinista, waveArc=0 y evitamos el draw call innecesario.
+            if (waveArc > 0f) {
+                drawArc(
+                    color = color,
+                    startAngle = rotation - 90f,
+                    sweepAngle = waveArc,
+                    useCenter = false,
+                    style = Stroke(strokePx, cap = StrokeCap.Round)
+                )
+            }
         }
 
         // Texto de porcentaje en el centro (solo cuando hay progreso conocido)
@@ -745,21 +857,40 @@ fun AddonCard(
     onRemove: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val haptics = rememberExpressiveHaptics()
+    val motionLevel = LocalMotionLevel.current
+
+    // Borde animado entre estados (crítico → activo → desactivado): sin
+    // saltos de color al resolver conflictos o alternar el switch.
+    val borderColor by animateColorAsState(
+        targetValue = when {
+            hasCritical -> MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+            addon.enabled -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+            else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f)
+        },
+        animationSpec = mediumTweenOf<Color>(motionLevel),
+        label = "addonBorderColor"
+    )
+
+    // Hundimiento Expressive: la tarjeta activa tiene presencia propia y al
+    // desactivarse se enfría hasta la elevación "pulsada" del sistema.
+    val elevation by animateDpAsState(
+        targetValue = if (addon.enabled) ExpressiveElevation.card else ExpressiveElevation.cardPressed,
+        animationSpec = mediumTweenOf<Dp>(motionLevel),
+        label = "addonElevation"
+    )
 
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
             .border(
                 width = 1.dp,
-                color = if (hasCritical)
-                    MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
-                else
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-                shape = RoundedCornerShape(20.dp)
+                color = borderColor,
+                shape = ExpressiveShapes.card
             ),
-        shape = RoundedCornerShape(20.dp),
+        shape = ExpressiveShapes.card,
         elevation = CardDefaults.elevatedCardElevation(
-            defaultElevation = if (addon.enabled) 3.dp else 1.dp
+            defaultElevation = elevation
         ),
         colors = CardDefaults.elevatedCardColors(
             containerColor = if (addon.enabled)
@@ -818,7 +949,10 @@ fun AddonCard(
                 // Switch de activación
                 Switch(
                     checked = addon.enabled,
-                    onCheckedChange = { onToggle() }
+                    onCheckedChange = {
+                        haptics.medium()
+                        onToggle()
+                    }
                 )
             }
 
@@ -849,13 +983,17 @@ fun AddonCard(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    // Botones de reordenamiento con microinteracción de rebote
+                    // Botones de reordenamiento con microinteracción de rebote.
+                    // `bounceClick` SIN lambda: solo aporta la compresión. La
+                    // acción vive en onClick del botón (patrón Fase 2: con
+                    // lambda, el modifier clickable externo tapaba al del
+                    // botón y el háptico quedaba congelado en TextHandleMove).
                     FilledTonalIconButton(
-                        onClick = onMoveUp,
+                        onClick = { haptics.light(); onMoveUp() },
                         enabled = index > 0,
                         modifier = Modifier
                             .size(30.dp)
-                            .bounceClick(scaleDown = 0.9f) { onMoveUp() }
+                            .bounceClick(scaleDown = 0.9f)
                     ) {
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowUp,
@@ -867,11 +1005,11 @@ fun AddonCard(
                     Spacer(modifier = Modifier.width(4.dp))
 
                     FilledTonalIconButton(
-                        onClick = onMoveDown,
+                        onClick = { haptics.light(); onMoveDown() },
                         enabled = index < total - 1,
                         modifier = Modifier
                             .size(30.dp)
-                            .bounceClick(scaleDown = 0.9f) { onMoveDown() }
+                            .bounceClick(scaleDown = 0.9f)
                     ) {
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowDown,
@@ -884,8 +1022,8 @@ fun AddonCard(
 
                     // Botón de detalles con flecha expandible
                     TextButton(
-                        onClick = { expanded = !expanded },
-                        modifier = Modifier.bounceClick(scaleDown = 0.94f) { expanded = !expanded }
+                        onClick = { haptics.light(); expanded = !expanded },
+                        modifier = Modifier.bounceClick(scaleDown = 0.94f)
                     ) {
                         Icon(
                             imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -900,12 +1038,12 @@ fun AddonCard(
                         )
                     }
 
-                    // Botón de eliminar con confirmación táctil
+                    // Botón de eliminar con confirmación táctil (rechazo)
                     IconButton(
-                        onClick = onRemove,
+                        onClick = { haptics.reject(); onRemove() },
                         modifier = Modifier
                             .size(32.dp)
-                            .bounceClick(scaleDown = 0.88f) { onRemove() }
+                            .bounceClick(scaleDown = 0.88f)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Delete,

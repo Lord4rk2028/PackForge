@@ -5,6 +5,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.packforge.app.data.PackForgeDatabase
 import com.packforge.app.domain.model.Addon
+import com.packforge.app.domain.model.withSafeLists
 import java.io.File
 import java.security.MessageDigest
 
@@ -220,7 +221,7 @@ object AddonStorageManager {
             gson.fromJson<List<Addon>>(json, addonListType) ?: emptyList()
         } catch (_: Throwable) {
             emptyList()
-        }
+        }.withSafeLists()
     }
 
     /** ¿Sigue algún modpack (o la sesión abierta) usando este archivo? */

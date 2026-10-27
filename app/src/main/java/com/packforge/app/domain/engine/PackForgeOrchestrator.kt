@@ -30,6 +30,7 @@ import com.packforge.app.domain.engine.FusionIssue
 import com.packforge.app.domain.engine.FusionReportBuilder
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -38,6 +39,9 @@ import kotlin.coroutines.coroutineContext
 
 object PackForgeOrchestrator {
     private const val TAG = "PackForge_Orchestrator"
+
+    /** Secuencia para que [nextSeparationStamp] nunca repita valor entre addons. */
+    private val separationStampSeq = java.util.concurrent.atomic.AtomicLong(0L)
 
     /** Directorios/archivos que se excluyen del merge genérico porque tienen fusiones dedicadas. */
     private val CRITICAL_DIRS = listOf(
@@ -53,7 +57,8 @@ object PackForgeOrchestrator {
         "sounds.json",        // → mergeSoundsJson
         "sound_definitions.json", // → mergeSoundDefinitions
         "textures/flipbook_textures.json", // → mergeFlipbookTextures
-        "player.json",        // RP player.json → analyzed, not auto-merged
+        "player.json",
+        "ui/",                // RP ui/ → BedrockUiMerger
         "player.entity.json", // BP player.entity.json → mergePlayerEntity
         "loot_tables/",       // BP loot_tables/ → mergeLootTables
         "recipes/",           // BP recipes/ → mergeRecipes
@@ -81,6 +86,7 @@ object PackForgeOrchestrator {
         "sound_definitions.json",
         "textures/flipbook_textures.json",
         "player.json",
+        "ui/",
     )
 
     /**
@@ -135,27 +141,39 @@ object PackForgeOrchestrator {
 
             // ⭐ OPTIMIZACIÓN: Usar índice cacheado en lugar de walkTopDown()
             val cachedFiles = DirIndexCache.index(sourceFile).allFiles
-            for ((fileIndex, file) in cachedFiles.withIndex()) {
-                if (fileIndex % 32 == 0) coroutineContext.ensureActive()
-                val relativePath = file.relativeTo(sourceFile).path
-                val key = relativePath.replace('\\', '/')
-                val targetRel = renames[key] ?: key
-                val targetFile = File(targetDir, targetRel)
+            val batchSize = 64
+            val batches = cachedFiles.chunked(batchSize)
 
-                targetFile.parentFile?.mkdirs()
-                file.inputStream().use { input ->
-                    targetFile.outputStream().use { output ->
-                        input.copyTo(output, bufferSize = 16384)
+            // Copia en paralelo SOLO dentro de esta fuente: entre fuentes el
+            // orden debe seguir siendo secuencial para que el addon de mayor
+            // prioridad (el último) sobrescriba como siempre.
+            coroutineScope {
+                batches.map { batch ->
+                    async(Dispatchers.IO) {
+                        for (file in batch) {
+                            val relativePath = file.relativeTo(sourceFile).path
+                            val key = relativePath.replace("\\", "/")
+                            val targetRel = renames[key] ?: key
+                            val targetFile = File(targetDir, targetRel)
+
+                            targetFile.parentFile?.mkdirs()
+                            file.inputStream().use { input ->
+                                targetFile.outputStream().use { output ->
+                                    input.copyTo(output, bufferSize = 16384)
+                                }
+                            }
+                            processedCounter.incrementAndGet()
+                        }
                     }
-                }
-                processedCounter.incrementAndGet()
-                if (localTotal > 0 && (fileIndex % 10 == 0 || fileIndex == cachedFiles.size - 1)) {
-                    val done = processedCounter.get()
-                    progressCallback?.onProgress(
-                        "Copiando archivos... $done/$localTotal",
-                        (done * 72 / localTotal).coerceIn(0, 72)
-                    )
-                }
+                }.awaitAll()
+            }
+
+            if (localTotal > 0) {
+                val done = processedCounter.get()
+                progressCallback?.onProgress(
+                    "Copiando archivos... $done/$localTotal",
+                    (done * 72 / localTotal).coerceIn(0, 72)
+                )
             }
         }
     }
@@ -252,7 +270,11 @@ object PackForgeOrchestrator {
         customAuthor: String = "",
         customVersion: String = "1.0.0",
         customDescription: String = "",
-        customIconPath: String? = null
+        customIconPath: String? = null,
+        /** Ids de los addons, en el MISMO orden que [addonPaths]. */
+        addonIds: List<String> = emptyList(),
+        /** ruta relativa → id del addon ganador elegido por el usuario. */
+        fileWinners: Map<String, String> = emptyMap()
     ): MergeResult {
         val tInicio = System.currentTimeMillis()
         val extractedDirs = mutableListOf<String>()
@@ -305,6 +327,16 @@ object PackForgeOrchestrator {
             }
 
             extractionResults.filterNotNull().forEach { extractedDirs.add(it) }
+
+            // Mapa addon → directorio extraído (mismo orden que addonPaths).
+            // Lo necesita ResolutionApplier para localizar el archivo del ganador
+            // que el usuario eligió en la pantalla de Conflictos.
+            val addonDirById: Map<String, String> = extractionResults
+                .mapIndexedNotNull { index, dir ->
+                    val id = addonIds.getOrNull(index)?.takeIf { it.isNotBlank() }
+                    if (dir == null || id == null) null else id to dir
+                }
+                .toMap()
             coroutineContext.ensureActive()
 
             val tExtraccion = System.currentTimeMillis()
@@ -464,6 +496,57 @@ object PackForgeOrchestrator {
                 bpDirs.forEach { DirIndexCache.invalidate(File(it)) }
                 rpDirs.forEach { DirIndexCache.invalidate(File(it)) }
             }
+
+            // ── Desambiguación de COMPONENTES PERSONALIZADOS ──
+            // Bedrock lanza un error fatal si dos scripts registran el mismo
+            // `registerCustomComponent('nombre', …)`: no es "gana uno", es un
+            // fallo en tiempo de carga. Se renombra el del addon perdedor (con
+            // sufijo estable) y se actualizan sus JSON de bloques/ítems.
+            if (bpDirs.isNotEmpty()) {
+                try {
+                    val componentRewrite = CustomComponentRewriter.rewrite(bpDirs)
+                    if (componentRewrite.totalRewrites > 0) {
+                        // El rewriter modifica los directorios de origen: el
+                        // índice cacheado ya no refleja el contenido en disco.
+                        bpDirs.forEach { DirIndexCache.invalidate(File(it)) }
+                        PackForgeLog.d(
+                            TAG,
+                            "Componentes desambiguados: ${componentRewrite.renames.size} " +
+                                "renombrado(s), ${componentRewrite.totalRewrites} archivo(s): " +
+                                componentRewrite.renames.entries.joinToString {
+                                    "'${it.key}'→'${it.value}'"
+                                }
+                        )
+                    }
+                } catch (e: Exception) {
+                    // No bloqueante: si falla, se fusiona como antes.
+                    PackForgeLog.e(
+                        TAG,
+                        "Desambiguación de componentes falló (no bloqueante): ${e.message}"
+                    )
+                }
+            }
+
+            // ── Desambiguación de PARTÍCULAS DUPLICADAS (antes de copiar) ──
+            // Debe hacerse en el ORIGEN: en el árbol ya fusionado es imposible
+            // saber a qué addon pertenece cada referencia, y el renombrado
+            // acababa afectando también al addon ganador.
+            //
+            // ⚠️ Se opera sobre `rpDirs` (un RP ya clasificado por addon) y NO
+            // sobre `extractedDirs`: la clasificación ya reparte el contenido en
+            // BP/RP, así que los roots extraídos pueden no contener `particles/`.
+            // Ese detalle hacía que el renombrado no ocurriera y que dos
+            // partículas distintas quedaran con el MISMO identificador.
+            MergePipelineGuard.reset()
+            try {
+                val particleResult = ParticleDeduplicator.deduplicate(rpDirs.map { File(it) })
+                MergePipelineGuard.registerInvoked("deduplicateParticleIdentifiers")
+                if (particleResult.renames > 0) {
+                    particleResult.affectedRoots.forEach { DirIndexCache.invalidate(it) }
+                }
+            } catch (e: Exception) {
+                PackForgeLog.e(TAG, "Desambiguación de partículas falló (no bloqueante): ${e.message}")
+            }
             coroutineContext.ensureActive()
             
             // ARQUITECTURA NUEVA: FASE 1 EAGER + FASE 2 LAZY (Evita indexado masivo de 20 min)
@@ -523,33 +606,121 @@ object PackForgeOrchestrator {
                 val merger = BedrockCriticalFilesMerger
 
                 withContext(Dispatchers.IO) {
-                    // Tareas paralelas de RP
-                    val rpTasks = listOf(
-                        async { merger.mergeTerrainTexture(rpDirFiles, mergedRpDir) },
-                        async { merger.mergeItemTexture(rpDirFiles, mergedRpDir) },
-                        async { merger.mergeBlocksJson(rpDirFiles, mergedRpDir) },
-                        async { merger.mergeLangFiles(addonDirFiles, mergedRpDir) },
-                        async { merger.mergeFlipbookTextures(rpDirFiles, mergedRpDir) },
-                        async { merger.mergeGeometryFiles(rpDirFiles, mergedRpDir) },
-                        async { merger.mergeRenderControllers(rpDirFiles, mergedRpDir) },
-                        async { merger.mergeAnimations(rpDirFiles, mergedRpDir) },
-                        async { merger.mergeSoundsJson(rpDirFiles, mergedRpDir) },
-                        async { merger.mergeEntityDefinitions(rpDirFiles, mergedRpDir) },
-                        async { merger.mergeEntityTextures(rpDirFiles, mergedRpDir) },
-                        async { merger.mergeAttachables(rpDirFiles, mergedRpDir) }
+                    // Cada fusión se declara con su NOMBRE y se registra al
+                    // arrancar: el guard verifica al final que ninguna declarada
+                    // se quedó sin ejecutar (así fue como sound_definitions y
+                    // particles estuvieron perdiéndose sin que nadie lo notara).
+                    val rpMerges: List<Pair<String, suspend () -> Unit>> = listOf(
+                        "mergeTerrainTexture" to { merger.mergeTerrainTexture(rpDirFiles, mergedRpDir) },
+                        "mergeItemTexture" to { merger.mergeItemTexture(rpDirFiles, mergedRpDir) },
+                        "mergeBlocksJson" to { merger.mergeBlocksJson(rpDirFiles, mergedRpDir) },
+                        "mergeLangFiles" to { merger.mergeLangFiles(addonDirFiles, mergedRpDir) },
+                        "mergeFlipbookTextures" to { merger.mergeFlipbookTextures(rpDirFiles, mergedRpDir) },
+                        "mergeGeometryFiles" to { merger.mergeGeometryFiles(rpDirFiles, mergedRpDir) },
+                        "mergeRenderControllers" to { merger.mergeRenderControllers(rpDirFiles, mergedRpDir) },
+                        "mergeAnimations" to { merger.mergeAnimations(rpDirFiles, mergedRpDir) },
+                        "mergeSoundsJson" to { merger.mergeSoundsJson(rpDirFiles, mergedRpDir) },
+                        "mergeEntityDefinitions" to { merger.mergeEntityDefinitions(rpDirFiles, mergedRpDir) },
+                        "mergeEntityTextures" to { merger.mergeEntityTextures(rpDirFiles, mergedRpDir) },
+                        "mergeAttachables" to { merger.mergeAttachables(rpDirFiles, mergedRpDir) },
+                        "mergeBiomesClient" to { merger.mergeBiomesClient(rpDirFiles, mergedRpDir) },
+                        "mergeFontGlyphMaps" to { merger.mergeFontGlyphMaps(rpDirFiles, mergedRpDir) },
+                        "mergeTexturesList" to { merger.mergeTexturesList(rpDirFiles, mergedRpDir) },
+                        "mergeUi" to { BedrockUiMerger.mergeUi(rpDirFiles, mergedRpDir) }
                     )
-                    // Tareas paralelas de BP
-                    val bpTasks = listOf(
-                        async { merger.mergePlayerEntity(bpDirFiles, mergedBpDir) },
-                        async { merger.mergeLootTables(bpDirFiles, mergedBpDir) },
-                        async { merger.mergeRecipes(bpDirFiles, mergedBpDir) }
+                    val bpMerges: List<Pair<String, suspend () -> Unit>> = listOf(
+                        "mergePlayerEntity" to { merger.mergePlayerEntity(bpDirFiles, mergedBpDir) },
+                        "mergeLootTables" to { merger.mergeLootTables(bpDirFiles, mergedBpDir) },
+                        "mergeRecipes" to { merger.mergeRecipes(bpDirFiles, mergedBpDir) }
                     )
+
+                    val rpTasks = rpMerges.map { (name, block) ->
+                        async {
+                            MergePipelineGuard.registerInvoked(name)
+                            block()
+                        }
+                    }
+                    val bpTasks = bpMerges.map { (name, block) ->
+                        async {
+                            MergePipelineGuard.registerInvoked(name)
+                            block()
+                        }
+                    }
+
+                    // ⚠️ sound_definitions.json EXISTÍA como fusión dedicada pero
+                    // nunca se llamaba: el copiado genérico la sobrescribía y se
+                    // perdían los sonidos de todos los addons menos el último.
+                    // (Las partículas ya se desambiguan en el origen, antes de
+                    // copiar, en ParticleDeduplicator.)
+                    val soundTask = async {
+                        MergePipelineGuard.registerInvoked("mergeSoundDefinitions")
+                        merger.mergeSoundDefinitions(rpDirFiles, mergedRpDir)
+                    }
+
                     (rpTasks + bpTasks).awaitAll()
+                    // El mapa de claves de sonido renombradas alimenta el reporte.
+                    soundKeyRenames = soundTask.await()
                 }
+
+                // ── GUARD: ninguna fusión declarada puede quedar sin ejecutar ──
+                val missingMerges = MergePipelineGuard.findMissingMerges()
+                if (missingMerges.isNotEmpty()) {
+                    PackForgeLog.w(
+                        TAG,
+                        "⚠️ Fusiones declaradas que NO se ejecutaron: ${missingMerges.joinToString()}"
+                    )
+                    dependencyNotes = dependencyNotes + buildList {
+                        add(
+                            "⚠️ Fusiones no ejecutadas (riesgo de pérdida de contenido): " +
+                                missingMerges.joinToString()
+                        )
+                    }
+                }
+                val undeclaredMerges = MergePipelineGuard.findUndeclaredMerges()
+                if (undeclaredMerges.isNotEmpty()) {
+                    PackForgeLog.w(
+                        TAG,
+                        "ℹ️ Fusiones ejecutadas sin declarar en el guard: ${undeclaredMerges.joinToString()}"
+                    )
+                }
+
                 
                 // ⚠️ mergeMaterialInstances debe ser síncrono al final, depende de terrainTexture+entity+animations
                 merger.mergeMaterialInstances(bpDirFiles, rpDirFiles, mergedBpDir, mergedRpDir)
                 PackForgeLog.d("PackForge_Export", "✅ Fase 3 (Paralela) completada")
+
+                // ── DECISIONES DEL USUARIO, ARCHIVO POR ARCHIVO ──
+                // El orden de addons ya respeta "gana el de más prioridad", pero
+                // cuando hay VARIAS decisiones a la vez un solo orden no puede
+                // satisfacerlas todas. Aquí se copia el archivo del ganador
+                // elegido sobre el resultado, solo para ese archivo.
+                if (fileWinners.isNotEmpty()) {
+                    try {
+                        val resolutionResult = ResolutionApplier.apply(
+                            fileWinners = fileWinners,
+                            addonDirById = addonDirById,
+                            mergedBpDir = mergedBpDir,
+                            mergedRpDir = mergedRpDir
+                        )
+                        if (resolutionResult.applied > 0) {
+                            // El contenido del destino cambió: el índice cacheado
+                            // ya no refleja el disco.
+                            DirIndexCache.invalidate(mergedBpDir)
+                            DirIndexCache.invalidate(mergedRpDir)
+                            dependencyNotes = dependencyNotes + buildList {
+                                add(
+                                    "🎯 ${resolutionResult.applied} archivo(s) sustituido(s) " +
+                                        "según tus decisiones de conflicto."
+                                )
+                            }
+                        }
+                    } catch (e: Exception) {
+                        PackForgeLog.e(
+                            TAG,
+                            "No se pudieron aplicar las decisiones de conflicto: ${e.message}"
+                        )
+                    }
+                }
 
                 // FASE 3B: Validación de cobertura de texturas
                 try {
@@ -668,6 +839,21 @@ object PackForgeOrchestrator {
                 DirIndexCache.invalidate(mergedBpDir)
                 PackForgeLog.d("PackForge_Export", "💊 ${healerRepair.summary}")
             }
+
+            // ⭐ AUTO-REPARACIÓN DE REFERENCIAS ROTAS (fuzzy-match >= 0.95)
+            // Reescribe referencias de textura en JSONs del RP fusionado cuando
+            // encuentra una coincidencia cercana entre las texturas disponibles.
+            val autoRepaired = try {
+                PackForgeHealer.autoRepairReferences(mergedRpDir, extractedDirs)
+            } catch (e: Exception) {
+                PackForgeLog.w("PackForge_Export", "Healer.autoRepairReferences no bloqueante: ${e.message}")
+                0
+            }
+            if (autoRepaired > 0) {
+                DirIndexCache.invalidate(mergedRpDir)
+                PackForgeLog.d("PackForge_Export", "🔧 ${autoRepaired} referencia(s) de textura auto-reparada(s)")
+            }
+
             val healerNotes = mutableListOf<String>()
             if (healerRepair.totalFixed > 0) healerNotes += healerRepair.summary
             if (healerRepair.placeholdersGenerated > 0) {
@@ -735,6 +921,28 @@ object PackForgeOrchestrator {
                 PackForgeLog.w("PackForge_Export", "💊 ${healReport.summary}")
             }
             PackForgeLog.d("PackForge_Export", "💊 PASO 5b completado")
+
+            // ── PASO 5c: VALIDACIÓN DE REFERENCIAS QUE LA FUSIÓN MANIPULA ──
+            // Partículas, animaciones, materiales y componentes personalizados:
+            // si un renombrado dejó una referencia colgando, aquí se detecta
+            // ANTES de empaquetar, en vez de descubrirlo abriendo el mundo.
+            try {
+                val referenceReport = MergeReferenceValidator.validate(mergedBpDir, mergedRpDir)
+                MergeReferenceValidator.publish(referenceReport)
+                if (referenceReport.isClean) {
+                    PackForgeLog.d("PackForge_Export", "🔗 ${referenceReport.summary}")
+                } else {
+                    PackForgeLog.w("PackForge_Export", "🔗 ${referenceReport.summary}")
+                    dependencyNotes = dependencyNotes + buildList {
+                        add("🔗 ${referenceReport.summary}")
+                        referenceReport.broken.take(10).forEach { broken ->
+                            add("   • ${broken.kind} '${broken.identifier}' ← ${broken.referencingFile}")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                PackForgeLog.w(TAG, "Validación de referencias falló (no bloqueante): ${e.message}")
+            }
 
             // g) APLICAR ICONO PERSONALIZADO (AL FINAL, DESPUÉS DE TODO)
             PackForgeLog.d("PackForge_Export", "🔧 PASO 6: Aplicando icono personalizado...")
@@ -937,6 +1145,25 @@ object PackForgeOrchestrator {
     }
     
     /**
+     * Estampa ÚNICA por addon y COMPARTIDA entre su BP y su RP.
+     *
+     * `IdentifierRemapper.ownerKey()` agrupa `separated_bp_TS` con
+     * `separated_rp_TS` por ese número. Si cada carpeta usara su propio
+     * `System.currentTimeMillis()` —como antes— el BP y el RP del MISMO addon
+     * quedaban como dos "addons" distintos, y el renamespacer los hacía
+     * colisionar CONSIGO MISMOS: el id del RP se renombraba a `pf:xxxx_*`
+     * mientras el BP conservaba el original. Consecuencias reales:
+     *  · `minecraft:client_entity` del RP ya no casaba con la entidad del BP
+     *    → entidades invisibles / sin modelo en el juego.
+     *  · claves de `item_texture.json` / `terrain_texture.json` renombradas
+     *    → ítems y bloques sin textura.
+     *  · miles de renombrados inútiles (O(ids × archivos)): una fusión de
+     *    40 MB tardaba >45 min y había que cancelarla.
+     */
+    private fun nextSeparationStamp(): Long =
+        System.currentTimeMillis() * 1000L + (separationStampSeq.incrementAndGet() % 1000L)
+
+    /**
      * Separa un addon tipo BOTH en sus componentes BP y RP usando rutas directas
      * CRÍTICO: Usa las rutas directas del clasificador en lugar de buscarlas nuevamente
      */
@@ -947,10 +1174,12 @@ object PackForgeOrchestrator {
         
         var bpPath: String? = null
         var rpPath: String? = null
+        // Estampa ÚNICA compartida por el BP y el RP de ESTE addon.
+        val separationStamp = nextSeparationStamp()
         
         // Separar BP
         if (bpSubfolder.exists()) {
-            val bpDir = File(tempDir, "separated_bp_${System.currentTimeMillis()}")
+            val bpDir = File(tempDir, "separated_bp_$separationStamp")
             bpDir.mkdirs()
             
             var bpFileCount = 0
@@ -979,7 +1208,7 @@ object PackForgeOrchestrator {
         
         // Separar RP
         if (rpSubfolder.exists()) {
-            val rpDir = File(tempDir, "separated_rp_${System.currentTimeMillis()}")
+            val rpDir = File(tempDir, "separated_rp_$separationStamp")
             rpDir.mkdirs()
             
             var rpFileCount = 0
@@ -1025,6 +1254,8 @@ object PackForgeOrchestrator {
         val sourceDir = File(extractedDir)
         var bpPath: String? = null
         var rpPath: String? = null
+        // Estampa ÚNICA compartida por el BP y el RP de ESTE addon.
+        val separationStamp = nextSeparationStamp()
         
         // Buscar carpetas BP_* y RP_*
         val bpSubfolder = sourceDir.listFiles()?.find { 
@@ -1039,7 +1270,7 @@ object PackForgeOrchestrator {
         
         // Separar BP
         if (bpSubfolder != null) {
-            val bpDir = File(tempDir, "separated_bp_${System.currentTimeMillis()}")
+            val bpDir = File(tempDir, "separated_bp_$separationStamp")
             bpDir.mkdirs()
             
             // Copiar todo el contenido de BP_* al directorio separado
@@ -1076,7 +1307,7 @@ object PackForgeOrchestrator {
         
         // Separar RP
         if (rpSubfolder != null) {
-            val rpDir = File(tempDir, "separated_rp_${System.currentTimeMillis()}")
+            val rpDir = File(tempDir, "separated_rp_$separationStamp")
             rpDir.mkdirs()
             
             // Copiar todo el contenido de RP_* al directorio separado
@@ -1400,7 +1631,14 @@ object PackForgeOrchestrator {
         }
 
         // ══ GENERAR RP MANIFEST (función exacta) ══
-        val rpManifestObj = ManifestGenerator.generateRpManifest(customName)
+        // Autor y descripción también en el RP: el juego muestra una ficha por
+        // CADA pack del .mcaddon, y antes el RP salía siempre con
+        // "PackForge Modpack" y sin autor.
+        val rpManifestObj = ManifestGenerator.generateRpManifest(
+            packName = customName,
+            packDescription = customDescription,
+            packAuthor = customAuthor
+        )
         val newRpHeaderUuid = rpManifestObj.optJSONObject("header")?.optString("uuid")
             ?: java.util.UUID.randomUUID().toString()
 
@@ -2230,6 +2468,7 @@ object PackForgeOrchestrator {
         }
     }
 }
+
 
 
 

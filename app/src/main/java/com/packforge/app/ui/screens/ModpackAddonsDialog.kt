@@ -41,6 +41,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.ui.components.CachedAsyncImage
+import com.packforge.app.ui.components.ExpressiveDialog
 import com.packforge.app.ui.theme.ExpressiveShapes
 import com.packforge.app.ui.theme.rememberExpressiveHaptics
 import java.io.File
@@ -69,7 +70,7 @@ fun ModpackAddonsDialog(
     val haptics = rememberExpressiveHaptics()
     val totalBytes = addons.sumOf { it.sizeBytes }
 
-    Dialog(
+    ExpressiveDialog(
         // onDismissRequest se dispara al tocar fuera o al pulsar atrás.
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)

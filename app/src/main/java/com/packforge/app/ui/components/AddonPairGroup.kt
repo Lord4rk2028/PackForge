@@ -47,6 +47,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.AddonType
+import com.packforge.app.ui.theme.ExpressiveElevation
+import com.packforge.app.ui.theme.ExpressiveShapes
 
 // ══════════════════════════════════════════════════════════════════
 // AGRUPACIÓN UI: parejas RP+BP en una "minicarpeta morada"
@@ -145,11 +147,13 @@ fun AddonPairCard(
                     1.dp,
                     if (bothEnabled) accent.copy(alpha = 0.35f) else Color.Transparent
                 ),
-                RoundedCornerShape(20.dp)
+                ExpressiveShapes.card
             )
             .bounceClick(scaleDown = 0.97f) { onOpen() },
-        shape = RoundedCornerShape(20.dp),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp),
+        shape = ExpressiveShapes.card,
+        elevation = CardDefaults.elevatedCardElevation(
+            defaultElevation = ExpressiveElevation.card
+        ),
         colors = CardDefaults.elevatedCardColors(
             containerColor = if (bothEnabled) container else container.copy(alpha = 0.5f)
         )

@@ -42,6 +42,12 @@ object BedrockCompatibilityAnalyzer {
         """(?:from\s*|import\s*\(|import\s*)['"](\.{1,2}/[^'"]+)['"]"""
     )
 
+    /**
+     * Sufijo que añade `ResourcePathRegistry.planSourceMutations` al desambiguar
+     * rutas repetidas (`scripts/main.js` → `scripts/main_pf1.js`).
+     */
+    private val PF_DEDUP_SUFFIX = Regex("_pf\\d+(?=\\.[A-Za-z0-9]+$)")
+
     fun analyze(
         behaviorPackDirs: List<String>,
         resourcePackDirs: List<String> = emptyList()
@@ -198,19 +204,32 @@ object BedrockCompatibilityAnalyzer {
         val entry = declaredEntry.replace('\\', '/').removePrefix("./")
         if (entry.isBlank() || entry.startsWith('/')) return null
 
-        val candidates = linkedSetOf(entry).apply {
+        // El deduplicador de rutas (ResourcePathRegistry.planSourceMutations)
+        // desambigua rutas repetidas añadiendo `_pf1`/`_pf2` antes de la
+        // extensión y REESCRIBE las referencias en los manifests de ORIGEN,
+        // pero el archivo físico solo se renombra al copiarse al pack fusionado.
+        // Validar el nombre mutado contra el directorio de origen producía un
+        // falso "SCRIPT_ENTRY_INVALID" (bloqueante) en TODA fusión con más de un
+        // addon que traiga `scripts/main.js`: la fusión abortaba con
+        // "El módulo script declara 'scripts/main_pf1.js'…" aunque el archivo
+        // existiera en el pack fusionado.
+        val withoutDedupSuffix = PF_DEDUP_SUFFIX.replace(entry, "")
+
+        val candidates = linkedSetOf<String>()
+        listOf(entry, withoutDedupSuffix).distinct().forEach { variant ->
+            candidates.add(variant)
             when {
-                '/' !in entry -> {
-                    add("scripts/$entry")
-                    add("script/$entry")
+                '/' !in variant -> {
+                    candidates.add("scripts/$variant")
+                    candidates.add("script/$variant")
                 }
-                entry.startsWith("scripts/") -> {
-                    add(entry.removePrefix("scripts/"))
-                    add("script/${entry.removePrefix("scripts/")}")
+                variant.startsWith("scripts/") -> {
+                    candidates.add(variant.removePrefix("scripts/"))
+                    candidates.add("script/${variant.removePrefix("scripts/")}")
                 }
-                entry.startsWith("script/") -> {
-                    add(entry.removePrefix("script/"))
-                    add("scripts/${entry.removePrefix("script/")}")
+                variant.startsWith("script/") -> {
+                    candidates.add(variant.removePrefix("script/"))
+                    candidates.add("scripts/${variant.removePrefix("script/")}")
                 }
             }
         }

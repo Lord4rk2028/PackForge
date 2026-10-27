@@ -16,12 +16,15 @@ import com.packforge.app.util.AddonStorageManager
 import com.packforge.app.util.CleanupReport
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.util.StorageSnapshot
+import com.packforge.app.domain.engine.AddonOrderResolver
 import com.packforge.app.domain.engine.AddonParser
 import com.packforge.app.domain.engine.AddonUriCache
 import com.packforge.app.domain.engine.ConflictEngine
 import com.packforge.app.domain.engine.ConflictRegistry
 import com.packforge.app.domain.engine.ModpackExporter
 import com.packforge.app.domain.engine.PackForgeOrchestrator
+import com.packforge.app.domain.engine.ResolutionApplier
+import com.packforge.app.domain.engine.ScriptFlowAnalyzer
 import com.packforge.app.service.MergeForegroundService
 import com.packforge.app.service.MergeSession
 import com.packforge.app.ui.components.AddonSite
@@ -378,6 +381,35 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
      *   poder "abrir el origen" desde la biblioteca de modpacks.
      * @param sourceSite "MCPEDL" | "CurseForge" | "ModBay"
      */
+    /**
+     * Emite [_importProgress] como máximo ~10 veces por segundo, y solo si el
+     * mensaje o el porcentaje (redondeado a entero) cambiaron.
+     *
+     * El callback de descarga de `downloadToCache` se dispara en cada buffer
+     * escrito (cientenas de veces por segundo). Con la UI ya segmentada por
+     * destino cada emisión solo recompone la pantalla actual, pero acotarla
+     * aquí evita además cientos de inválidaciones por segundo mientras
+     * corre la descarga.
+     *
+     * Los estados finales (`Idle`, errores) se escriben DIRECTAMENTE en
+     * `_importProgress`, nunca por esta vía: el throttle solo afecta a los
+     * ticks intermedios, así que la barra nunca puede quedarse colgada.
+     */
+    private var lastProgressKey: String? = null
+    private var lastProgressAt = 0L
+
+    private fun emitImportProgress(progress: OperationProgress.Loading) {
+        // `progress` es Float?: descargas sin tamaño conocido emiten null, y
+        // eso también cuenta como un estado válido (mensaje "Descargando...").
+        val percent = progress.progress ?: -1f
+        val key = "${progress.message}|${(percent * 100).toInt()}"
+        val now = System.currentTimeMillis()
+        if (key == lastProgressKey || now - lastProgressAt < 100L) return
+        lastProgressKey = key
+        lastProgressAt = now
+        _importProgress.value = progress
+    }
+
     fun importFromWebUrl(context: Context, downloadUrl: String, sourcePageUrl: String? = null, sourceSite: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             _webImportError.value = null
@@ -404,7 +436,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 suggestedFileName = fileName,
                 cookieHeader = cookies
             ) { p ->
-                _importProgress.value = OperationProgress.Loading("Descargando...", p)
+                emitImportProgress(OperationProgress.Loading("Descargando...", p))
             }.onSuccess { uri ->
                 importAddons(context, listOf(uri), fromWeb = true, sourceUrl = sourcePageUrl, sourceSite = sourceSite)
             }.onFailure {
@@ -428,7 +460,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 _isImporting.value = true
                 val newAddons = mutableListOf<Addon>()
                 uris.forEachIndexed { index, uri ->
-                    _importProgress.value = OperationProgress.Loading("Analizando (${index+1}/${uris.size})...", index.toFloat()/uris.size)
+                    emitImportProgress(OperationProgress.Loading("Analizando (${index+1}/${uris.size})...", index.toFloat()/uris.size))
                     AddonParser.parseFromUri(context, uri)?.let { addon ->
                         // Propagar origen web (página y sitio) cuando viene del WebView interno
                         val withSource = if (sourceUrl != null) {
@@ -511,8 +543,18 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         return finalScore
     }
 
+    /**
+     * Rebote rápido: si otra llamada llega antes de 120 ms, se ignora la
+     * anterior y solo la última dispara el cálculo real.
+     * Con 15 detectores × N addons, cada llamada innecesaria es trabajo
+     * evitable que compite con la UI en el hilo de composición.
+     */
+    private var recalcJob: Job? = null
+
     private fun recalculateConflicts() {
-        viewModelScope.launch(Dispatchers.Default) {
+        recalcJob?.cancel()
+        recalcJob = viewModelScope.launch(Dispatchers.Default) {
+            kotlinx.coroutines.delay(120L) // coalesce rapid toggles/moves
             val active = _addons.value.filter { it.enabled }
             PackForgeLog.d("PackForge", "Recalculando conflictos para ${active.size} addons activos")
             // CRÍTICO: pasar las resoluciones para que ConflictEngine regenere los
@@ -617,11 +659,56 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 _exportState.value = ExportState.Progress("Iniciando exportación...", 0)
                 
                 // Obtener rutas de archivos de addons activos
+                //
+                // ⚠️ La fusión copia EN ORDEN y sobrescribe: el último gana.
+                // Si el usuario eligió un ganador distinto en la pantalla de
+                // Conflictos, hay que reordenar para que esa decisión se cumpla
+                // de verdad (antes se mostraba como resuelta pero se ignoraba).
+                val orderResult = AddonOrderResolver.resolveOrder(
+                    addons = _addons.value,
+                    conflicts = _conflicts.value
+                )
+                if (orderResult.reordered) {
+                    _addons.value = orderResult.ordered.mapIndexed { index, addon ->
+                        addon.copy(priority = index)
+                    }
+                    PackForgeLog.d(
+                        "PackForge",
+                        "Orden de fusión ajustado para respetar los ganadores elegidos: " +
+                            _addons.value.joinToString(" → ") { it.name }
+                    )
+                    recalculateConflicts()
+                }
+                orderResult.warnings.forEach { warning ->
+                    PackForgeLog.w("PackForge", warning)
+                }
+
                 val activeAddons = _addons.value.filter { it.enabled }
                 val activeAddonPaths = activeAddons.map { it.sourceFilePath }
                 
                 if (activeAddonPaths.isEmpty()) {
                     _exportState.value = ExportState.Error("No hay addons activos para fusionar")
+                    return@launch
+                }
+
+                // ── PUERTA DE SCRIPTS ANTES DE FUSIONAR ──
+                // Si los scripts de dos addons chocan (entry inexistente o ciclo
+                // de importación) el resultado fusionado rompería en el juego.
+                // Se corta aquí, antes de escribir nada, en vez de exportar un
+                // modpack roto que el usuario descubriría al entrar al mundo.
+                val scriptGate = ScriptFlowAnalyzer.getGateDecision(bpDirs = activeAddonPaths)
+                if (!scriptGate.canExecute) {
+                    val detalle = ScriptFlowAnalyzer.describeBlockers(scriptGate.blockers)
+                        .joinToString("\n")
+                    _exportState.value = ExportState.Error(
+                        "Fusión bloqueada por scripts incompatibles:\n$detalle"
+                    )
+                    _events.emit(
+                        PackForgeEvent.ShowSnackbar(
+                            "Scripts incompatibles: revisa los conflictos antes de fusionar",
+                            true
+                        )
+                    )
                     return@launch
                 }
                 
@@ -709,10 +796,27 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 val pathsFile = File(context.cacheDir, "pending_export_${System.currentTimeMillis()}.txt")
                 pathsFile.writeText(activeAddonPaths.joinToString("\n"))
 
+                // Decisiones EXPLÍCITAS del usuario (no las automáticas por
+                // prioridad, que ya se cumplen con el orden) sobre archivos
+                // concretos, para aplicarlas archivo por archivo al final.
+                val fileWinners: Map<String, String> = _conflicts.value
+                    .filter { conflict ->
+                        conflict.winnerAddonId != null &&
+                            !conflict.isAutoResolved &&
+                            conflict.resolution != ConflictResolution.DISMISSED &&
+                            ResolutionApplier.isResolvableByFileCopy(conflict.affectedFile)
+                    }
+                    .associate { conflict ->
+                        conflict.affectedFile.replace('\\', '/').removePrefix("/") to
+                            conflict.winnerAddonId!!
+                    }
+
                 MergeForegroundService.startExport(context) { intent ->
                     intent
                         .putExtra(MergeForegroundService.EXTRA_PATHS_FILE, pathsFile.absolutePath)
                         .putStringArrayListExtra(MergeForegroundService.EXTRA_NAMES, ArrayList(activeAddons.map { it.name }))
+                        .putStringArrayListExtra(MergeForegroundService.EXTRA_ADDON_IDS, ArrayList(activeAddons.map { it.id }))
+                        .putExtra(MergeForegroundService.EXTRA_FILE_WINNERS, Gson().toJson(fileWinners))
                         .putExtra(MergeForegroundService.EXTRA_NAME, customName)
                         .putExtra(MergeForegroundService.EXTRA_AUTHOR, _metadata.value.author.trim())
                         .putExtra(MergeForegroundService.EXTRA_VERSION, _metadata.value.version.trim().ifBlank { "1.0.0" })
@@ -887,9 +991,40 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             viewModelScope.launch { _events.emit(PackForgeEvent.ShowSnackbar("Ya hay una fusión en curso")) }
             return
         }
-        // Resetear el estado ANTES de iniciar el servicio para evitar race condition
-        MergeSession.reset(origin = "library")
-        MergeForegroundService.startRegenerate(app, modpackId)
+        viewModelScope.launch {
+            // Misma puerta de scripts que en la exportación: regenerar un
+            // modpack con scripts incompatibles produciría el mismo artefacto
+            // roto, así que se valida antes de lanzar el servicio.
+            val rutas = withContext(Dispatchers.IO) {
+                runCatching {
+                    val row = PackForgeDatabase.getInstance(app).savedModpackDao().getById(modpackId)
+                    row?.addonsJson
+                        ?.let { decodeAddons(it) }
+                        ?.filter { it.enabled && it.sourceFilePath.isNotBlank() }
+                        ?.map { it.sourceFilePath }
+                        .orEmpty()
+                }.getOrDefault(emptyList())
+            }
+            if (rutas.isNotEmpty()) {
+                val gate = withContext(Dispatchers.IO) {
+                    ScriptFlowAnalyzer.getGateDecision(bpDirs = rutas)
+                }
+                if (!gate.canExecute) {
+                    val detalle = ScriptFlowAnalyzer.describeBlockers(gate.blockers)
+                        .joinToString(" · ")
+                    _events.emit(
+                        PackForgeEvent.ShowSnackbar(
+                            "No se puede regenerar: $detalle",
+                            true
+                        )
+                    )
+                    return@launch
+                }
+            }
+            // Resetear el estado ANTES de iniciar el servicio para evitar race condition
+            MergeSession.reset(origin = "library")
+            MergeForegroundService.startRegenerate(app, modpackId)
+        }
     }
 
     fun importModpackFromFile(uri: Uri) {
@@ -1208,7 +1343,12 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 return
             }
             val type = object : com.google.gson.reflect.TypeToken<List<Addon>>() {}.type
-            val restoredRaw: List<Addon> = Gson().fromJson(m.addonsJson, type) ?: emptyList()
+            // Normalizar listas después de deserializar: Gson no respeta la nulabilidad de
+            // Kotlin y deja `lootTableIdentifiers` y demás en null para modpacks guardados
+            // antes de que existieran esos campos. Sin esto, editar el modpack crasheaba
+            // con NullPointerException (ConflictEngine.detectLootTableConflicts).
+            val restoredRaw: List<Addon> =
+                (Gson().fromJson<List<Addon>>(m.addonsJson, type) ?: emptyList()).withSafeLists()
             PackForgeLog.d("PackForge", "Decodificados ${restoredRaw.size} addons del modpack")
 
             if (restoredRaw.isEmpty()) {
@@ -1799,7 +1939,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         return runCatching {
             val type = object : com.google.gson.reflect.TypeToken<List<Addon>>() {}.type
             Gson().fromJson<List<Addon>>(json, type) ?: emptyList()
-        }.getOrDefault(emptyList())
+        }.getOrDefault(emptyList()).withSafeLists()
     }
 
     override fun onCleared() {

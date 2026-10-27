@@ -15,7 +15,13 @@ data class Conflict(
     val resolution: ConflictResolution = ConflictResolution.UNRESOLVED,
     val winnerAddonId: String? = null,
     val isDismissed: Boolean = false,
-    val canBeDismissed: Boolean = true
+    val canBeDismissed: Boolean = true,
+    /**
+     * El motor ya decidió el ganador por prioridad (la fusión sobrescribe en
+     * orden, así que la prioridad más alta gana de verdad). Estos conflictos no
+     * requieren acción del usuario y no cuentan como pendientes.
+     */
+    val isAutoResolved: Boolean = false
 )
 
 

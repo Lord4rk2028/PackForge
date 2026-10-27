@@ -1875,13 +1875,95 @@ solo aporta la compresión y el háptico, y el `onClick` vive únicamente en la
 
 ---
 
+## ✅ Fase 3 — ImportScreen (IMPLEMENTADO)
+
+> **Archivos**: `ui/screens/ImportScreen.kt`, `ui/components/AddonPairGroup.kt`.
+
+### Decisión de diseño: lista, no grilla
+
+El plan original proponía `LazyVerticalGrid` para ImportScreen, pero la
+pantalla es una `LazyColumn` heterogénea (zona de importar → mesa de crafteo →
+score → lista de addons) y las tarjetas de addon tienen controles de
+**prioridad de fusión** (subir/bajar): en una grilla de 2+ columnas "subir"
+se vuelve ambiguo. Se mantiene **lista** y se aplica la capa Expressive.
+`McpedlSearchScreen` queda fuera de la fase: es un `WebView` embebido y los
+resultados los renderiza la web, sin lista propia de Compose.
+
+### Cambios aplicados
+
+| Elemento | Antes | Ahora |
+|---|---|---|
+| Forma de AddonCard | 20dp fijo | `ExpressiveShapes.card` (24dp) |
+| Elevación | 3dp / 1dp | Animada (`mediumTweenOf`): `card` (2dp) ↔ `cardPressed` (1dp) |
+| Borde | Cambio de golpe | `animateColorAsState`: crítico → activo → desactivado |
+| Switch | Sin háptico | `haptics.medium()` |
+| Subir/Bajar/Detalles | `bounceClick` con lambda duplicada | Compresión visual + `haptics.light()` (la acción vive en el `onClick` del botón) |
+| Eliminar | Doble disparo | `haptics.reject()` (REJECT desde Android 11) |
+| Entrada de tarjetas | Ninguna | Solo tarjetas **nuevas**: `scaleInBounce` una vez por id; las que reaparecen al scrollear no repiten la animación (misma razón por la que Fase 2 retiró `animateItem`) |
+| Zona de importar | 24dp manual, 3dp | `ExpressiveShapes.card` + `ExpressiveElevation.raised` (4dp) |
+| AddonPairCard | 20dp / 3dp | Tarjeta y borde unificados a `card` / elevación 2dp |
+
+---
+
+## ✅ Fase 4 — Diálogos (IMPLEMENTADO)
+
+> **Archivos nuevos**: `ui/components/ExpressiveAlertDialog.kt`.
+> **Convertidos**: `StudioScreen.kt`, `MergeOverlay.kt`, `ExportSetupScreen.kt`,
+> `MainActivity.kt`, `UpdateCenterDialog.kt`, `ModpackAddonsDialog.kt`.
+
+`AlertDialog` de Material3 **no expone transiciones**, así que se creó un
+wrapper con la misma API de slots:
+
+- **`ExpressiveDialogEntrance`** — envoltorio de entrada (fade + slide + scale
+  con `ExpressiveAnimations.fadeSlideScaleIn`), adaptado al `MotionLevel`; en
+  `NONE` el contenido aparece ya puesto. La salida la aporta el propio `Dialog`.
+- **`ExpressiveAlertDialog`** — sustituto directo del `AlertDialog` con
+  `ExpressiveShapes.dialog` (28dp), `ExpressiveElevation.dialog` (12dp) y
+  ancho M3 (márgenes 40dp, tope 560dp).
+- **`ExpressiveDialog`** — drop-in de `Dialog(...)` con entrada Expressive;
+  solo cambia el nombre en el punto de llamado.
+
+**AlertDialogs convertidos (5)**: regenerar modpack, borrar modpack, cancelar
+fusión (MergeOverlay), cancelar exportación, compartir desde apps de terceros.
+
+**Dialogs crudos convertidos (4)**: centro de actualizaciones (forma unificada
+22dp → 28dp), addons del modpack, compartir, indicador "Leyendo addons…".
+
+Queda fuera `IconDebugDialog`: nunca se invoca (código muerto).
+
+---
+
+## ✅ Fase 5 — ExportSetup y Conflicts (IMPLEMENTADO)
+
+> **Archivos**: `ui/screens/ConflictsScreen.kt`, `ui/screens/ExportSetupScreen.kt`.
+
+### ConflictsScreen
+
+- Tarjetas (resumen, estrategia, conflicto, batalla): 20/16dp → `card` (24dp)
+  con `ExpressiveElevation.card` (2dp).
+- Opciones de ganador, "fusionar" y lados de batalla: 12dp → `action` (14dp).
+- Píldoras de severidad: 8dp → `statChip` (20dp).
+- Hápticos: cambiar estrategia y expandir conflicto → `light()`; elegir
+  ganador o fusionar → `medium()`.
+
+### ExportSetupScreen
+
+- Tarjetas (detalles, destino, Minecraft, resumen, preview): 24/20/22dp →
+  `card` + elevación 2dp; bloques de aviso (taller vacío, progreso) →
+  `container` (24dp).
+- Opciones de destino: 16dp → `action` (14dp) + `light()`.
+- Hápticos: flechas de portada y elegir portada → `light()`; botón
+  **Exportar Modpack** → `heavy()`.
+
+---
+
 ## 🚀 Próximos Pasos
 
 1. ✅ **Fase 1 — Tema + Sistema de Movimiento** (hecho)
 2. ✅ **Fase 2 — StudioScreen y biblioteca responsiva** (hecho)
-3. **Fase 3 — ImportScreen / McpedlSearch**: `LazyVerticalGrid` adaptativo
-4. **Fase 4 — Diálogos**: `fadeSlideScaleIn/Out` en los alerts existentes
-5. **Fase 5 — ExportSetup y Conflicts**: unificar formas y hápticos
+3. ✅ **Fase 3 — ImportScreen** (hecho; lista Expressive, McpedlSearch no aplica)
+4. ✅ **Fase 4 — Diálogos con `fadeSlideScaleIn/Out`** (hecho)
+5. ✅ **Fase 5 — ExportSetup y Conflicts: formas + hápticos** (hecho)
 
 ---
 
@@ -1898,4 +1980,4 @@ solo aporta la compresión y el háptico, y el `onClick` vive únicamente en la
 
 **Autor**: Análisis para PackForge  
 **Fecha**: 2025-01-05  
-**Versión**: 1.1 - Fase 1 implementada (Reduce Motion + niveles por dispositivo)
+**Versión**: 1.3 - Fases 1-5 implementadas y compiladas (tema, Studio, Import, diálogos, Export/Conflicts)

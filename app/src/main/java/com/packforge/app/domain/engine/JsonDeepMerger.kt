@@ -76,6 +76,27 @@ object JsonDeepMerger {
      * @return El resultado de la fusión profunda
      */
     fun deepMerge(base: JSONObject, toMerge: JSONObject, isComponents: Boolean = false): JSONObject {
+        // ⚡ ATAJO: sin claves en común no hay nada que resolver recursivamente,
+        // pero SÍ hay que aportar las claves nuevas del segundo JSON.
+        // Antes se devolvía `base` tal cual, y eso descartaba en silencio todo
+        // lo que solo traía el segundo addon (p. ej. un componente
+        // `minecraft:durability` dentro de "components") — contenido perdido.
+        var hasOverlap = false
+        val mergeKeys = toMerge.keys()
+        while (mergeKeys.hasNext() && !hasOverlap) {
+            if (base.has(mergeKeys.next().sanitizeKey())) hasOverlap = true
+        }
+        if (!hasOverlap) {
+            val union = JSONObject(base.toString())
+            toMerge.keys().forEach { key ->
+                val cleanKey = key.sanitizeKey()
+                if (!union.has(cleanKey)) {
+                    union.put(cleanKey, cleanJsonValue(toMerge.get(key)))
+                }
+            }
+            return union
+        }
+
         val result = JSONObject(base.toString())
 
         toMerge.keys().forEach { key ->

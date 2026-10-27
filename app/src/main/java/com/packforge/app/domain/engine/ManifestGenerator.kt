@@ -514,12 +514,22 @@ object ManifestGenerator {
      * GENERADOR EXACTO DEL MANIFEST DEL RP
      * ═══════════════════════════════════════════
      */
-    fun generateRpManifest(packName: String): JSONObject {
-        return JSONObject().apply {
+    fun generateRpManifest(
+        packName: String,
+        packDescription: String = "",
+        packAuthor: String = ""
+    ): JSONObject {
+        val manifest = JSONObject().apply {
             put("format_version", 2)
             put("header", JSONObject().apply {
                 put("name", packName)
-                put("description", "PackForge Modpack")
+                // Antes SIEMPRE decía "PackForge Modpack": el juego mostraba ese
+                // texto en la ficha del Resource Pack en vez de la descripción
+                // que el usuario escribió al exportar.
+                put(
+                    "description",
+                    packDescription.ifBlank { "Resource Pack created by PackForge" }
+                )
                 put("uuid", UUID.randomUUID().toString())
                 put("version", JSONArray(listOf(1, 0, 0)))
                 put("min_engine_version", JSONArray(listOf(1, 21, 0)))  // ⭐ OBLIGATORIO
@@ -531,7 +541,14 @@ object ManifestGenerator {
                     put("version", JSONArray(listOf(1, 0, 0)))
                 })
             })
+            // Autor visible en la ficha del pack (equivale al del BP).
+            if (packAuthor.isNotBlank()) {
+                put("metadata", JSONObject().apply {
+                    put("authors", JSONArray(listOf(packAuthor)))
+                })
+            }
         }
+        return manifest
     }
 
     /**

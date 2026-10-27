@@ -305,6 +305,10 @@ class ResourcePathRegistry {
             "hgt", "material", "bmp", "gif", "webp", "mp3", "m4a"
         )
 
+        /** Cache de hashes MD5: clave = ruta absoluta + lastModified + length.
+         * Evita recalcular MD5 del mismo archivo en múltiples ejecuciones del pipeline. */
+        private val md5Cache = HashMap<String, String>()
+
         /** Rutas/carpetas que nunca se renombran. */
         private fun isEligible(relPath: String): Boolean {
             if (relPath == "manifest.json" || relPath == "pack_icon.png") return false
@@ -326,16 +330,24 @@ class ResourcePathRegistry {
         }
 
         private fun md5(file: File): String {
-            val digest = MessageDigest.getInstance("MD5")
-            file.inputStream().use { input ->
-                val buffer = ByteArray(65536)
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read <= 0) break
-                    digest.update(buffer, 0, read)
+            val cacheKey = "${file.absolutePath}|${file.lastModified()}|${file.length()}"
+            return md5Cache.getOrPut(cacheKey) {
+                val digest = MessageDigest.getInstance("MD5")
+                file.inputStream().use { input ->
+                    val buffer = ByteArray(65536)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        digest.update(buffer, 0, read)
+                    }
                 }
+                digest.digest().joinToString("") { "%02x".format(it) }
             }
-            return digest.digest().joinToString("") { "%02x".format(it) }
+        }
+
+        /** Limpia el cache de MD5 (llamar al inicio de cada sesión de fusión para liberar memoria). */
+        fun clearMd5Cache() {
+            md5Cache.clear()
         }
     }
 }
