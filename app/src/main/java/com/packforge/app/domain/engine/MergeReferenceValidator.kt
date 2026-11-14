@@ -35,6 +35,15 @@ object MergeReferenceValidator {
     private const val MAX_BROKEN_REPORTED = 40
     private const val MAX_FILES_SCANNED = 8000
 
+    /**
+     * Marca que la lista de roturas se cortó por [MAX_BROKEN_REPORTED].
+     *
+     * Existe para que el total del reporte no mienta: antes se añadía un
+     * `BrokenReference("…")` y el resumen contaba `broken.size`, así que un pack
+     * con 40 roturas listadas y muchas más sin listar mostraba "ROTAS: 41".
+     */
+    private const val TRUNCATION_MARKER = "…"
+
     /** Referencia rota encontrada en el modpack fusionado. */
     data class BrokenReference(
         val kind: String,
@@ -46,12 +55,30 @@ object MergeReferenceValidator {
         val checkedReferences: Int,
         val broken: List<BrokenReference>
     ) {
-        val isClean: Boolean get() = broken.isEmpty()
+        /** Roturas reales (el sentinel de truncado no cuenta como referencia). */
+        val brokenCount: Int get() = broken.count { it.identifier != TRUNCATION_MARKER }
+
+        /** Nº de referencias distintas afectadas, útil para el resumen. */
+        val distinctBrokenIds: Int get() = broken.filter { it.identifier != TRUNCATION_MARKER }
+            .map { "${it.kind}|${it.identifier}" }.distinct().size
+
+        val isClean: Boolean get() = brokenCount == 0
+
+        /** ¿La lista quedó cortada por el tope de reporte? */
+        val isTruncated: Boolean get() = broken.any { it.identifier == TRUNCATION_MARKER }
+
         val summary: String
-            get() = if (isClean) {
-                "Referencias verificadas: $checkedReferences (sin roturas)"
-            } else {
-                "Referencias verificadas: $checkedReferences · ROTAS: ${broken.size}"
+            get() = when {
+                isClean -> "Referencias verificadas: $checkedReferences (sin roturas)"
+                // ⭐ FASE 5: antes el resumen decía "ROTAS: 41" cuando había 40
+                // reales + el sentinel de truncado, y no avisaba de que había
+                // más sin listar. Esa cifra se lee como el total del pack.
+                isTruncated ->
+                    "Referencias verificadas: $checkedReferences · ROTAS: $brokenCount " +
+                        "(${distinctBrokenIds} identificadores distintos; hay MÁS sin listar)"
+                else ->
+                    "Referencias verificadas: $checkedReferences · ROTAS: $brokenCount " +
+                        "(${distinctBrokenIds} identificadores distintos)"
             }
     }
 
@@ -63,10 +90,16 @@ object MergeReferenceValidator {
      *
      * @param bpDir Behavior Pack combinado (puede ser null)
      * @param rpDir Resource Pack combinado (puede ser null)
+     * @param sourceDirs Directorios de origen de los addons (para índice unificado)
      */
-    fun validate(bpDir: File?, rpDir: File?): Report {
+    fun validate(bpDir: File?, rpDir: File?, sourceDirs: List<File> = emptyList()): Report {
+        // Índice unificado para animaciones y render controllers (evita re-escanear)
+        val unifiedIndex = GeometryAnimRCIndex.build(sourceDirs, rpDir)
+        
         val particleIds = collectParticleIdentifiers(rpDir)
-        val animationIds = collectRootKeys(rpDir, "animations", "animations", ".json")
+        // Usar IDs del pack fusionado (mergedAnimationIds/mergedRenderControllerIds)
+        // en lugar de sourceDirs, porque el test valida el pack YA fusionado
+        val animationIds = unifiedIndex.mergedAnimationIds
         val materialIds = collectMaterialIdentifiers(rpDir)
         val registeredComponents = collectRegisteredComponents(bpDir)
 
@@ -76,12 +109,17 @@ object MergeReferenceValidator {
         fun check(kind: String, identifier: String, known: Set<String>, from: String) {
             if (identifier.isBlank()) return
             if (isVanillaOrEngine(identifier)) return
+            // ⭐ FASE 5: los materiales de fábrica de Bedrock se referencian SIN
+            // namespace ('boat', 'villager', 'entity_alphatest'…). No viven en
+            // la carpeta materials/ del pack, así que sin este filtro salían como
+            // REFERENCIA_ROTA. Eran la mayoría de las 41 del reporte de Better MC.
+            if (kind == "material" && VanillaAssets.isVanillaMaterial(identifier)) return
             checked++
             if (identifier !in known) {
                 if (broken.size < MAX_BROKEN_REPORTED) {
                     broken += BrokenReference(kind, identifier, from)
                 } else if (broken.size == MAX_BROKEN_REPORTED) {
-                    broken += BrokenReference(kind, "…", from)
+                    broken += BrokenReference(kind, TRUNCATION_MARKER, from)
                 }
             }
         }
@@ -101,6 +139,8 @@ object MergeReferenceValidator {
             collectValuesOfKey(json, "materials").forEach { value ->
                 check("material", value, materialIds, relative)
             }
+            // Nota: render_controllers se validan en EntityDependencyResolver,
+            // no aquí (evita falsos positivos al extraer claves de definición).
         }
 
         // ── Referencias en el Behavior Pack ──
@@ -131,7 +171,7 @@ object MergeReferenceValidator {
     /** Publica las roturas en el registro de conflictos para que se vean en la UI. */
     fun publish(report: Report) {
         report.broken
-            .filter { it.identifier != "…" }
+            .filter { it.identifier != TRUNCATION_MARKER }
             .forEach { broken ->
                 ConflictRegistry.logConflict(
                     severity = ConflictSeverity.MEDIUM,
@@ -193,11 +233,27 @@ object MergeReferenceValidator {
         val dir = File(rpDir, "materials")
         if (!dir.isDirectory) return emptySet()
         dir.listFiles()
-            ?.filter { it.isFile && it.name.endsWith(".material", ignoreCase = true) }
+            ?.filter {
+                it.isFile && (it.name.endsWith(".material", ignoreCase = true) ||
+                    it.name.endsWith(".json", ignoreCase = true))
+            }
             ?.forEach { file ->
                 val json = readJson(file) ?: return@forEach
                 json.optJSONObject("materials")?.keys()?.forEach { key ->
-                    if (key.isNotBlank() && key != "version") ids += key
+                    if (key.isBlank() || key == "version") return@forEach
+                    // ⭐ FASE 5 (falso positivo real, visible en Better MC):
+                    // en `materials/*.material` la CLAVE es
+                    // `nombre:padre` (`glow:entity_alphablend`,
+                    // `cc_entity_enchant:entity_static`), pero el
+                    // `client_entity` referencia **solo el nombre**
+                    // (`"default": "glow"`). Comparar la clave completa contra
+                    // la referencia hacía que todo material heredado del pack se
+                    // reportara como inexistente: `glow`, `cc_outline`,
+                    // `cc_entity_enchant`… salían como "material custom no
+                    // existe" aunque estuvieran definidos dos líneas más arriba.
+                    ids += key
+                    val nombre = key.substringBefore(':')
+                    if (nombre.isNotBlank()) ids += nombre
                 }
             }
         return ids
@@ -304,12 +360,51 @@ object MergeReferenceValidator {
 
     // ── Utilidades ───────────────────────────────────────────────────────
 
-    /** Vanilla del juego o material del motor: nunca es una referencia rota. */
+    /**
+     * Vanilla del juego, material del motor, alias o Molang: nunca es una
+     * referencia rota.
+     *
+     * Antes solo filtraba `minecraft:` y `Material.`, así que
+     * `animation.common.look_at_target` y `controller.animation.iron_golem.move`
+     * (ambas VANILLA) se publicaban como REFERENCIA_ROTA de severidad MEDIUM.
+     */
     private fun isVanillaOrEngine(identifier: String): Boolean =
-        identifier.startsWith("minecraft:") || identifier.startsWith("Material.")
+        identifier.startsWith("minecraft:") ||
+            identifier.startsWith("Material.") ||
+            BedrockRefs.isAlias(identifier) ||
+            BedrockRefs.isExpression(identifier) ||
+            VanillaAssets.isVanillaReference(identifier)
 
+    /**
+     * Lee un JSON del pack tolerando lo que Bedrock tolera.
+     *
+     * ⭐ FASE 5 — CAUSA RAÍZ de los 41 materiales "inexistentes".
+     *
+     * `JSONObject(texto)` es JSON **estricto** y rechaza los comentarios `//`,
+     * que Bedrock sí admite en cualquier posición. El `materials/entity.material`
+     * real de CoreCraft los trae:
+     *
+     * ```json
+     * "cc_test:charged_creeper": {
+     *     // "depthFunc": "Always",
+     *     // ^ Uncomment if you want the outline to be
+     *     //   rendered behind the block.
+     * }
+     * ```
+     *
+     * Con el parseo estricto el archivo ENTERO fallaba y devolvía `null`, así que
+     * **ninguno** de sus 10 materiales se indexaba y todos se reportaban como
+     * ausentes (`glow`, `cc_outline`, `cc_entity_enchant`,
+     * `outline_base_enchant`…). No era un problema de nombres ni de herencia:
+     * era que el archivo nunca se llegaba a leer.
+     *
+     * `LenientJson` acepta comentarios y comas finales, igual que el juego.
+     */
     private fun readJson(file: File): JSONObject? = try {
-        JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+        val text = file.readText(Charsets.UTF_8)
+        val parsed = LenientJson.parseObject(text)
+            ?: JSONObject(text)
+        JsonDeepMerger.cleanJsonObject(parsed)
     } catch (_: Exception) {
         null
     }

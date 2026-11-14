@@ -8,6 +8,7 @@ import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.regex.Pattern
 
 /**
  * ═══════════════════════════════════════════════════════════════════════
@@ -138,10 +139,24 @@ class ResourcePathRegistry {
             if (renames.isEmpty() || !root.isDirectory) continue
 
             val rewriteMap = buildRewriteVariants(renames)
+            if (rewriteMap.isEmpty()) continue
+
+            // ⭐ OPTIMIZACIÓN FASE 2: Regex combinada en lugar de iterar todas
+            // las claves por cada archivo. Antes: O(archivos × mutaciones).
+            // Ahora: O(archivos) con una sola comprobación de regex por archivo.
+            // Las claves se ordenan por longitud descendente para que las rutas
+            // más largas se matcheen primero (evita coincidencias parciales).
+            val combinedPattern = Pattern.compile(
+                rewriteMap.keys
+                    .sortedByDescending { it.length }
+                    .map { Pattern.quote(it) }
+                    .joinToString("|")
+            )
+
             for (file in DirIndexCache.index(root).jsonFiles) {
                 // Filtro barato: si el texto no contiene ninguna clave, ni se parsea.
                 val text = readCached(cache, file)
-                if (text.isEmpty() || !rewriteMap.keys.any { text.contains(it) }) continue
+                if (text.isEmpty() || !combinedPattern.matcher(text).find()) continue
                 if (rewriteJson(file, text, rewriteMap)) rewritten++
             }
         }

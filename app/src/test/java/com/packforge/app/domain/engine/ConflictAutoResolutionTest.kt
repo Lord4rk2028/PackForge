@@ -1,4 +1,4 @@
-﻿package com.packforge.app.domain.engine
+package com.packforge.app.domain.engine
 
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.AddonType
@@ -54,7 +54,19 @@ class ConflictAutoResolutionTest {
     }
 
     @Test
-    fun tiedPriorityStaysUnresolved() {
+    fun tiedPriorityIsResolvedByFusionOrder() {
+        // ⚠️ CAMBIO DELIBERADO (auditoría de exportación bloqueada).
+        //
+        // Antes, un empate de prioridad dejaba el conflicto SIN resolver
+        // ("no hay criterio objetivo"). En la práctica TODOS los addons entran
+        // con prioridad 0, así que cada identificador o archivo compartido
+        // quedaba abierto y el modpack se bloqueaba a las 5 colisiones (25/100)
+        // aunque la fusión sí lo resuelve.
+        //
+        // Sí hay criterio: el pipeline copia los addons en orden y el último
+        // gana, de forma determinista. `ranked` es estable, así que ranked[0]
+        // ES el que sobrevive; usarlo como desempate refleja lo que de verdad
+        // hará la fusión.
         val a = addon("a", "Alfa", priority = 3)
         val b = addon("b", "Beta", priority = 3)
 
@@ -62,9 +74,9 @@ class ConflictAutoResolutionTest {
             .filter { it.type == ConflictType.LOOT_TABLE }
 
         assertEquals(1, loot.size)
-        assertFalse("Con empate no debe auto-resolverse", loot.first().isAutoResolved)
-        assertEquals(ConflictResolution.UNRESOLVED, loot.first().resolution)
-        assertNull(loot.first().winnerAddonId)
+        assertTrue("Con empate se desempata por orden de fusión", loot.first().isAutoResolved)
+        assertEquals(ConflictResolution.FIRST_WINS, loot.first().resolution)
+        assertEquals("Gana el que se copia al final", "a", loot.first().winnerAddonId)
     }
 
     @Test
@@ -102,14 +114,41 @@ class ConflictAutoResolutionTest {
     }
 
     @Test
-    fun autoResolvedConflictDoesNotReduceCompatibilityScoreTwice() {
+    fun autoResolvedConflictsDoNotPenalizeTheScore() {
+        // CAMBIO DELIBERADO: lo ya resuelto no penaliza. Antes se penalizaba
+        // igual, así que un modpack con TODOS los solapamientos resueltos seguía
+        // con nota pésima y el gate bloqueaba la exportación (caso real:
+        // Origins + OTG Backpack -> 25/100 con el paquete fusionado válido).
         val low = addon("low", "Alfa", priority = 0)
         val high = addon("high", "Beta", priority = 1)
 
-        // Aunque se auto-resuelva, sigue siendo un solapamiento real: el score
-        // lo penaliza (no se oculta el hecho), pero deja de requerir acciÃ³n.
-        val score = ConflictEngine.getCompatibilityScore(listOf(low, high))
-        assertTrue("El solapamiento debe penalizar el score", score < 100)
+        val conflictos = ConflictEngine.analyze(listOf(low, high))
+        assertTrue("deberia detectar solapamientos", conflictos.isNotEmpty())
+        assertTrue(
+            "con prioridades distintas todos deben quedar auto-resueltos",
+            conflictos.all { it.isAutoResolved }
+        )
+        assertEquals(
+            "lo resuelto no penaliza",
+            100,
+            ConflictEngine.scoreOfConflicts(conflictos)
+        )
+    }
+
+    @Test
+    fun unresolvedConflictsStillPenalizeTheScore() {
+        // MANIFEST_UUID nunca se auto-resuelve: exige regenerar UUIDs, no elegir
+        // ganador. Ese si debe bajar la nota.
+        val a = addon("a", "Alfa", priority = 0, manifestUuid = "same-uuid")
+        val b = addon("b", "Beta", priority = 1, manifestUuid = "same-uuid")
+
+        val conflictos = ConflictEngine.analyze(listOf(a, b))
+        val abiertos = conflictos.filter { !it.isAutoResolved }
+        assertTrue("debe haber conflictos abiertos", abiertos.isNotEmpty())
+        assertTrue(
+            "los conflictos abiertos si penalizan el score",
+            ConflictEngine.scoreOfConflicts(conflictos) < 100
+        )
     }
 }
 

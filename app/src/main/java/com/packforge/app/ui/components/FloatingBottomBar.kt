@@ -43,6 +43,12 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -153,6 +159,21 @@ private fun FloatingNavItem(
         modifier = Modifier
             .clip(RoundedCornerShape(24.dp))
             .background(containerColor)
+            .semantics(mergeDescendants = true) {
+                // TalkBack anuncia la pestaña como tal y si está seleccionada.
+                role = Role.Tab
+                selected = isSelected
+                if (!enabled) {
+                    disabled()
+                    stateDescription = "No disponible mientras se exporta"
+                } else if (badgeCount > 0) {
+                    stateDescription = if (isSelected) {
+                        "Seleccionada, $badgeCount conflictos críticos"
+                    } else {
+                        "$badgeCount conflictos críticos"
+                    }
+                }
+            }
             .bounceClick(scaleDown = 0.92f, hapticFeedback = false, onClick = onClick)
             .padding(horizontal = if (isSelected) 14.dp else 10.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
@@ -180,7 +201,9 @@ private fun FloatingNavItem(
             ) {
                 Icon(
                     imageVector = if (isSelected) screen.iconFilled else screen.iconOutlined,
-                    contentDescription = screen.title,
+                    // Decorativo: la etiqueta visible ya nombra la pestaña y
+                    // `mergeDescendants` la fusiona en un único nodo.
+                    contentDescription = null,
                     modifier = Modifier
                         .size(22.dp)
                         .scale(iconScale),

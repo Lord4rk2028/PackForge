@@ -94,6 +94,8 @@ class MainActivity : ComponentActivity() {
      * correctamente (incluyendo los que llegan vía onNewIntent).
      */
     val shareTrigger = mutableIntStateOf(0)
+    /** Incrementa cuando el usuario toca la notificación de fusión: restaura la pantalla de progreso. */
+    val openMergeTrigger = mutableIntStateOf(0)
 
     /** Android 13+ exige permiso runtime para mostrar la notificación de progreso. */
     private fun requestNotificationPermissionIfNeeded() {
@@ -109,6 +111,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
+        handleMergeIntent(intent)
         handleShareIntent(intent)
         setContent {
             val themeViewModel: ThemeViewModel = viewModel()
@@ -122,7 +125,18 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        handleMergeIntent(intent)
         handleShareIntent(intent)
+    }
+
+    private fun handleMergeIntent(intent: android.content.Intent?) {
+        if (intent == null) return
+        val wantsMerge = intent.action == com.packforge.app.service.MergeForegroundService.ACTION_OPEN_MERGE ||
+            intent.getBooleanExtra(com.packforge.app.service.MergeForegroundService.EXTRA_OPEN_MERGE, false)
+        if (wantsMerge) {
+            intent.removeExtra(com.packforge.app.service.MergeForegroundService.EXTRA_OPEN_MERGE)
+            openMergeTrigger.intValue++
+        }
     }
 
     private fun handleShareIntent(intent: android.content.Intent?) {
@@ -264,6 +278,26 @@ fun PackForgeApp(
     // ─── SHARE INTENT ──────────────────────────────────────────
     val mainActivity = appContext as? MainActivity
     val shareTriggerValue = mainActivity?.shareTrigger?.value ?: 0
+    val openMergeTriggerValue = mainActivity?.openMergeTrigger?.value ?: 0
+
+    LaunchedEffect(openMergeTriggerValue) {
+        if (mainActivity == null || openMergeTriggerValue == 0) return@LaunchedEffect
+        val session = MergeSession.state.value
+        if (session.done && session.phase == "idle") return@LaunchedEffect
+        packForgeViewModel.setShowMyModpacks(false)
+        val target = if (session.origin == "library") {
+            com.packforge.app.ui.navigation.Screen.Studio.route
+        } else {
+            com.packforge.app.ui.navigation.Screen.Export.route
+        }
+        if (navController.currentDestination?.route != target) {
+            navController.navigate(target) {
+                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
 
     LaunchedEffect(shareTriggerValue) {
         if (mainActivity == null || shareTriggerValue == 0) return@LaunchedEffect
@@ -450,6 +484,7 @@ fun PackForgeApp(
                         onRemoveAddon = { packForgeViewModel.removeAddon(it) },
                         onToggleAddon = { packForgeViewModel.toggleAddon(it) },
                         onMoveAddon = { id, dir -> packForgeViewModel.moveAddon(id, dir) },
+                        onMoveDisplayItem = { index, dir -> packForgeViewModel.moveDisplayItem(index, dir) },
                         onClearAllAddons = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             packForgeViewModel.clearAll()

@@ -214,7 +214,7 @@ object PackForgeValidator {
         // pack sea válido. Acumula en las mismas listas de faltantes.
         PackForgeLog.d(TAG, "📦 VALIDACIÓN 7: Integridad de entidades (geometría/texturas)")
         try {
-            validateEntityIntegrity(bpDir, rpDir, idx, incompleteEntities, missingTextures, missingModels)
+            validateEntityIntegrity(bpDir, rpDir, idx, incompleteEntities, missingTextures, missingModels, warnings)
         } catch (e: Exception) {
             PackForgeLog.w(TAG, "Validación de integridad de entidades no bloqueante: ${e.message}")
         }
@@ -437,9 +437,6 @@ object PackForgeValidator {
             return 0
         }
 
-        val texturesEntityDir = File(rpDir, "textures/entity")
-        texturesEntityDir.mkdirs()
-
         val modelsEntityDir = File(rpDir, "models/entity")
         modelsEntityDir.mkdirs()
 
@@ -460,48 +457,70 @@ object PackForgeValidator {
                 if (!json.has("minecraft:client_entity")) continue
                 val desc = json.optJSONObject("minecraft:client_entity")?.optJSONObject("description") ?: json.optJSONObject("description")
 
-                // Validar texturas
+                // Validar texturas.
+                // - Solo strings: un valor de textura puede ser un array (variantes)
+                //   y `optString` lo serializaba como "[...]" → falso "sin textura".
+                // - Se comprueba la RUTA COMPLETA, no solo el nombre del archivo:
+                //   antes cualquier textura fuera de textures/entity/ se daba por
+                //   ausente y se copiaba a la carpeta equivocada.
                 val texturesObj = json.optJSONObject("textures") ?: desc?.optJSONObject("textures")
                 texturesObj?.keys()?.forEach { textureKey ->
-                    val texturePath = texturesObj.optString(textureKey)
-                    val textureName = texturePath.substringAfterLast("/")
+                    val raw = texturesObj.opt(textureKey) as? String ?: return@forEach
+                    if (BedrockRefs.isAlias(raw) || BedrockRefs.isExpression(raw)) return@forEach
+                    val texturePath = raw.replace("\\", "/").trimStart('/')
+                    if (texturePath.isEmpty() || VanillaAssets.isVanillaTexture(texturePath)) return@forEach
 
-                    if (!idx.has("textures/entity/$textureName.png")) {
+                    if (!indexHasTexture(idx, texturePath)) {
                         logFile { "⚠️ Entidad sin textura: ${entityFile.name} -> $textureKey:$texturePath" }
 
-                        val found = searchAndCopyTexture(textureName, texturesEntityDir, idx)
+                        val found = searchAndCopyTextureToPath(texturePath, rpDir, idx)
                         if (found) {
                             fixedCount++
                         } else {
-                            missingTextures.add("textures/entity/$textureName.png")
+                            missingTextures.add(texturePath)
                         }
                     }
                 }
 
-                // Validar geometría
-                val geometryList = desc?.optJSONObject("geometry") ?: desc ?: json
-                val geometryNames = mutableListOf<String>()
-                
-                // Extraer geometrías (pueden ser string simple o objeto con alias)
-                val geo = desc?.opt("geometry") ?: json.opt("geometry")
-                if (geo is String) geometryNames.add(geo.substringAfterLast("."))
-                else if (geo is JSONObject) geo.keys().forEach { geometryNames.add(geo.optString(it).substringAfterLast(".")) }
+                // Validar geometría por IDENTIFICADOR (no por nombre de archivo).
+                // BedrockRefs descarta alias y Molang, que antes se buscaban como
+                // si fueran modelos.
+                val geoSource = desc?.opt("geometry") ?: json.opt("geometry")
+                val geometryIds = BedrockRefs.geometryIds(geoSource)
+                geometryIds.forEach { geometryId ->
+                    if (VanillaAssets.isVanillaGeometry(geometryId)) return@forEach
+                    logFile { "🔍 Buscando geometría por identificador: $geometryId" }
 
-                geometryNames.forEach { geometryName ->
-                    if (!idx.has("models/entity/$geometryName.geo.json")) {
-                        logFile { "🔍 Buscando geometría por identificador: $geometryName" }
-                        
-                        // Usar el índice de identificadores Bedrock
-                        val geoFile = identifierIndex.resolve("geometry.$geometryName")
-                        if (geoFile != null) {
-                            val destFile = File(modelsEntityDir, "${geoFile.name}")
+                    val geoFile = identifierIndex.resolve(geometryId)
+                    if (geoFile != null) {
+                        // ⭐ FASE 5 — BORRADO SILENCIOSO DE 72 GEOMETRÍAS (bug real,
+                        // medido con core-craft: 155 modelos antes del validador,
+                        // 83 después).
+                        //
+                        // La geometría ya vive en models/entity del pack fusionado,
+                        // así que `identifierIndex.resolve` devuelve ESE MISMO
+                        // archivo. `File.copyTo(dest, overwrite = true)` de Kotlin
+                        // BORRA el destino antes de copiar: con origen == destino se
+                        // borraba a sí mismo y lanzaba NoSuchFileException, que el
+                        // catch de abajo se tragaba. Cada entidad validada aniquilaba
+                        // su propia geometría en silencio, y el paquete entregado
+                        // salía sin los modelos (y el reporte luego decía que
+                        // faltaban, ¡porque los acababa de borrar!).
+                        //
+                        // Si el archivo ya está en su sitio, no hay nada que copiar:
+                        // sólo hay que marcarlo como presente.
+                        val destFile = File(modelsEntityDir, geoFile.name)
+                        if (destFile.canonicalFile == geoFile.canonicalFile) {
+                            idx.markCopiedInRp(destFile)
+                            logFile { "✅ Geometría ya en su sitio: ${geoFile.name}" }
+                        } else {
                             geoFile.copyTo(destFile, overwrite = true)
                             idx.markCopiedInRp(destFile)
                             fixedCount++
                             logFile { "✅ Geometría encontrada en índice y copiada: ${geoFile.name}" }
-                        } else {
-                            missingModels.add("models/entity/$geometryName.geo.json")
                         }
+                    } else {
+                        missingModels.add("$geometryId (por identificador)")
                     }
                 }
 
@@ -747,23 +766,44 @@ object PackForgeValidator {
         idx: PackIndex,
         incompleteEntities: MutableList<String>,
         missingTextures: MutableList<String>,
-        missingModels: MutableList<String>
+        missingModels: MutableList<String>,
+        warnings: MutableList<String>
     ) {
         fun loadJson(f: File): JSONObject? = try {
             LenientJson.parseObject(f.readText(Charsets.UTF_8))
         } catch (e: Exception) { null }
 
         // ── Inventario 1: identificadores de geometría reales ──
+        //
+        // ⭐ FASE 5 (falso positivo masivo, visible en Better MC): hay DOS
+        // formatos de geometría en Bedrock y aquí solo se leía uno.
+        //
+        //  · Moderno: { "minecraft:geometry": [ { "description": { "identifier": … } } ] }
+        //  · Legacy:  { "geometry.cc.pillager": { "bones": [ … ] } }
+        //
+        // CoreCraft usa el legacy. Al no indexarlo, sus geometrías (que SÍ están
+        // en models/) se declaraban ausentes: de ahí los "438 modelos faltantes"
+        // y las 80 entidades incompletas del reporte. Eran falsos.
         val geometryIds = mutableSetOf<String>()
         DirIndexCache.index(File(rpDir, "models")).allFiles
             .filter { it.isFile && it.name.endsWith(".json", true) }
             .forEach { f ->
-                val arr = (loadJson(f) ?: return@forEach).optJSONArray("minecraft:geometry")
-                    ?: return@forEach
-                for (i in 0 until arr.length()) {
-                    val id = arr.optJSONObject(i)
-                        ?.optJSONObject("description")?.optString("identifier")
-                    if (!id.isNullOrBlank()) geometryIds.add(id)
+                val json = loadJson(f) ?: return@forEach
+
+                // Formato moderno.
+                json.optJSONArray("minecraft:geometry")?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        val id = arr.optJSONObject(i)
+                            ?.optJSONObject("description")?.optString("identifier")
+                        if (!id.isNullOrBlank()) geometryIds.add(id)
+                    }
+                }
+
+                // Formato legacy: claves raíz "geometry.*".
+                json.keys().forEach { key ->
+                    if (key.startsWith("geometry.") && json.optJSONObject(key) != null) {
+                        geometryIds.add(key)
+                    }
                 }
             }
 
@@ -788,20 +828,62 @@ object PackForgeValidator {
             }
 
         // ── Inventario 4: materiales custom en materials/ ──
+        //
+        // ⭐ FASE 5 (falso positivo real, visible en el reporte de Better MC):
+        // Bedrock NO guarda los materiales en `.json`: los guarda en
+        // `materials/*.material` (p.ej. `entity.material`), que es JSON pero con
+        // extensión propia. Al filtrar por `.json`, este inventario quedaba
+        // SIEMPRE vacío y cualquier `render_controllers` con material con
+        // namespace se reportaba como roto — aunque el material estuviera ahí.
+        //
+        // Se aceptan ambas extensiones (hay packs que sí usan .json).
         val customMaterials = mutableSetOf<String>()
-        DirIndexCache.index(File(rpDir, "materials")).allFiles
-            .filter { it.isFile && it.name.endsWith(".json", true) }
-            .forEach { f ->
-                (loadJson(f) ?: return@forEach).optJSONObject("materials")
-                    ?.keys()?.forEach { customMaterials.add(it) }
-            }
+        val materialRoot = File(rpDir, "materials")
+        if (materialRoot.isDirectory) {
+            DirIndexCache.index(materialRoot).allFiles
+                .filter {
+                    it.isFile && (it.name.endsWith(".json", true) ||
+                        it.name.endsWith(".material", true))
+                }
+                .forEach { f ->
+                    (loadJson(f) ?: return@forEach).optJSONObject("materials")
+                        ?.keys()?.forEach { k ->
+                            // "version" es un campo de cabecera, no un material.
+                            if (k != "version") customMaterials.add(k)
+                        }
+                }
+        }
 
         val entityDir = File(rpDir, "entity")
         if (!entityDir.isDirectory) return
         val reported = incompleteEntities.toMutableSet()
-        DirIndexCache.index(entityDir).allFiles
+
+        val entityFiles = DirIndexCache.index(entityDir).allFiles
             .filter { it.isFile && it.name.endsWith(".json", true) }
-            .forEach { f ->
+
+        // ⭐ FASE 5 — Quién usa de verdad cada `client_entity` sin definición en
+        // BP, resuelto en UNA sola pasada por el BP y ANTES de recorrer el RP
+        // (antes se abría el árbol entero una vez por huérfana).
+        //
+        // Sólo se enumeran identificadores que el propio pack declara: no hay
+        // ninguna lista de entidades vanilla que actualizar cuando Mojang añada
+        // un mob. Un re-skin que nada invoca es contenido muerto del origen; uno
+        // que una spawn rule o un script invoca es un fallo de verdad.
+        val citadas: Map<String, String> = if (bpEntityIds.isEmpty()) {
+            emptyMap()
+        } else {
+            val candidatas = mutableSetOf<String>()
+            entityFiles.forEach { f ->
+                val desc = loadJson(f)
+                    ?.optJSONObject("minecraft:client_entity")
+                    ?.optJSONObject("description") ?: return@forEach
+                val id = desc.optString("identifier")
+                if (id.isNotBlank() && id !in bpEntityIds) candidatas.add(id)
+            }
+            EntityOrphanClassifier.findReferences(bpDir, candidatas)
+        }
+
+        entityFiles.forEach { f ->
                 val json = loadJson(f)
                 // JSON ilegible: lo reporta el audit de integridad, no duplicar.
                 if (json == null) return@forEach
@@ -811,23 +893,57 @@ object PackForgeValidator {
                 val problems = mutableListOf<String>()
 
                 // (1) Definición en BP
+                //
+                // ⭐ FASE 5 — NO toda `client_entity` sin server entity es un
+                // defecto de la fusión. Hay dos casos opuestos y antes se
+                // sumaban en el mismo contador ("entidades incompletas"),
+                // que por eso nunca podía llegar a 0:
+                //
+                //  · REFERENCIADA: algún archivo del BP la invoca (spawn rule,
+                //    script, estructura, otra entidad, /summon). Falta su
+                //    `minecraft:entity` → el mob no aparecerá. Defecto real.
+                //
+                //  · HUÉRFANA: no la nombra absolutamente nadie. Tampoco podía
+                //    aparecer con el addon ORIGINAL instalado, así que la
+                //    fusión no ha roto nada y no hay nada que reparar sin
+                //    inventar un mob. Es contenido muerto del origen.
+                //    (Medido en core-craft 1.2.8: las 5 `cc:*_market_villager`
+                //    aparecen en 1 solo archivo de 9.405 — el suyo — y el
+                //    addon no las cita ni en spawn_rules, ni en scripts, ni
+                //    en structures.)
+                //
+                // ⚠️ Deliberadamente NO se usa un catálogo de entidades vanilla:
+                // enumerarlas obliga a mantener una lista a mano con cada
+                // actualización del juego (armadillo, breeze, bogged, camel,
+                // creaking, happy_ghast…). Las listas a mano de este archivo ya
+                // se quedaron cortas una vez y provocaron ~1.000 errores
+                // falsos (ver `VANILLA_GEOMETRY_PREFIXES`). La evidencia de si
+                // una entidad "existe en el juego" está en el propio pack, no
+                // en una tabla que caduca.
                 if (bpEntityIds.isNotEmpty() && ident != null && ident !in bpEntityIds) {
-                    problems.add("sin definición en BP")
+                    val cita = citadas[ident]
+                    if (cita == null) {
+                        warnings.add(
+                            "$ident → client_entity huérfano: no hay definición en BP y " +
+                                "ningún archivo del pack lo usa (tampoco aparecería con el " +
+                                "addon original; contenido muerto del origen)"
+                        )
+                    } else {
+                        problems.add("sin definición en BP (lo usa '$cita')")
+                    }
                 }
 
-                // (2) Geometría por identificador (no por nombre de archivo)
-                val geoRef: String? = when (val g = desc.opt("geometry")) {
-                    is String -> g
-                    is JSONObject -> g.optString("default").ifBlank { null }
-                        ?: g.keys().asSequence().firstOrNull()?.let { g.optString(it).ifBlank { null } }
-                    else -> null
-                }
-                if (geoRef != null && geoRef !in geometryIds &&
-                    !VanillaAssets.isVanillaGeometry(geoRef)
-                ) {
-                    problems.add("geometría '$geoRef' no existe en models/")
-                    if (missingModels.none { it.contains(geoRef) }) {
-                        missingModels.add("models/entity/$geoRef (por identificador)")
+                // (2) Geometría por identificador (no por nombre de archivo).
+                // BedrockRefs descarta alias ("Geometry.default"), Molang
+                // ("q.is_baby ? …") y mapas de huesos, que antes llegaban aquí
+                // como si fueran ids y generaban "modelos faltantes" falsos.
+                val geoRefs = BedrockRefs.geometryIds(desc.opt("geometry"))
+                for (geoRef in geoRefs) {
+                    if (geoRef !in geometryIds && !VanillaAssets.isVanillaGeometry(geoRef)) {
+                        problems.add("geometría '$geoRef' no existe en models/")
+                        if (missingModels.none { it.contains(geoRef) }) {
+                            missingModels.add("models/entity/$geoRef (por identificador)")
+                        }
                     }
                 }
 
@@ -848,17 +964,19 @@ object PackForgeValidator {
                     }
                 }
 
-                // (4) Render controllers, excluyendo vanilla
-                desc.optJSONArray("render_controllers")?.let { arr ->
-                    for (i in 0 until arr.length()) {
-                        val rc = arr.optString(i).ifBlank { null } ?: continue
-                        if (VanillaAssets.isVanillaRenderController(rc)) continue
-                        if (rc !in rcIds && rcIds.none {
-                                it.startsWith("$rc.") || rc.startsWith("$it.")
-                            }
-                        ) {
-                            problems.add("render controller '$rc' no existe")
+                // (4) Render controllers, excluyendo vanilla.
+                // El id está en la CLAVE de los objetos condicionales
+                // ({"controller.render.x":"q.variant > 0"}); `optString` los
+                // serializaba y los comparaba como si fueran nombres → 161
+                // entidades "incompletas" falsas en el reporte de Better MC.
+                val rcRefs = BedrockRefs.renderControllerIds(desc.opt("render_controllers"))
+                for (rc in rcRefs) {
+                    if (VanillaAssets.isVanillaRenderController(rc)) continue
+                    if (rc !in rcIds && rcIds.none {
+                            it.startsWith("$rc.") || rc.startsWith("$it.")
                         }
+                    ) {
+                        problems.add("render controller '$rc' no existe")
                     }
                 }
 
@@ -885,6 +1003,47 @@ object PackForgeValidator {
      * Busca una textura O(1) en el índice (RP fusionado y luego addons originales)
      * y la copia al destino con fastCopy (FileChannel.transferFrom, REGLA 4).
      */
+    /**
+     * ¿La textura referenciada existe en el índice, con o sin extensión?
+     * Bedrock referencia las texturas SIN extensión, así que hay que probar los
+     * formatos soportados antes de darla por ausente.
+     */
+    private fun indexHasTexture(idx: PackIndex, texturePath: String): Boolean {
+        val clean = texturePath.trim().replace("\\", "/").trimStart('/')
+        if (idx.has(clean)) return true
+        if (TEXTURE_EXTENSIONS.any { idx.has("$clean$it") }) return true
+        val withoutExt = TEXTURE_EXTENSIONS.firstOrNull { clean.endsWith(it) }
+            ?.let { clean.removeSuffix(it) }
+        return withoutExt != null && withoutExt != clean && idx.has(withoutExt)
+    }
+
+    /**
+     * Copia la textura a la RUTA REFERENCIADA, no a `textures/entity` fijo.
+     *
+     * Antes: `textures/blocks/dirt` se copiaba a `textures/entity/dirt.png`; la
+     * referencia seguía rota y el healer la contaba como reparada. El reporte de
+     * Better MC lo mostraba como "7 texturas copiadas" que no arreglaban nada.
+     */
+    private fun searchAndCopyTextureToPath(texturePath: String, rpDir: File, idx: PackIndex): Boolean {
+        val clean = texturePath.trim().replace("\\", "/").trimStart('/').removePrefix("./")
+            .let { if (it.startsWith("textures/")) it else "textures/$it" }
+        val stem = TEXTURE_EXTENSIONS.firstOrNull { clean.endsWith(it) }
+            ?.let { clean.removeSuffix(it) } ?: clean
+        val dest = File(rpDir, "$stem.png")
+        if (dest.isFile) return true
+
+        val baseName = stem.substringAfterLast('/')
+        for (ext in TEXTURE_EXTENSIONS) {
+            val found = idx.findByName("$baseName$ext") ?: continue
+            dest.parentFile?.mkdirs()
+            FileUtils.fastCopy(found, dest)
+            idx.markCopiedInRp(dest)
+            logFile { "Textura copiada a su ruta real: ${found.invariantSeparatorsPath} -> $stem.png" }
+            return true
+        }
+        return false
+    }
+
     private fun searchAndCopyTexture(textureName: String, destDir: File, idx: PackIndex): Boolean {
         for (ext in TEXTURE_EXTENSIONS) {
             val found = idx.findByName("$textureName$ext")
@@ -907,6 +1066,15 @@ object PackForgeValidator {
         val found = idx.findByName("$fileName$extension")
         if (found != null) {
             val destFile = File(destDir, "$fileName$extension")
+            // ⭐ FASE 5: si el archivo encontrado YA es el destino, copiarlo lo
+            // truncaría a 0 bytes (ver FastCopy). Ya está en su sitio: basta con
+            // marcarlo como presente.
+            if (runCatching { found.canonicalFile == destFile.canonicalFile }
+                    .getOrDefault(false)
+            ) {
+                idx.markCopiedInRp(destFile)
+                return true
+            }
             FileUtils.fastCopy(found, destFile)
             idx.markCopiedInRp(destFile)
             logFile { "Archivo encontrado en índice: ${found.invariantSeparatorsPath} -> ${destFile.name}" }

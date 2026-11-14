@@ -27,6 +27,10 @@ import coil.compose.AsyncImage
  *   que una portada de 1024×1024 se cargue entera (4 MB) solo para pintarla en
  *   118dp, origen de los tirones de scroll por presión de memoria. Pasa el
  *   tamaño real del contenedor; `null` deja el comportamiento anterior.
+ * @param clip desactiva el recorte interno. En la biblioteca la portada ya va
+ *   dentro de un `Box` con `clip(...)`: recortar TAMBIÉN la imagen duplicaba el
+ *   trabajo de outline+canvas por portada en cada fotograma del scroll.
+ *   Por defecto `true` para no cambiar el comportamiento del resto de pantallas.
  */
 @Composable
 fun CachedAsyncImage(
@@ -38,7 +42,8 @@ fun CachedAsyncImage(
     decodeSize: Dp? = null,
     crossfade: Boolean = false,
     colorFilter: ColorFilter? = null,
-    onError: () -> Unit = {}
+    onError: () -> Unit = {},
+    clip: Boolean = true
 ) {
     val density = LocalDensity.current
     val targetPx = decodeSize?.let { with(density) { it.roundToPx() } }
@@ -54,7 +59,9 @@ fun CachedAsyncImage(
             contentDescription = contentDescription,
             modifier = Modifier
                 .fillMaxSize()
-                .clip(RoundedCornerShape(cornerRadius)),
+                .then(
+                    if (clip) Modifier.clip(RoundedCornerShape(cornerRadius)) else Modifier
+                ),
             contentScale = contentScale,
             colorFilter = colorFilter,
             onError = { onError() }

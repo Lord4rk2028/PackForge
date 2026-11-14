@@ -155,6 +155,10 @@ fun ExportSetupScreen(
 ) {
     val conflictStrategy by viewModel.conflictStrategy.collectAsStateWithLifecycle()
     val mergeResult by viewModel.mergeResult.collectAsStateWithLifecycle()
+    // Colectado UNA vez a nivel de pantalla. Antes se colectaba dentro del ítem
+    // del resumen de compatibilidad, así que cada vez que ese ítem entraba en el
+    // viewport (al scrollear) se registraba un colector nuevo.
+    val compatScore by viewModel.compatibilityScore.collectAsStateWithLifecycle()
     val haptics = rememberExpressiveHaptics()
 
     // ── ESTADOS ─────────────────────────────────────────────
@@ -170,6 +174,73 @@ fun ExportSetupScreen(
     val unresolvedTotal = conflicts.count {
         it.resolution == ConflictResolution.UNRESOLVED
     }
+
+    // ═══ ESTADO DE LOS DIÁLOGOS Y DEL GATE — HOISTED FUERA DEL LazyColumn ═══
+    //
+    // ANTES todo esto vivía DENTRO del `item { }` del botón Exportar. Eso tenía
+    // tres consecuencias graves, y explica los dos síntomas reportados:
+    //
+    //  1. `remember { mutableStateOf(false) }` dentro de un ítem de una lista
+    //     perezosa pertenece al ítem, no a la pantalla. Cuando el usuario
+    //     scrollea y el ítem del botón sale del viewport, LazyColumn lo
+    //     DESECHA y con él su estado; al volver a entrar se recrea en `false`.
+    //     Un diálogo abierto (`showCompatDialog`/`showCancelDialog`) se cerraba
+    //     solo al scrollear, y el `Dialog` quedaba a medio componer/descomponer
+    //     con su ventana todavía viva: la UI se veía "trabada".
+    //
+    //  2. Los diálogos se COMPONÍAN como hijos del ítem de la lista. Un `Dialog`
+    //     abre su propia ventana de Android anclada al contenedor que lo
+    //     compone; si ese contenedor es un ítem perezoso que se recicla o se
+    //     mueve, la ventana del diálogo queda huérfana, sin dueño estable que la
+    //     cierre. Ese es el "se traba al bajar desde ese menú".
+    //
+    //  3. `ExportCompatibilityGate.evaluate(...)` y `ScriptFlowAnalyzer` se
+    //     re-ejecutaban en cada composición del ítem, es decir cada vez que el
+    //     botón volvía a entrar en pantalla durante el scroll.
+    //
+    // Al subirlos al nivel de la pantalla, el estado sobrevive al scroll, los
+    // diálogos tienen un dueño estable y el análisis se calcula una sola vez por
+    // cambio real de addons/conflictos (ver `remember` más abajo).
+    var showCompatDialog by remember { mutableStateOf(false) }
+    var showCancelDialog by remember { mutableStateOf(false) }
+
+    // ═══ EXCLUSIVIDAD MUTUA DE DIÁLOGOS ═══
+    //
+    // Cada diálogo abre su propia ventana de Android con su propio scrim que
+    // captura todos los toques. Con dos flags independientes, si ambos quedaban
+    // en `true` —por ejemplo, se abre la confirmación de cancelación mientras
+    // sigue vivo el diálogo de compatibilidad— quedaban dos ventanas apiladas:
+    // la de arriba roba la entrada y la de abajo queda visible e incerrable, que
+    // es la sensación de "menú trabado" al superponerse. La cancelación tiene
+    // prioridad porque es la única que se alcanza con una fusión ya en marcha.
+    val cancelDialogIsTop = showCancelDialog
+
+    // El gate de compatibilidad solo depende de los addons activos y de los
+    // conflictos: se memoriza para no re-evaluarlo en cada recomposición.
+    val gateDecision = remember(activeAddons, conflicts) {
+        ExportCompatibilityGate.evaluate(addons = activeAddons, conflicts = conflicts)
+    }
+
+    // Mismo criterio que `activeAddons` en el ViewModel: identidad por ruta de
+    // origen, no por instancia de lista, para que un `copy()` de un addon sin
+    // cambios relevantes no relance el análisis de scripts (que abre ZIPs).
+    val activeAddonPaths = remember(activeAddons) { activeAddons.map { it.sourceFilePath } }
+    val scriptGateDecision by produceState(
+        initialValue = ScriptGateDecision.safe(),
+        key1 = activeAddonPaths
+    ) {
+        value = withContext(Dispatchers.IO) {
+            ScriptFlowAnalyzer.getGateDecision(bpDirs = activeAddonPaths)
+        }
+    }
+
+    val canExport = metadata.name.isNotBlank() &&
+        metadata.author.isNotBlank() &&
+        activeAddons.isNotEmpty() &&
+        gateDecision.canExport &&
+        scriptGateDecision.canExecute
+
+    val isExporting = exportState is ExportState.Loading || exportState is ExportState.Progress
 
     val safeFileName = metadata.name
         .trim()
@@ -954,11 +1025,14 @@ fun ExportSetupScreen(
                         }
                     )
 
-                    // Indicador de compatibilidad
-                    val compatScore = viewModel.compatibilityScore.collectAsStateWithLifecycle()
+                    // Indicador de compatibilidad. El flow se colecta en el
+                    // cuerpo de la pantalla (`compatScore`), no aquí dentro:
+                    // `collectAsStateWithLifecycle()` dentro de un ítem de lista
+                    // registra un colector nuevo por cada vez que el ítem entra
+                    // en el viewport durante el scroll.
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     Text(
-                        text = "Compatibilidad estimada: ${compatScore.value}%",
+                        text = "Compatibilidad estimada: $compatScore%",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -968,233 +1042,12 @@ fun ExportSetupScreen(
 
         // BOTÓN EXPORTAR
         item {
-            // ── COMPATIBILITY GATE ──
-            val gateDecision = ExportCompatibilityGate.evaluate(
-                addons = activeAddons,
-                conflicts = conflicts
-            )
-
-            // El análisis de scripts abre los addons (ZIP/carpeta): se hace fuera
-            // del hilo principal para no congelar la UI al entrar en Exportación.
-            val scriptGateDecision by produceState(
-                initialValue = ScriptGateDecision.safe(),
-                key1 = activeAddons
-            ) {
-                value = withContext(Dispatchers.IO) {
-                    ScriptFlowAnalyzer.getGateDecision(
-                        bpDirs = activeAddons.map { it.sourceFilePath }
-                    )
-                }
-            }
-
-            val canExport = metadata.name.isNotBlank() &&
-                metadata.author.isNotBlank() &&
-                activeAddons.isNotEmpty() &&
-                gateDecision.canExport &&
-                scriptGateDecision.canExecute
-
-            var showCompatDialog by remember { mutableStateOf(false) }
-            val isExporting = exportState is ExportState.Loading || exportState is ExportState.Progress
-            var showCancelDialog by remember { mutableStateOf(false) }
-
-            // ── DIÁLOGO DE CONFIRMACIÓN DE CANCELACIÓN ──
-            if (showCancelDialog) {
-                ExpressiveAlertDialog(
-                    onDismissRequest = { showCancelDialog = false },
-                    title = {
-                        Text(
-                            text = "Cancelar fusión",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.headlineSmall
-                        )
-                    },
-                    text = {
-                        Text(
-                            text = "¿Deseas cancelar la fusión de los addons? Esta acción detendrá el proceso y se borrarán los datos temporales.",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    },
-                    confirmButton = {
-                        val context = LocalContext.current
-                        TextButton(onClick = {
-                            com.packforge.app.service.MergeForegroundService.stop(context)
-                            onResetExport()
-                            showCancelDialog = false
-                        }) {
-                            Icon(
-                                Icons.Default.Close,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                stringResource(R.string.export_cancel_merge),
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showCancelDialog = false }) {
-                            Text(stringResource(R.string.export_continue_merging))
-                        }
-                    }
-                )
-            }
-
-            // ── DIÁLOGO DE COMPATIBILIDAD ANTES DE EXPORTAR ──
-            if (showCompatDialog) {
-                // Determine compatibility dialog title text
-                val dialogTitle = when {
-                    scriptGateDecision.riskLevel == ScriptRiskLevel.BLOCKED &&
-                        gateDecision.level != ExportCompatibilityGate.ExportLevel.OPTIMAL ->
-                        "Exportación Bloqueada (Script)"
-                    gateDecision.level == ExportCompatibilityGate.ExportLevel.BLOCKED ->
-                        "Exportación Bloqueada"
-                    scriptGateDecision.riskLevel == ScriptRiskLevel.WARNING &&
-                        gateDecision.level != ExportCompatibilityGate.ExportLevel.OPTIMAL ->
-                        "Compatibilidad Riesgosa (Script)"
-                    gateDecision.level == ExportCompatibilityGate.ExportLevel.RISKY ->
-                        "Compatibilidad Riesgosa"
-                    else -> "Advertencia de Compatibilidad"
-                }
-                
-                ExpressiveAlertDialog(
-                    onDismissRequest = { showCompatDialog = false },
-                    title = {
-                        Text(
-                            text = dialogTitle,
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.headlineSmall,
-                            color = when (gateDecision.level) {
-                                ExportCompatibilityGate.ExportLevel.BLOCKED -> MaterialTheme.colorScheme.error
-                                ExportCompatibilityGate.ExportLevel.RISKY -> MaterialTheme.colorScheme.tertiary
-                                else -> MaterialTheme.colorScheme.primary
-                            }
-                        )
-                    },
-                    text = {
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = gateDecision.summary,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            if (gateDecision.blockers.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Bloqueos:",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                                gateDecision.blockers.take(5).forEach { blocker ->
-                                    Text(
-                                        text = "• $blocker",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.error,
-                                        maxLines = 2
-                                    )
-                                }
-                            }
-                            if (gateDecision.warnings.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Advertencias:",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.tertiary
-                                )
-                                gateDecision.warnings.take(5).forEach { warning ->
-                                    Text(
-                                        text = "• $warning",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2
-                                    )
-                                }
-                            }
-                            if (scriptGateDecision.blockers.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Bloqueos de script:",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                                ScriptFlowAnalyzer.describeBlockers(scriptGateDecision.blockers)
-                                    .forEach { description ->
-                                        Text(
-                                            text = "• $description",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.error,
-                                            maxLines = 3
-                                        )
-                                    }
-                            }
-                            if (scriptGateDecision.warnings.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Advertencias de script:",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.tertiary
-                                )
-                                scriptGateDecision.warnings.take(4).forEach { warning ->
-                                    Text(
-                                        text = "• ${warning.description}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2
-                                    )
-                                }
-                            }
-                            Text(
-                                text = "Puntaje de compatibilidad: ${gateDecision.score}/100",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        val context = LocalContext.current
-                        val exportAllowed = gateDecision.canExport && scriptGateDecision.canExecute
-                        Button(
-                            onClick = {
-                                showCompatDialog = false
-                                if (exportAllowed) {
-                                    haptics.heavy()
-                                    onExport(
-                                        if (useCustomPath) customUri else null,
-                                        importToMinecraft
-                                    )
-                                }
-                            },
-                            enabled = exportAllowed,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (exportAllowed)
-                                    MaterialTheme.colorScheme.primary
-                                else
-                                    MaterialTheme.colorScheme.error
-                            )
-                        ) {
-                            Text(
-                                text = if (exportAllowed) "Sí, exportar de todos modos" else "Entendido",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showCompatDialog = false }) {
-                            Text(stringResource(R.string.common_cancel))
-                        }
-                    }
-                )
-            }
+            // La decisión del gate y del análisis de scripts se calcula ARRIBA,
+            // en el cuerpo de la pantalla, y no aquí dentro: `gateDecision` y
+            // `scriptGateDecision` son valores memorizados, así que este ítem
+            // solo los lee. Antes se re-evaluaban en cada composición del ítem.
+            // Los diálogos también viven arriba, fuera de la lista: ver el
+            // bloque "DIÁLOGOS DE EXPORTACIÓN" al final de la pantalla.
 
             if (exportState is ExportState.Progress) {
                 ElevatedCard(
@@ -1225,7 +1078,13 @@ fun ExportSetupScreen(
                             message = thematicMsg.text,
                             messageIcon = thematicMsg.icon
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "${exportState.percent.coerceIn(0, 100)}%",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
                         OutlinedButton(
                             onClick = { showCancelDialog = true },
                             modifier = Modifier.fillMaxWidth(),
@@ -1353,6 +1212,209 @@ fun ExportSetupScreen(
         }
 
         item { Spacer(modifier = Modifier.height(100.dp)) }
+    }
+
+    // ═══ DIÁLOGOS DE EXPORTACIÓN — FUERA DEL LazyColumn ═══
+    //
+    // Se componen aquí, como hermanos de la lista y no como hijos de uno de sus
+    // ítems. Un `Dialog` abre su propia ventana de Android anclada al punto del
+    // árbol que lo compone: si ese punto es un ítem perezoso, al reciclarse o
+    // desplazarse la ventana queda huérfana y la UI se percibe trabada. Además,
+    // al vivir fuera de la lista su estado (`showCompatDialog`, `showCancelDialog`)
+    // ya no se destruye cuando el botón sale del viewport al hacer scroll.
+    if (showCancelDialog) {
+        ExpressiveAlertDialog(
+            onDismissRequest = { showCancelDialog = false },
+            title = {
+                Text(
+                    text = "Cancelar fusión",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.headlineSmall
+                )
+            },
+            text = {
+                Text(
+                    text = "¿Deseas cancelar la fusión de los addons? Esta acción detendrá el proceso y se borrarán los datos temporales.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                val context = LocalContext.current
+                TextButton(onClick = {
+                    com.packforge.app.service.MergeForegroundService.stop(context)
+                    onResetExport()
+                    showCancelDialog = false
+                }) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.export_cancel_merge),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCancelDialog = false }) {
+                    Text(stringResource(R.string.export_continue_merging))
+                }
+            }
+        )
+    }
+
+    if (showCompatDialog && !cancelDialogIsTop) {
+        val dialogTitle = when {
+            scriptGateDecision.riskLevel == ScriptRiskLevel.BLOCKED &&
+                gateDecision.level != ExportCompatibilityGate.ExportLevel.OPTIMAL ->
+                "Exportación Bloqueada (Script)"
+            gateDecision.level == ExportCompatibilityGate.ExportLevel.BLOCKED ->
+                "Exportación Bloqueada"
+            scriptGateDecision.riskLevel == ScriptRiskLevel.WARNING &&
+                gateDecision.level != ExportCompatibilityGate.ExportLevel.OPTIMAL ->
+                "Compatibilidad Riesgosa (Script)"
+            gateDecision.level == ExportCompatibilityGate.ExportLevel.RISKY ->
+                "Compatibilidad Riesgosa"
+            else -> "Advertencia de Compatibilidad"
+        }
+
+        ExpressiveAlertDialog(
+            onDismissRequest = { showCompatDialog = false },
+            title = {
+                Text(
+                    text = dialogTitle,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = when (gateDecision.level) {
+                        ExportCompatibilityGate.ExportLevel.BLOCKED -> MaterialTheme.colorScheme.error
+                        ExportCompatibilityGate.ExportLevel.RISKY -> MaterialTheme.colorScheme.tertiary
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = gateDecision.summary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (gateDecision.blockers.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Bloqueos:",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        gateDecision.blockers.take(5).forEach { blocker ->
+                            Text(
+                                text = "• $blocker",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 2
+                            )
+                        }
+                    }
+                    if (gateDecision.warnings.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Advertencias:",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                        gateDecision.warnings.take(5).forEach { warning ->
+                            Text(
+                                text = "• $warning",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2
+                            )
+                        }
+                    }
+                    if (scriptGateDecision.blockers.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Bloqueos de script:",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        ScriptFlowAnalyzer.describeBlockers(scriptGateDecision.blockers)
+                            .forEach { description ->
+                                Text(
+                                    text = "• $description",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    maxLines = 3
+                                )
+                            }
+                    }
+                    if (scriptGateDecision.warnings.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Advertencias de script:",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                        scriptGateDecision.warnings.take(4).forEach { warning ->
+                            Text(
+                                text = "• ${warning.description}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2
+                            )
+                        }
+                    }
+                    Text(
+                        text = "Puntaje de compatibilidad: ${gateDecision.score}/100",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                val exportAllowed = gateDecision.canExport && scriptGateDecision.canExecute
+                Button(
+                    onClick = {
+                        showCompatDialog = false
+                        if (exportAllowed) {
+                            haptics.heavy()
+                            onExport(
+                                if (useCustomPath) customUri else null,
+                                importToMinecraft
+                            )
+                        }
+                    },
+                    enabled = exportAllowed,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (exportAllowed)
+                            MaterialTheme.colorScheme.primary
+                        else
+                            MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text(
+                        text = if (exportAllowed) "Sí, exportar de todos modos" else "Entendido",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCompatDialog = false }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
+        )
     }
 
     @Suppress("UNUSED_VARIABLE")
@@ -2046,6 +2108,58 @@ fun ExportSuccessScreen(
         
         Spacer(modifier = Modifier.height(24.dp))
         Text(text = "¡Modpack Fusionado!", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+
+        // ── SEMÁFORO DE COMPATIBILIDAD ──
+        // Resume en un vistazo todo lo que validó la fusión (referencias,
+        // texturas, conflictos, decisiones aplicadas) en vez de obligar a leer
+        // el log o el informe.
+        result.compatibility?.let { compatibility ->
+            Spacer(modifier = Modifier.height(16.dp))
+            val accent = when (compatibility.level) {
+                com.packforge.app.domain.engine.CompatibilitySummary.Level.OPTIMAL ->
+                    MaterialTheme.colorScheme.primary
+                com.packforge.app.domain.engine.CompatibilitySummary.Level.ATTENTION ->
+                    MaterialTheme.colorScheme.tertiary
+                com.packforge.app.domain.engine.CompatibilitySummary.Level.PROBLEMS ->
+                    MaterialTheme.colorScheme.error
+            }
+            Surface(
+                color = accent.copy(alpha = 0.10f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.5.dp, accent.copy(alpha = 0.55f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "${compatibility.level.emoji} ${compatibility.level.label}",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = accent
+                    )
+                    Text(
+                        text = compatibility.headline,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    compatibility.details.take(6).forEach { detail ->
+                        Text(
+                            text = "• $detail",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    if (compatibility.details.size > 6) {
+                        Text(
+                            text = "... y ${compatibility.details.size - 6} más (ver informe)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = accent
+                        )
+                    }
+                }
+            }
+        }
         
         if (conflicts.isNotEmpty()) {
             Spacer(modifier = Modifier.height(16.dp))

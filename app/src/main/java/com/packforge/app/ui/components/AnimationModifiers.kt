@@ -64,10 +64,40 @@ fun Modifier.bounceClick(
     onPressChanged: ((Boolean) -> Unit)? = null,
     onClick: (() -> Unit)? = null
 ): Modifier = composed {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
     val haptic = LocalHapticFeedback.current
     val motionLevel = LocalMotionLevel.current
+
+    // ── RUTA RÁPIDA: sin animación posible, sin maquinaria de animación ──
+    //
+    // `scaleDown = 1f` significa "no deformes el elemento" (lo usan la tarjeta de
+    // la biblioteca y sus acciones directas). En ese caso la escala nunca cambia
+    // y todo lo que hay debajo —MutableInteractionSource, collectIsPressedAsState,
+    // animateFloatAsState (un Animatable por elemento), LaunchedEffect— no aporta
+    // nada visible, pero SÍ se instancia una vez por tarjeta y por botón.
+    //
+    // En una grilla visible de ~10 tarjetas eso son decenas de Animatable y de
+    // suscripciones a interacciones vivas mientras el usuario desliza, que es
+    // exactamente donde aparecía el lag. Con esta rama solo se instala el gesto.
+    if (motionLevel == MotionLevel.NONE || scaleDown == 1f) {
+        return@composed this.then(
+            if (onClick != null) {
+                Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    if (hapticFeedback) {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
+                    onClick()
+                }
+            } else {
+                Modifier
+            }
+        )
+    }
+
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
 
     // Permite a la tarjeta reaccionar al tacto (p. ej. ajustar su elevación).
     if (onPressChanged != null) {
@@ -114,7 +144,7 @@ fun Modifier.bounceClick(
     // `scale == 1f` se omite la capa y el elemento se pinta directamente, sin
     // sobrecoste de compositing. El gesto de "bounce" sigue siendo visible
     // porque la capa se crea al presionar y se destruye al soltar.
-    val useLayer = motionLevel != MotionLevel.NONE && scale != 1f
+    val useLayer = scale != 1f
     this
         .then(if (useLayer) Modifier.graphicsLayer(scaleX = scale, scaleY = scale) else Modifier)
         .then(

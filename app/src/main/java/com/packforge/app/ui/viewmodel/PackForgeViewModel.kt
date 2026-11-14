@@ -473,8 +473,21 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
                 if (newAddons.isNotEmpty()) {
+                    val sanitizedNew = newAddons.map { addon ->
+                        if (com.packforge.app.util.MinecraftTextSanitizer.isTranslationKey(addon.name) || addon.name.isBlank()) {
+                            val cleanName = addon.fileName
+                                .replace(Regex("(?i)\\.(mcaddon|mcpack|zip)$"), "")
+                                .replace(Regex("(?i)_?(bp|rp|behavior|resource|packs?)$"), "")
+                                .replace('_', ' ')
+                                .replace('-', ' ')
+                                .trim()
+                            addon.copy(name = com.packforge.app.util.MinecraftTextSanitizer.clean(cleanName).ifBlank { addon.fileName })
+                        } else {
+                            addon.copy(name = com.packforge.app.util.MinecraftTextSanitizer.clean(addon.name))
+                        }
+                    }
                     val current = _addons.value.toMutableList()
-                    current.addAll(newAddons)
+                    current.addAll(sanitizedNew)
                     _addons.value = current.mapIndexed { i, a -> a.copy(priority = i) }
                     recalculateConflicts()
                     _events.emit(PackForgeEvent.Vibration)
@@ -551,22 +564,59 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
      */
     private var recalcJob: Job? = null
 
+    /** Huella del último análisis y su resultado, para no repetirlo. */
+    private var lastConflictFingerprint: String? = null
+    private var cachedConflicts: List<Conflict> = emptyList()
+
+    /**
+     * Firma barata del estado del que depende el análisis (addons activos por
+     * id+prioridad, resoluciones y volumen de archivos). Si no cambia, el
+     * resultado de [ConflictEngine.analyze] es idéntico y se reutiliza: evita
+     * barrer otra vez miles de archivos con modpacks grandes.
+     */
+    private fun conflictFingerprint(
+        active: List<Addon>,
+        resolutions: Map<String, String>
+    ): String {
+        val sb = StringBuilder(active.size * 28 + 32)
+        active.forEach { a ->
+            sb.append(a.id).append('@').append(a.priority).append(';')
+        }
+        sb.append('|')
+        resolutions.entries.sortedBy { it.key }.forEach { (k, v) ->
+            sb.append(k).append('=').append(v).append(';')
+        }
+        sb.append('|').append(active.sumOf { it.files.size })
+        return sb.toString()
+    }
+
     private fun recalculateConflicts() {
         recalcJob?.cancel()
         recalcJob = viewModelScope.launch(Dispatchers.Default) {
             kotlinx.coroutines.delay(120L) // coalesce rapid toggles/moves
-            val active = _addons.value.filter { it.enabled }
-            PackForgeLog.d("PackForge", "Recalculando conflictos para ${active.size} addons activos")
-            // CRÍTICO: pasar las resoluciones para que ConflictEngine regenere los
-            // conflictos (con ids ESTABLES) ya marcados como resueltos. Sin esto,
-            // el recálculo devolvía conflictos nuevos y la resolución "parpadeaba"
-            // y desaparecía de la UI.
-            val newConflicts = ConflictEngine.analyze(active, _resolutions.value)
-            PackForgeLog.d("PackForge", "Conflictos detectados: ${newConflicts.size}")
-            _conflicts.value = newConflicts
-            calculateCompatibilityScore(active)
-            _criticalConflictsCount.value = newConflicts.count { 
-                it.severity == ConflictSeverity.CRITICAL && it.resolution == ConflictResolution.UNRESOLVED
+            try {
+                val active = _addons.value.filter { it.enabled }
+                val fingerprint = conflictFingerprint(active, _resolutions.value)
+                // CRÍTICO: pasar las resoluciones para que ConflictEngine regenere
+                // los conflictos (con ids ESTABLES) ya marcados como resueltos.
+                val newConflicts = if (fingerprint == lastConflictFingerprint) {
+                    cachedConflicts
+                } else {
+                    PackForgeLog.d("PackForge", "Recalculando conflictos para ${active.size} addons activos")
+                    val computed = ConflictEngine.analyze(active, _resolutions.value)
+                    lastConflictFingerprint = fingerprint
+                    cachedConflicts = computed
+                    computed
+                }
+                _conflicts.value = newConflicts
+                calculateCompatibilityScore(active)
+                _criticalConflictsCount.value = newConflicts.count {
+                    it.severity == ConflictSeverity.CRITICAL && it.resolution == ConflictResolution.UNRESOLVED
+                }
+            } catch (t: Throwable) {
+                // Un fallo del motor no debe tumbar la app ni dejar la lista de
+                // conflictos a medias: se registra y se sigue.
+                PackForgeLog.e("PackForge", "Error recalculando conflictos: ${t.message}")
             }
         }
     }
@@ -611,6 +661,31 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         list[idx] = list[idx + dir]
         list[idx + dir] = temp
         _addons.value = list.mapIndexed { i, a -> a.copy(priority = i) }
+        recalculateConflicts()
+    }
+
+    fun moveDisplayItem(displayIndex: Int, dir: Int) {
+        val currentAddons = _addons.value
+        val displayItems = com.packforge.app.ui.components.buildAddonDisplayItems(currentAddons).toMutableList()
+        val targetIndex = displayIndex + dir
+        if (displayIndex !in displayItems.indices || targetIndex !in displayItems.indices) return
+
+        val temp = displayItems[displayIndex]
+        displayItems[displayIndex] = displayItems[targetIndex]
+        displayItems[targetIndex] = temp
+
+        val newAddonsList = mutableListOf<Addon>()
+        displayItems.forEach { item ->
+            when (item) {
+                is com.packforge.app.ui.components.AddonDisplayItem.Single -> newAddonsList.add(item.addon)
+                is com.packforge.app.ui.components.AddonDisplayItem.Pair -> {
+                    newAddonsList.add(item.bp)
+                    newAddonsList.add(item.rp)
+                }
+            }
+        }
+
+        _addons.value = newAddonsList.mapIndexed { i, a -> a.copy(priority = i) }
         recalculateConflicts()
     }
 
@@ -856,7 +931,8 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                     _exportState.value = ExportState.Success(
                         fileName = session.fileName,
                         filePath = session.outputPath,
-                        importedToMinecraft = false
+                        importedToMinecraft = false,
+                        compatibility = session.compatibility
                     )
                     _events.emit(PackForgeEvent.ShowSnackbar(
                         if (session.reportPath != null)
@@ -917,7 +993,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                         var entry = zis.nextEntry
                         while (entry != null) {
                             val entryName = entry.name.trimStart('/', '\\')
-                            if (entryName.equals("PackForge.ID", ignoreCase = true)) {
+                            if (entryName.equals("PackForge.ID", ignoreCase = true) || entryName.endsWith("/PackForge.ID", ignoreCase = true)) {
                                 val content = zis.bufferedReader(Charsets.UTF_8).readText()
                                 return@withContext try {
                                     JSONObject(content).optString("id").ifBlank { null }
@@ -1064,7 +1140,7 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                         var entry = zis.nextEntry
                         while (entry != null) {
                             val entryName = entry.name.trimStart('/', '\\')
-                            if (entryName.equals("PackForge.ID", ignoreCase = true)) {
+                            if (entryName.equals("PackForge.ID", ignoreCase = true) || entryName.endsWith("/PackForge.ID", ignoreCase = true)) {
                                 packForgeIdContent = zis.bufferedReader(Charsets.UTF_8).readText()
                             } else if ((entryName.equals("pack_icon.png", ignoreCase = true) ||
                                         entryName.endsWith("/pack_icon.png", ignoreCase = true)) && tempIconFile == null) {
@@ -1418,7 +1494,21 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                 PackForgeLog.d("PackForge", "Portada cargada desde Studio: $finalCover")
             }
 
-            _addons.value = restored
+            val sanitizedRestored = restored.map { addon ->
+                if (com.packforge.app.util.MinecraftTextSanitizer.isTranslationKey(addon.name) || addon.name.isBlank()) {
+                    val cleanName = addon.fileName
+                        .replace(Regex("(?i)\\.(mcaddon|mcpack|zip)$"), "")
+                        .replace(Regex("(?i)_?(bp|rp|behavior|resource|packs?)$"), "")
+                        .replace('_', ' ')
+                        .replace('-', ' ')
+                        .trim()
+                    addon.copy(name = com.packforge.app.util.MinecraftTextSanitizer.clean(cleanName).ifBlank { addon.fileName })
+                } else {
+                    addon.copy(name = com.packforge.app.util.MinecraftTextSanitizer.clean(addon.name))
+                }
+            }
+
+            _addons.value = sanitizedRestored
             _metadata.value = ModpackMetadata(
                 name = m.name,
                 author = m.author,

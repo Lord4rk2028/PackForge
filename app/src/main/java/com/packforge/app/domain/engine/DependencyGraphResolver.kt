@@ -154,6 +154,12 @@ object DependencyGraphResolver {
 
         fun isVanilla(type: ResType, id: String): Boolean {
             if (id.startsWith("minecraft:")) return true
+            // ⭐ FUENTE ÚNICA ⭐ Este objeto era un SEGUNDO catálogo vanilla,
+            // mantenido a mano y divergente del de VanillaAssets. Una referencia
+            // que el catálogo de Mojang reconoce no se reporta nunca, aunque la
+            // heurística local no la cubra. `VanillaResources` sigue aportando sus
+            // propias reglas como red de seguridad (tests, ids fuera de catálogo).
+            if (catalogSaysVanilla(type, id)) return true
             return when (type) {
                 ResType.GEOMETRY -> {
                     val body = id.removePrefix("geometry.")
@@ -188,6 +194,16 @@ object DependencyGraphResolver {
                     id.startsWith("item.") || id.startsWith("env.") // materiales vanilla
                 ResType.MUSIC_DEFINITION -> id.startsWith("minecraft:") // music def vanilla
             }
+        }
+
+        /** Consulta el catálogo único ([VanillaAssets]) según el tipo de recurso. */
+        private fun catalogSaysVanilla(type: ResType, id: String): Boolean = when (type) {
+            ResType.GEOMETRY -> VanillaAssets.isVanillaGeometry(id)
+            ResType.ANIMATION, ResType.ANIM_CONTROLLER -> VanillaAssets.isVanillaAnimation(id)
+            ResType.RENDER_CONTROLLER -> VanillaAssets.isVanillaRenderController(id)
+            ResType.FILE_PATH -> VanillaAssets.isVanillaTexture(id) || VanillaAssets.isVanillaSound(id)
+            ResType.SOUND_DEF -> VanillaAssets.isVanillaSound(id)
+            else -> false
         }
     }
 

@@ -1,5 +1,6 @@
 package com.packforge.app.domain.engine
 
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -90,7 +91,9 @@ class ObfuscatedEntityResolutionTest {
         )
 
         DirIndexCache.clear()
-        val notes = EntityDependencyResolver.resolve(listOf(sources), merged)
+        val notes = runBlocking {
+            EntityDependencyResolver.resolve(listOf(sources), merged)
+        }
 
         assertTrue(
             "La geometría ofuscada NO debe reportarse como faltante. Notas: $notes",
@@ -112,7 +115,9 @@ class ObfuscatedEntityResolutionTest {
         )
 
         DirIndexCache.clear()
-        val notes = EntityDependencyResolver.resolve(listOf(sources), merged)
+        val notes = runBlocking {
+            EntityDependencyResolver.resolve(listOf(sources), merged)
+        }
 
         // El detalle de lo que falta viaja en ConflictRegistry (que alimenta la
         // pantalla de Conflictos); las notes solo dan el recuento.
@@ -143,7 +148,9 @@ class ObfuscatedEntityResolutionTest {
         )
 
         DirIndexCache.clear()
-        val notes = EntityDependencyResolver.resolve(listOf(sources), merged)
+        val notes = runBlocking {
+            EntityDependencyResolver.resolve(listOf(sources), merged)
+        }
 
         assertTrue(
             "Ninguna geometría debe faltar (ni la normal ni la ofuscada). Notas: $notes",
@@ -174,7 +181,9 @@ class ObfuscatedEntityResolutionTest {
         )
 
         DirIndexCache.clear()
-        val notes = EntityDependencyResolver.resolve(listOf(sources), merged)
+        val notes = runBlocking {
+            EntityDependencyResolver.resolve(listOf(sources), merged)
+        }
 
         assertTrue(
             "La animación ofuscada no debe faltar. Notas: $notes",
@@ -191,7 +200,9 @@ class ObfuscatedEntityResolutionTest {
         write(sources, "textures/x.png", "{}")
 
         DirIndexCache.clear()
-        val notes = EntityDependencyResolver.resolve(listOf(sources), merged)
+        val notes = runBlocking {
+            EntityDependencyResolver.resolve(listOf(sources), merged)
+        }
 
         assertTrue("Debe devolver una nota explicativa, no fallar", notes.isNotEmpty())
         assertTrue("Debe indicar que falta entity/", notes.any { it.contains("entity") })

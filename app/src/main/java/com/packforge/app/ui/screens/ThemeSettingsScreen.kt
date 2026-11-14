@@ -73,6 +73,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.packforge.app.ui.components.bounceClick
+import com.packforge.app.ui.components.headingLevel
 import com.packforge.app.ui.theme.currentMotionLevel
 import com.packforge.app.ui.theme.describe
 import com.packforge.app.ui.viewmodel.ThemeViewModel
@@ -133,7 +134,8 @@ fun ThemeSettingsScreen(
                         Text(
                             text = "Vista Previa del Tema",
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.headingLevel(2)
                         )
                         Surface(
                             shape = CircleShape,
@@ -200,7 +202,8 @@ fun ThemeSettingsScreen(
                     Text(
                         text = "Selector de Color Personalizado",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.headingLevel(2)
                     )
 
                     InteractiveColorPicker(
@@ -245,7 +248,8 @@ fun ThemeSettingsScreen(
                                     clipboard.setClipEntry(ClipEntry(clipData))
                                 }
                             },
-                            modifier = Modifier.size(40.dp)
+                            // Sin `.size(40.dp)`: Material reserva 48dp de
+                            // objetivo táctil para este icono.
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ContentCopy,
@@ -263,7 +267,6 @@ fun ThemeSettingsScreen(
                                     if (!clip.isNullOrBlank()) updateHex(clip.trim())
                                 }
                             },
-                            modifier = Modifier.size(40.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ContentPaste,
@@ -281,7 +284,8 @@ fun ThemeSettingsScreen(
                 Text(
                     text = "Paletas Temáticas Bedrock",
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.headingLevel(2)
                 )
 
                 val presets = listOf(
@@ -312,7 +316,8 @@ fun ThemeSettingsScreen(
 
                                 Box(
                                     modifier = Modifier
-                                        .size(42.dp)
+                                        // 48dp: objetivo táctil de Material mínimo.
+                                        .size(48.dp)
                                         .clip(CircleShape)
                                         .background(color)
                                         .border(

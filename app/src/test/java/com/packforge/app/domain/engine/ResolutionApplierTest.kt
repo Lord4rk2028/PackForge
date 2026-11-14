@@ -97,7 +97,10 @@ class ResolutionApplierTest {
             "textures/item_texture.json",
             "textures/flipbook_textures.json",
             "textures/textures_list.json",
-            "ui/hud_screen.json",
+            // Los dos únicos archivos AGREGADOS de ui/: el resto son pantallas,
+            // y una pantalla sí admite un ganador elegido por el usuario.
+            "ui/_ui_defs.json",
+            "ui/_global_variables.json",
             "texts/en_US.lang",
             "font/glyph_E1.json",
             "materials/entity.material",
@@ -115,7 +118,8 @@ class ResolutionApplierTest {
     @Test
     fun identifierDerivedPathsAreSkipped() {
         // El nombre del archivo real no tiene por qué coincidir con el id.
-        assertFalse(ResolutionApplier.isResolvableByFileCopy("loot_tables/mypack:chest.json"))
+        // Las partículas se desambiguan en el ORIGEN, así que copiar el archivo
+        // pelearía con ese renombrado.
         assertFalse(ResolutionApplier.isResolvableByFileCopy("particles/mypack:dust.json"))
     }
 

@@ -4,22 +4,20 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * ─────────────────────────────────────────────────────────────────────────────
  * LenientJson — parser que tolera los DOS trucos del addon closed-source
- * ─────────────────────────────────────────────────────────────────────────────
  *
  * Descubierto analizando "More Body Actions + Pick up & Carry" (v3.4.12). Cada
  * archivo ofuscado apila DOS barreras que `org.json` rechaza en seco:
  *
- *  1. COMENTARIO INICIAL. Un bloque C-style con el texto de aviso, delante del
- *     JSON real. org.json NO admite comentarios C-style y lanza excepcion.
+ * 1. COMENTARIO INICIAL. Un bloque C-style con el texto de aviso, delante del
+ *    JSON real. org.json NO admite comentarios C-style y lanza excepcion.
  *
- *  2. CLAVES DUPLICADAS. Cada clave aparece DOS veces: primero un cebo cuyo
- *     valor usa HOMOGRAFOS CIrilicos (U+0435 `е`, U+043E `о`, U+0441 `с`,
- *     U+0440 `р`, U+0430 `а`), y despues la definicion REAL en ASCII puro:
+ * 2. CLAVES DUPLICADAS. Cada clave aparece DOS veces: primero un cebo cuyo
+ *    valor usa HOMOGRAFOS CIrilicos (U+0435 `e`, U+043E `o`, U+0441 `c`,
+ *    U+0440 `p`, U+0430 `a`), y despues la definicion REAL en ASCII puro:
  *
- *         {"format_version": {cebo}, "format_version": "1.16.0",
- *          "minecraft:geometry": {cebo}, "minecraft:geometry": [{real}]}
+ *     {"format_version": {cebo}, "format_version": "1.16.0",
+ *      "minecraft:geometry": {cebo}, "minecraft:geometry": [{real}]}
  *
  *     org.json lanza `Duplicate key` y nunca llega a la definicion buena.
  *
@@ -31,7 +29,6 @@ import org.json.JSONObject
  * ROTAS las fuentes CLARAS, y la geometria real de `carryblock` se perdia.
  *
  * NUNCA inventa contenido: si el texto no es parseable devuelve `null`.
- * ─────────────────────────────────────────────────────────────────────────────
  */
 object LenientJson {
 
@@ -41,18 +38,36 @@ object LenientJson {
      * Solo se toca lo previo al primer `{`: no se modifica nada dentro del
      * JSON, de modo que no puede romperse un cierre de comentario literal
      * dentro de un string.
+     *
+     * Soporta las DOS formas que aparecen en packs reales:
+     *  - bloque `/* ... */` (cebo de los addons closed-source), y
+ *    - linea `// ...` (cabecera `//bridge-file-version: #0` que escribe Bridge.
+ *    y que Bedrock tolera; sin esto el archivo "no parseaba" y el decifrador
+ *    lo clasificaba como roto -> neutralizado a `.bak` -> contenido perdido).
      */
     fun stripLeadingComment(text: String): String {
         var t = text.trimStart()
-        while (t.startsWith("/*")) {
-            val end = t.indexOf("*/")
-            if (end < 0) return text
-            t = t.substring(end + 2).trimStart()
+        while (true) {
+            when {
+                t.startsWith("/*") -> {
+                    val end = t.indexOf("*/")
+                    if (end < 0) return text
+                    t = t.substring(end + 2).trimStart()
+                }
+                t.startsWith("//") -> {
+                    val end = t.indexOf('\n')
+                    if (end < 0) return text
+                    t = t.substring(end + 1).trimStart()
+                }
+                else -> return t
+            }
         }
-        return t
     }
 
-    /** Parsea aceptando comentarios iniciales y claves duplicadas. `null` si falla. */
+    /**
+     * Parsea aceptando comentarios (en CUALQUIER posición) y claves duplicadas.
+     * `null` si falla.
+     */
     fun parse(text: String): Any? = try {
         Parser(stripLeadingComment(text)).parseValue()
     } catch (e: Exception) {
@@ -66,8 +81,41 @@ object LenientJson {
 
         private var i = 0
 
+        /**
+         * Salta espacios Y comentarios.
+         *
+         * ⭐ FASE 5 (pérdida de datos real, medida con core-craft): antes solo se
+         * saltaban espacios y los comentarios se recortaban únicamente al
+         * PRINCIPIO del archivo (`stripLeadingComment`). Un comentario INTERNO
+         * —`// plane only rolls in the air`, en la línea 33 de
+         * `entity/2hwvcaut.json`— rompía el parseo. El decifrador lo daba por
+         * "roto sin contraparte", lo renombraba a `.bak` y el empaquetado, que
+         * excluye los `.bak`, lo dejaba FUERA del .mcaddon: se perdía contenido
+         * real (entidades `cc:siren`, `cc:hermit` y un render_controllers con 23
+         * controladores, entre otros 51 archivos).
+         *
+         * Bedrock acepta estos comentarios, así que aquí también.
+         */
         private fun ws() {
-            while (i < s.length && s[i].isWhitespace()) i++
+            while (i < s.length) {
+                val c = s[i]
+                if (c.isWhitespace()) { i++; continue }
+                if (c == '/' && i + 1 < s.length) {
+                    when (s[i + 1]) {
+                        '/' -> {
+                            val end = s.indexOf('\n', i)
+                            i = if (end < 0) s.length else end + 1
+                            continue
+                        }
+                        '*' -> {
+                            val end = s.indexOf("*/", i + 2)
+                            i = if (end < 0) s.length else end + 2
+                            continue
+                        }
+                    }
+                }
+                return
+            }
         }
 
         private fun fail(msg: String): Nothing =
@@ -170,7 +218,7 @@ object LenientJson {
             val start = i
             if (i < s.length && (s[i] == '-' || s[i] == '+')) i++
             while (i < s.length && (s[i].isDigit() || s[i] in ".eE-+")) i++
-            if (i == start) fail("se esperaba número")
+            if (i == start) fail("se esperaba numero")
             return s.substring(start, i).toDouble()
         }
     }

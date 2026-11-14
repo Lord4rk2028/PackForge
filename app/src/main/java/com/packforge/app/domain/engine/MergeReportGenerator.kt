@@ -70,7 +70,37 @@ object MergeReportGenerator {
         "items", "recipe", "ui", "light_emission",
         // Legítimas que faltaban y se marcaban como cifradas por error:
         "languages", "language", "sounds", "sound_list", "loot_tables",
-        "recipes", "ticking_blocks", "disabled_features"
+        "recipes", "ticking_blocks", "disabled_features",
+        // ⭐ FASE 5: familias que producían ~860 avisos FALSOS de
+        // CLAVES_CIFRADAS. El reporte culpaba al addon de "ofuscar" archivos
+        // perfectamente válidos, y el usuario acababa persiguiendo fantasmas.
+        //   · `pools`        → tablas de loot (loot_tables/*.json)
+        //   · `namespace` / `nineslice_size` → UI (ui/*.json)
+        //   · el resto       → worldgen, atmósfera, partículas y catálogos.
+        "pools", "namespace", "nineslice_size", "block_culling", "fogs",
+        "atmospherics", "dimensions", "dimension", "world_generation_rules",
+        "particle_effects", "particle", "texture_list", "textures_list",
+        "color_grading", "feature_rules", "spawn_rules", "item_catalog",
+        "trading", "biomes", "features", "blocks", "materials", "client_entity",
+        // ⭐ FASE 5: claves raíz legítimas que faltaban y producían falsos
+        // "cifrado por sustitución" en archivos perfectamente válidos:
+        //  · `values`                    → functions/tick.json
+        //  · `ui_defs`                   → ui/_ui_defs.json
+        //  · individual/block/interactive_sounds → sounds.json
+        "values", "ui_defs", "individual_event_sounds", "block_sounds",
+        "interactive_sounds"
+    )
+
+    /**
+     * ⭐ FASE 5: prefijos canónicos.
+     *
+     * Hay familias enteras de claves que son legítimas por CONSTRUCCIÓN y que
+     * una lista cerrada nunca cubrirá: `minecraft:variant`, `geometry.cc.x`,
+     * `animation.cc.walk`, `controller.animation.cc.idle`… Antes cada nombre
+     * nuevo parecía "clave cifrada". Con el prefijo, la regla es estable.
+     */
+    private val CANONICAL_KEY_PREFIXES = listOf(
+        "minecraft:", "geometry.", "animation.", "controller."
     )
 
     /** Carpetas donde Bedrock espera JSON con claves reconocibles. */
@@ -99,6 +129,12 @@ object MergeReportGenerator {
 
     /** Cuántos caracteres iniciales se inspeccionan para detectar el decoy. */
     private const val DECOY_SCAN_CHARS = 400
+
+    /**
+     * ⭐ FASE 5: tope de hallazgos informativos detallados en el reporte.
+     * Los HIGH nunca se recortan; este límite solo aplica a LOW/INFO.
+     */
+    private const val MAX_INTEGRITY_DETAIL = 60
 
     /**
    * ¿El archivo es un decoy conocido de un addon closed-source?
@@ -147,12 +183,25 @@ object MergeReportGenerator {
     /** ¿El texto puede ser JSON? Detecta texto plano (comentario, prosa). */
     private fun looksLikeJsonAtAll(trimmed: String): Boolean {
         if (trimmed.isEmpty()) return false
-    // Un comentario de bloque al inicio es el caso típico de los decoys.
-        if (trimmed.startsWith("/*")) return false
-        val first = trimmed[0]
-        return first == '{' || first == '[' || first == '"' ||
-            first == '-' || first.isDigit() ||
-            first == 't' || first == 'f' || first == 'n'
+        // ⭐ FASE 5: un comentario inicial NO significa "texto plano".
+        //
+        // CoreCraft abre item_texture.json con `// cooking` y el archivo es un
+        // JSON perfectamente válido. Antes, cualquier cosa que empezara por un
+        // comentario se declaraba ARCHIVO_NO_JSON (texto plano) y, si la ruta era
+        // canónica, HIGH: medio pack marcado como roto por un comentario.
+        // Se recorta el comentario y se decide sobre lo que hay debajo.
+        val effective = lenientForTokener(trimmed)
+        if (effective.isEmpty()) return false
+        val body = effective.trimStart()
+        val first = body.firstOrNull() ?: return false
+        if (first == '{' || first == '[' || first == '"' ||
+            first == '-' || first.isDigit()
+        ) return true
+        // Literales JSON válidos como raíz. Se comprueba la palabra COMPLETA:
+        // un `first == 't'` a secas daba por JSON cualquier prosa que empezara
+        // por "t" ("texto plano sin json"), y esos archivos quedaban invisibles
+        // para el auditor en vez de reportarse como texto plano.
+        return body.startsWith("true") || body.startsWith("false") || body.startsWith("null")
     }
 
     /**
@@ -164,8 +213,14 @@ object MergeReportGenerator {
      */
   private fun hasCanonicalKey(text: String): Boolean {
         return try {
-            when (val root = org.json.JSONTokener(text).nextValue()) {
-        is JSONObject -> root.keys().asSequence().any { CANONICAL_KEYS.contains(it) }
+            // ⭐ FASE 5: se parsea con tolerancia a comentarios. CoreCraft mete
+            // `// cooking` DENTRO de item_texture.json; con JSONTokener estricto
+            // el parseo fallaba y el archivo acababa clasificado como cifrado.
+            when (val root = org.json.JSONTokener(lenientForTokener(text)).nextValue()) {
+        is JSONObject -> root.keys().asSequence().any { key ->
+            CANONICAL_KEYS.contains(key) ||
+                CANONICAL_KEY_PREFIXES.any { key.startsWith(it) }
+        }
    // Array en la raíz: Bedrock lo acepta (texture_list.json, etc.).
     is JSONArray -> true
         else -> false
@@ -175,11 +230,29 @@ object MergeReportGenerator {
         }
     }
 
+    /**
+     * ⭐ FASE 5: el auditor también debe tolerar comentarios de línea y de bloque.
+     *
+     * Bedrock acepta comentarios en sus JSON, así que marcarlos como "JSON
+     * inválido" o "claves cifradas" es un falso positivo que ensucia el reporte
+     * y esconde los fallos reales.
+     *
+     * OJO: no escribir la secuencia de apertura de bloque literal en este KDoc.
+     * Kotlin anida los comentarios de bloque, así que mencionarla aquí abre un
+     * comentario interno y deja el archivo entero sin cerrar (Syntax error:
+     * Unclosed comment al final del fichero).
+     */
+    private fun lenientForTokener(text: String): String = try {
+        LenientJson.stripLeadingComment(text)
+    } catch (_: Exception) {
+        text
+    }
+
     /** ¿El JSON es estructuralmente válido (cualquier tipo de raíz)? */
     private fun isStructurallyValid(text: String): Boolean {
         if (text.isBlank()) return false
         return try {
-            org.json.JSONTokener(text).nextValue()
+            org.json.JSONTokener(lenientForTokener(text)).nextValue()
             true
         } catch (_: Exception) {
             false
@@ -278,7 +351,12 @@ object MergeReportGenerator {
      }
 
             // (b) JSON valido en estructura pero sin ninguna clave canonica.
-            if (isStructurallyValid(text) && !hasCanonicalKey(text)) {
+            //
+            // Un objeto/array VACÍO (`{}`, `[]`) no está cifrado: no hay nada que
+            // cifrar. Antes se marcaba como "claves cifradas" y el reporte acusaba
+            // al addon de ofuscar un `sounds.json` de 2 bytes perfectamente válido.
+            val vacio = text.trim().let { it == "{}" || it == "[]" || it.isEmpty() }
+            if (!vacio && isStructurallyValid(text) && !hasCanonicalKey(text)) {
            val id = extractIdentifierSafely(text)
           val hasValidTwin = id != null && validIds.contains(id)
        val readByBedrock = isBedrockReadPath(rel)
@@ -306,7 +384,13 @@ if (hasValidTwin) {
         return findings
     }
 
-    /** Resumen para el reporte: una línea legible por hallazgo. */
+    /**
+     * Resumen para el reporte: una línea legible por hallazgo.
+     *
+     * ⭐ FASE 5: los HIGH se listan SIEMPRE completos (requieren acción), pero
+     * el resto se recorta a [MAX_INTEGRITY_DETAIL] líneas. Antes volcaba cientos
+     * de avisos idénticos y el reporte dejaba de ser legible.
+     */
     fun formatIntegrityFindings(findings: List<IntegrityFinding>): List<String> {
         if (findings.isEmpty()) return emptyList()
         val icon = mapOf(
@@ -314,9 +398,17 @@ if (hasValidTwin) {
             IntegrityFinding.Severity.LOW to "⚠️",
             IntegrityFinding.Severity.HIGH to "❌"
         )
-        return findings.map { f ->
+        val high = findings.filter { it.severity == IntegrityFinding.Severity.HIGH }
+        val rest = findings.filter { it.severity != IntegrityFinding.Severity.HIGH }
+        val shown = high + rest.take(MAX_INTEGRITY_DETAIL)
+        val lines = shown.map { f ->
             "${icon[f.severity]} [${f.kind}] ${f.relativePath}: ${f.detail}"
+        }.toMutableList()
+        val omitted = findings.size - shown.size
+        if (omitted > 0) {
+            lines += "   … y $omitted hallazgo(s) informativo(s) más (no accionables)."
         }
+        return lines
     }
   /**
    * Valida la sintaxis JSON de todo el directorio.
@@ -347,6 +439,16 @@ if (hasValidTwin) {
             if (isValidJsonRoot(text)) continue
    // Reintento tolerante: algunos archivos legacy llevan BOM inicial.
             if (isValidJsonRoot(text.trimStart('\uFEFF'))) continue
+            // ⭐ FASE 5: reintento tolerante a comentarios (`//`, `/* */`) y comas
+            // finales, con el MISMO parser que usa el resto del pipeline.
+            //
+            // CoreCraft los inyecta dentro de agregados como item_texture.json, y
+            // `entities/vanilla/sulfur_cube.json` de Origins (66 KB) también los
+            // trae. Bedrock acepta ambos, pero el preprocesado anterior
+            // (`lenientForTokener`) no cubría todas las posiciones y el archivo se
+            // reportaba como "JSON inválido" siendo válido para el juego.
+            if (LenientJson.parse(text) != null) continue
+            if (LenientJson.parse(text.trimStart('\uFEFF')) != null) continue
 
     errors += "❌ JSON inválido: ${file.relativeTo(root).path} (raíz no reconocida como JSONObject/JSONArray)"
         }
@@ -363,8 +465,7 @@ if (hasValidTwin) {
     private fun isValidJsonRoot(text: String): Boolean {
         if (text.isBlank()) return false
         return try {
-      when (JSONTokener(text).nextValue()) {
-       is JSONObject, is JSONArray -> true
+      when (JSONTokener(text).nextValue()) {       is JSONObject, is JSONArray -> true
      JSONObject.NULL -> true
        else -> true // números, strings, booleanos: JSON válido
             }
@@ -406,7 +507,17 @@ if (hasValidTwin) {
          * separadores de ruta válidos). Es distinta de `zipValidation`, que
          * valida las referencias de entidades dentro del archivo.
          */
-        val zipAuditNotes: List<String> = emptyList()
+        val zipAuditNotes: List<String> = emptyList(),
+        /**
+         * Tiempos por fase del pipeline (en segundos).
+         * Clave = nombre de la fase, Valor = segundos.
+         */
+        val phaseTimings: Map<String, Double> = emptyMap(),
+        /**
+         * Lista de addons fusionados en este modpack.
+         * Cada entrada: "nombre (tipo: BP/RP/BOTH, tamaño: X MB)"
+         */
+        val mergedAddons: List<String> = emptyList()
     )
 
     fun build(inputs: Inputs): List<String> {
@@ -414,6 +525,51 @@ if (hasValidTwin) {
         lines += "══════════════ PACKFORGE · REPORTE DE FUSIÓN INTELIGENTE ══════════════"
         lines += "JSONs procesados: ${inputs.totalJsonsMerged}   |   Tiempo total: ${"%.1f".format(inputs.elapsedSeconds)}s"
         lines += ""
+
+        // ── 0. ADDONS FUSIONADOS ──
+        if (inputs.mergedAddons.isNotEmpty()) {
+            lines += "── 0. ADDONS FUSIONADOS EN ESTE MODPACK ──"
+            inputs.mergedAddons.forEach { lines += "  📦 $it" }
+            lines += ""
+        }
+
+        // ── 0b. TIEMPOS POR FASE ──
+        if (inputs.phaseTimings.isNotEmpty()) {
+            lines += "── 0b. TIEMPOS POR FASE DEL PIPELINE ──"
+            // ⚠️ DOS correcciones respecto a la versión anterior, que mostraba
+            // cifras que no significaban lo que decían:
+            //
+            //  1. `markPhase` guarda tiempo ACUMULADO desde el inicio. Imprimirlo
+            //     tal cual hacía que los porcentajes sumaran >100% y que toda
+            //     cifra pareciera "lo que llevaba el pipeline". Aquí se resta el
+            //     acumulado anterior y lo que se ve es la DURACIÓN del tramo.
+            //  2. Cada marca se registra al ENTRAR en su etapa (justo después de
+            //     su mensaje de progreso), así que el tiempo transcurrido hasta
+            //     ella pertenece a la etapa ANTERIOR. Etiquetar el tramo con la
+            //     marca que lo cierra hacía que "Extracción" apareciera con 0,08 s
+            //     y la extracción real (130 s) saliera bajo "Clasificación".
+            //     Por eso la etiqueta es la de la marca que ABRE el tramo.
+            val marcas = inputs.phaseTimings.entries.toList()
+            var anterior = 0.0
+            marcas.forEachIndexed { idx, marca ->
+                val duracion = (marca.value - anterior).coerceAtLeast(0.0)
+                val etiqueta = if (idx == 0) "(arranque)" else marcas[idx - 1].key
+                val pct = if (inputs.elapsedSeconds > 0) duracion / inputs.elapsedSeconds * 100 else 0.0
+                lines += String.format("  ⏱️ %-46s %8.2fs %5.1f%%", etiqueta, duracion, pct)
+                anterior = marca.value
+            }
+            val noMedido = inputs.elapsedSeconds - anterior
+            if (noMedido > 0.05) {
+                val pct = if (inputs.elapsedSeconds > 0) noMedido / inputs.elapsedSeconds * 100 else 0.0
+                val ultima = marcas.lastOrNull()?.key ?: ""
+                lines += String.format(
+                    "  ⏱️ %-46s %8.2fs %5.1f%%",
+                    "resto tras '$ultima' (empaquetado/cierre)", noMedido, pct
+                )
+            }
+            lines += String.format("  %-48s %8.2fs", "TOTAL", inputs.elapsedSeconds)
+            lines += ""
+        }
 
         lines += "── 1. RESOLUCIÓN DE IDENTIFICADORES ──"
         if (inputs.idRenames.isEmpty()) {
@@ -536,13 +692,19 @@ if (hasValidTwin) {
         val low = findings.filter { it.contains("⚠️") }
         val info = findings.filter { it.contains("ℹ️") }
 
-        // ── Línea de cabecera: el número que de verdad importa ──
-        val relevantes = high.size + info.size
-        out += if (relevantes > 0) {
-            "ℹ️ Integridad: $relevantes relevante(s) 🔴 ${high.size} alto · " +
-                "🟡 ${low.size + info.size} informativo(s)"
-        } else {
-            "ℹ️ Integridad: ${low.size + info.size} aviso(s) informativo(s), 0 relevantes"
+        // ⭐ FASE 5: contadores HONESTOS.
+        //
+        // ANTES los INFO se contaban DOS veces: entraban en `relevantes`
+        // (high + info) y otra vez en la cifra de "informativos" (low + info).
+        // El encabezado sumaba más de lo que luego listaba, así que el usuario
+        // veía "12 relevantes · 40 informativos" sobre un total de 45 hallazgos.
+        // Ahora cada hallazgo cae en UNA sola categoría y la suma cuadra.
+        val total = findings.size
+        out += "ℹ️ Integridad: $total hallazgo(s) · 🔴 ${high.size} alto · " +
+            "🟡 ${low.size} aviso(s) · ℹ️ ${info.size} sombra(s)"
+
+        if (high.isEmpty()) {
+            out += "   ✅ Ningún archivo en ruta canónica queda ilegible para el juego."
         }
 
         // ── HIGH: nunca se oculta nada ──
@@ -551,7 +713,7 @@ if (hasValidTwin) {
             high.forEach { out += "      ${it.trim().removePrefix("❌").trim()}" }
         }
 
-        // ── LOW/INFO: colapsados por motivo ──
+        // ── LOW/INFO: colapsados por motivo, con tope explícito ──
         if (low.isNotEmpty()) {
             out += "   🟡 Avisos sin impacto (${low.size}): el propio addon los ignora."
             out += "      └─ No requieren acción. Detalle en el reporte de la app."

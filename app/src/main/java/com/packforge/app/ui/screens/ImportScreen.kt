@@ -64,6 +64,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.ui.draw.shadow
 import com.packforge.app.ui.components.bounceClick
+import com.packforge.app.ui.components.headingLevel
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Info
@@ -139,6 +140,7 @@ fun ImportScreen(
     onRemoveAddon: (String) -> Unit,
     onToggleAddon: (String) -> Unit,
     onMoveAddon: (String, Int) -> Unit,
+    onMoveDisplayItem: ((Int, Int) -> Unit)? = null,
     onClearAllAddons: () -> Unit
 ) {
     val context = LocalContext.current
@@ -231,7 +233,10 @@ fun ImportScreen(
                     displayItems = displayItems,
                     onAddAddon = { launcher.launch(arrayOf("*/*")) },
                     onExport = {},
-                    showResultSlot = false
+                    showResultSlot = false,
+                    // El menú de orden de la mesa mueve un ítem visible por
+                    // dirección (−1/+1); con eso la mesa se redibuja al instante.
+                    onMoveDisplayItem = onMoveDisplayItem
                 )
             }
         }
@@ -259,26 +264,30 @@ fun ImportScreen(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(vertical = 4.dp)
+                    modifier = Modifier
+                        .padding(vertical = 4.dp)
+                        // Encabezado de sección: permite a TalkBack saltar
+                        // de título en título con la navegación por encabezados.
+                        .headingLevel(2)
                 )
             }
         }
 
-        items(
+        itemsIndexed(
             items = displayItems,
-            key = { item ->
+            key = { _, item ->
                 when (item) {
                     is AddonDisplayItem.Single -> item.addon.id
                     is AddonDisplayItem.Pair -> "pair_${item.pairKey}"
                 }
             },
-            contentType = { item ->
+            contentType = { _, item ->
                 when (item) {
                     is AddonDisplayItem.Single -> item.addon.type
                     is AddonDisplayItem.Pair -> "pair"
                 }
             }
-        ) { item ->
+        ) { displayIndex, item ->
             val itemKey = when (item) {
                 is AddonDisplayItem.Single -> item.addon.id
                 is AddonDisplayItem.Pair -> "pair_${item.pairKey}"
@@ -287,10 +296,14 @@ fun ImportScreen(
             // cambie en el mismo fotograma, esta rama no parpadea.
             val animateEntrance = remember(itemKey) { !seenItemKeys.contains(itemKey) }
             val itemMotionLevel = LocalMotionLevel.current
+            // ⚡ Con lotes grandes (decenas de addons importados de golpe) lanzar
+            // una animación de entrada por tarjeta satura el hilo de UI y se
+            // percibe como un tirón. Solo se anima si la lista es manejable.
+            val allowEntranceAnimation = displayItems.size <= 24
             var entered by remember(itemKey) { mutableStateOf(false) }
             LaunchedEffect(itemKey) {
                 seenItemKeys[itemKey] = true
-                entered = true
+                if (allowEntranceAnimation) entered = true
             }
 
             val itemContent: @Composable () -> Unit = {
@@ -299,14 +312,18 @@ fun ImportScreen(
                         val addon = item.addon
                         val addonConflicts = conflictsByAddonId[addon.id].orEmpty()
                         val onToggle = remember(addon.id) { { onToggleAddon(addon.id) } }
-                        val onMoveUp = remember(addon.id) { { onMoveAddon(addon.id, -1) } }
-                        val onMoveDown = remember(addon.id) { { onMoveAddon(addon.id, 1) } }
+                        val onMoveUp = remember(displayIndex, addon.id) {
+                            { onMoveDisplayItem?.invoke(displayIndex, -1) ?: onMoveAddon(addon.id, -1) }
+                        }
+                        val onMoveDown = remember(displayIndex, addon.id) {
+                            { onMoveDisplayItem?.invoke(displayIndex, 1) ?: onMoveAddon(addon.id, 1) }
+                        }
                         val onRemove = remember(addon.id) { { onRemoveAddon(addon.id) } }
 
                         AddonCard(
                             addon = addon,
-                            index = addon.priority,
-                            total = addons.size,
+                            index = displayIndex,
+                            total = displayItems.size,
                             conflictCount = addonConflicts.size,
                             hasCritical = addonConflicts.any {
                                 it.severity == ConflictSeverity.CRITICAL
@@ -318,15 +335,26 @@ fun ImportScreen(
                         )
                     }
                     is AddonDisplayItem.Pair -> {
+                        val onMoveUp = remember(displayIndex, item.pairKey) {
+                            { onMoveDisplayItem?.invoke(displayIndex, -1) ?: onMoveAddon(item.bp.id, -1) }
+                        }
+                        val onMoveDown = remember(displayIndex, item.pairKey) {
+                            { onMoveDisplayItem?.invoke(displayIndex, 1) ?: onMoveAddon(item.bp.id, 1) }
+                        }
+
                         AddonPairCard(
                             pair = item,
+                            index = displayIndex,
+                            total = displayItems.size,
+                            onMoveUp = onMoveUp,
+                            onMoveDown = onMoveDown,
                             onOpen = { openPairKey = item.pairKey }
                         )
                     }
                 }
             }
 
-            if (animateEntrance && itemMotionLevel != MotionLevel.NONE) {
+            if (animateEntrance && allowEntranceAnimation && itemMotionLevel != MotionLevel.NONE) {
                 AnimatedVisibility(
                     visible = entered,
                     enter = ExpressiveAnimations.scaleInBounce(itemMotionLevel)
@@ -409,7 +437,8 @@ fun ImportDropZone(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(12.dp)
-                        .size(40.dp)
+                        // 48dp: objetivo táctil mínimo de Material. Antes 40dp.
+                        .size(48.dp)
                         .bounceClick(scaleDown = 0.88f),
                     colors = androidx.compose.material3.IconButtonDefaults.filledTonalIconButtonColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer,
@@ -457,7 +486,8 @@ fun ImportDropZone(
                         text = "Taller de Addons & Packs",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.headingLevel(1)
                     )
                     Text(
                         text = "Selecciona o arrastra archivos para comenzar",
@@ -777,7 +807,8 @@ fun CompatibilityScoreCard(
                     text = "Diagnóstico de Compatibilidad",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.headingLevel(2)
                 )
                 Text(
                     text = "$activeAddons de $totalAddons addons activos en fusión",
@@ -938,8 +969,15 @@ fun AddonCard(
                     ) {
                         AddonTypeBadge(addon.type)
 
+                        // `String.format` es caro y se ejecutaba en cada
+                        // recomposición (una vez por tarjeta y por fotograma
+                        // durante el scroll). Se memoriza por tamaño/versión.
+                        val metaLabel = remember(addon.version, addon.sizeBytes) {
+                            "v${addon.version} · " +
+                                "%.1f".format(addon.sizeBytes / 1024.0 / 1024.0) + " MB"
+                        }
                         Text(
-                            text = "v${addon.version} · ${"%.1f".format(addon.sizeBytes / 1024.0 / 1024.0)} MB",
+                            text = metaLabel,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -991,9 +1029,11 @@ fun AddonCard(
                     FilledTonalIconButton(
                         onClick = { haptics.light(); onMoveUp() },
                         enabled = index > 0,
-                        modifier = Modifier
-                            .size(30.dp)
-                            .bounceClick(scaleDown = 0.9f)
+                        // Sin `.size()`: se respeta el tamaño de Material
+                        // (40dp visuales + 48dp reservados). Forzar 30dp
+                        // anulaba el mínimo interactivo y hacía el botón
+                        // casi imposible de acertar con dedos grandes.
+                        modifier = Modifier.bounceClick(scaleDown = 0.9f)
                     ) {
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowUp,
@@ -1007,9 +1047,7 @@ fun AddonCard(
                     FilledTonalIconButton(
                         onClick = { haptics.light(); onMoveDown() },
                         enabled = index < total - 1,
-                        modifier = Modifier
-                            .size(30.dp)
-                            .bounceClick(scaleDown = 0.9f)
+                        modifier = Modifier.bounceClick(scaleDown = 0.9f)
                     ) {
                         Icon(
                             imageVector = Icons.Default.KeyboardArrowDown,
@@ -1038,12 +1076,11 @@ fun AddonCard(
                         )
                     }
 
-                    // Botón de eliminar con confirmación táctil (rechazo)
+                    // Botón de eliminar con confirmación táctil (rechazo).
+                    // Sin `.size()`: objetivo táctil estándar de Material.
                     IconButton(
                         onClick = { haptics.reject(); onRemove() },
-                        modifier = Modifier
-                            .size(32.dp)
-                            .bounceClick(scaleDown = 0.88f)
+                        modifier = Modifier.bounceClick(scaleDown = 0.88f)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Delete,

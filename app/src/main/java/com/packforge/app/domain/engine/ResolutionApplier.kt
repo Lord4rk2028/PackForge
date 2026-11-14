@@ -46,23 +46,85 @@ object ResolutionApplier {
         "player.entity.json"
     )
 
-    /** Carpetas con fusión dedicada. */
+    /** Carpetas con fusión dedicada (una decisión por archivo NO aplica). */
     private val DEDICATED_MERGE_PREFIXES = listOf(
-        "ui/", "texts/", "font/", "biomes/", "worldgen/", "materials/"
+        "texts/", "font/", "biomes/", "worldgen/", "materials/"
     )
+
+    /**
+     * Dentro de `ui/` el único contenido agregado son estos dos archivos; el
+     * resto son PANTALLAS, y una pantalla sí admite "gana este addon": es
+     * justamente lo que el usuario decide cuando elige un ganador en un
+     * conflicto de `ui/hud_screen.json`.
+     */
+    private val UI_AGGREGATE_FILES = setOf("_ui_defs.json", "_global_variables.json")
+
+    /**
+     * Carpetas donde un archivo = un identificador (decisión por archivo válida).
+     *
+     * Los identificadores con namespace solo se aceptan aquí: en `particles/`
+     * un id con namespace NO es una ruta, y además esas colisiones ya se
+     * resuelven renombrando en el origen antes de copiar.
+     */
+    private val IDENTIFIER_FOLDERS = listOf("loot_tables/", "recipes/")
+
+    /**
+     * Normaliza la ruta de un conflicto.
+     *
+     * Los detectores construyen `affectedFile` como `"loot_tables/$identifier.json"`,
+     * y el identificador puede ya incluir la carpeta (`loot_tables/entities/zombie.json`),
+     * así que el prefijo aparece duplicado. Se colapsa aquí.
+     */
+    fun normalizeAffectedPath(affectedFile: String): String {
+        var path = affectedFile.replace('\\', '/').trim().removePrefix("/")
+        IDENTIFIER_FOLDERS.forEach { prefix ->
+            while (path.startsWith(prefix + prefix)) {
+                path = path.removePrefix(prefix)
+            }
+        }
+        return path
+    }
 
     /**
      * ¿Se puede honrar la decisión copiando el archivo entero del ganador?
      */
     fun isResolvableByFileCopy(affectedFile: String): Boolean {
         if (affectedFile.isBlank()) return false
-        // Ruta derivada de un identificador (p. ej. "loot_tables/ns:tabla.json").
-        if (affectedFile.contains(':')) return false
+        return isResolvableNormalized(normalizeAffectedPath(affectedFile))
+    }
 
-        val normalized = affectedFile.replace('\\', '/').removePrefix("/")
+    private fun isResolvableNormalized(normalized: String): Boolean {
         val fileName = normalized.substringAfterLast('/')
         if (fileName in DEDICATED_MERGE_FILES) return false
-        return DEDICATED_MERGE_PREFIXES.none { normalized.startsWith(it) }
+        if (normalized.startsWith("ui/") && fileName in UI_AGGREGATE_FILES) return false
+        if (DEDICATED_MERGE_PREFIXES.any { normalized.startsWith(it) }) return false
+
+        // Ruta derivada de un identificador: solo tiene sentido en carpetas
+        // donde "un archivo = un identificador".
+        if (normalized.contains(':')) {
+            return IDENTIFIER_FOLDERS.any { normalized.startsWith(it) }
+        }
+        return true
+    }
+
+    /**
+     * Rutas candidatas para localizar el archivo.
+     *
+     * Un identificador con namespace (`mypack:chest`) suele corresponder a un
+     * archivo sin namespace (`loot_tables/chest.json`), así que se prueban
+     * ambas formas en lugar de rendirse.
+     */
+    fun candidatePaths(affectedFile: String): List<String> {
+        val normalized = normalizeAffectedPath(affectedFile)
+        val candidates = mutableListOf(normalized)
+
+        val lastSlash = normalized.lastIndexOf('/')
+        val lastColon = normalized.lastIndexOf(':')
+        if (lastColon > lastSlash) {
+            val stripped = normalized.substring(0, lastSlash + 1) + normalized.substring(lastColon + 1)
+            if (stripped.substringAfterLast('/').isNotBlank()) candidates += stripped
+        }
+        return candidates.distinct()
     }
 
     /**
@@ -93,41 +155,41 @@ object ResolutionApplier {
 
         fileWinners.forEach { (affectedFile, winnerId) ->
             if (!isResolvableByFileCopy(affectedFile)) return@forEach
-            val normalized = affectedFile.replace('\\', '/').removePrefix("/")
+            val candidates = candidatePaths(affectedFile)
 
             val sourceRoot = addonDirById[winnerId]?.let { File(it) }
             if (sourceRoot == null || !sourceRoot.isDirectory) {
-                notFound += normalized
+                notFound += candidates.first()
                 return@forEach
             }
 
-            val source = findInAddonTree(sourceRoot, normalized)
-            if (source == null) {
-                notFound += normalized
-                return@forEach
+            // Se prueba cada candidato: el archivo del ganador y el del
+            // resultado tienen que existir en la MISMA forma de ruta.
+            val match = candidates.firstNotNullOfOrNull { candidate ->
+                val source = findInAddonTree(sourceRoot, candidate) ?: return@firstNotNullOfOrNull null
+                val destination = when {
+                    File(mergedBpDir, candidate).isFile -> File(mergedBpDir, candidate)
+                    File(mergedRpDir, candidate).isFile -> File(mergedRpDir, candidate)
+                    else -> null
+                } ?: return@firstNotNullOfOrNull null
+                source to destination
             }
 
-            // El archivo vive en el BP o en el RP fusionado: se sustituye donde exista.
-            val destination = when {
-                File(mergedBpDir, normalized).isFile -> File(mergedBpDir, normalized)
-                File(mergedRpDir, normalized).isFile -> File(mergedRpDir, normalized)
-                else -> null
-            }
-            if (destination == null) {
-                notFound += normalized
+            if (match == null) {
+                notFound += candidates.first()
                 return@forEach
             }
 
             try {
-                source.copyTo(destination, overwrite = true)
+                match.first.copyTo(match.second, overwrite = true)
                 applied++
                 PackForgeLog.d(
                     TAG,
-                    "🎯 Decisión aplicada: '$normalized' ← ${sourceRoot.name}"
+                    "🎯 Decisión aplicada: '${match.second.relativeTo(mergedRpDir.parentFile ?: mergedRpDir).invariantSeparatorsPath}' ← ${sourceRoot.name}"
                 )
             } catch (e: Exception) {
-                PackForgeLog.e(TAG, "No se pudo aplicar la decisión en '$normalized': ${e.message}")
-                notFound += normalized
+                PackForgeLog.e(TAG, "No se pudo aplicar la decisión en '$affectedFile': ${e.message}")
+                notFound += candidates.first()
             }
         }
 

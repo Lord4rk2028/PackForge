@@ -5,13 +5,18 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,18 +30,31 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import kotlin.math.sin
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.AddonType
 import com.packforge.app.ui.theme.LocalMotionLevel
 import com.packforge.app.ui.theme.MotionLevel
 import com.packforge.app.ui.theme.bouncySpringOf
+import com.packforge.app.ui.theme.rememberExpressiveHaptics
 import java.io.File
 
 @Composable
@@ -45,7 +63,11 @@ fun CraftingTableLayout(
     displayItems: List<AddonDisplayItem> = addons.map { AddonDisplayItem.Single(it) },
     onAddAddon: () -> Unit,
     onExport: () -> Unit,
-    showResultSlot: Boolean = true
+    showResultSlot: Boolean = true,
+    // (índice en la lista visible, dirección -1/+1). Misma semántica que
+    // `PackForgeViewModel.moveDisplayItem`, que reconstruye la lista de addons
+    // en el nuevo orden.
+    onMoveDisplayItem: ((Int, Int) -> Unit)? = null
 ) {
     val activeItems = displayItems.filter {
         when (it) {
@@ -59,6 +81,14 @@ fun CraftingTableLayout(
             is AddonDisplayItem.Pair -> 2
         }
     }
+    // La mesa tiene 9 casillas. Con más de 9 ítems no caben todos: las 8
+    // primeras van individuales y la 9ª se convierte en una cuadrícula 2x2
+    // con las portadas de los ítems 9.º a 12.º. Al tocarla se abre el menú
+    // contextual donde se puede reordenar la lista completa.
+    val hasOverflow = displayItems.size > 9
+    val overflowItems = if (hasOverflow) displayItems.drop(8).take(4) else emptyList()
+    val hiddenCount = if (hasOverflow) displayItems.size - 8 else 0
+    var showOverflowModal by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -79,7 +109,7 @@ fun CraftingTableLayout(
                     color = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     Text(
-                        text = "$activeCount/9",
+                        text = "$activeCount/${displayItems.size}",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -117,6 +147,12 @@ fun CraftingTableLayout(
             ) {
                 items(9) { index ->
                     when {
+                        // 9.ª casilla con más de 9 ítems: cuadrícula 2x2 + menú.
+                        hasOverflow && index == 8 -> OverflowSlot(
+                            overflowItems = overflowItems,
+                            hiddenCount = hiddenCount,
+                            onClick = { showOverflowModal = true }
+                        )
                         index < displayItems.size -> when (val item = displayItems[index]) {
                             is AddonDisplayItem.Single -> AddonSlot(addon = item.addon)
                             is AddonDisplayItem.Pair -> AddonPairSlot(pair = item)
@@ -136,6 +172,389 @@ fun CraftingTableLayout(
                 addonCount = activeCount,
                 onClick = onExport
             )
+        }
+    }
+
+    // Menú contextual de orden (fuera del Column para que el diálogo se pinte
+    // en su propia ventana y no quede recortado por la mesa).
+    if (showOverflowModal && onMoveDisplayItem != null) {
+        CraftingOverflowModal(
+            displayItems = displayItems,
+            onDismiss = { showOverflowModal = false },
+            onMove = onMoveDisplayItem
+        )
+    }
+}
+
+@Composable
+private fun OverflowSlot(
+    overflowItems: List<AddonDisplayItem>,
+    hiddenCount: Int,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .border(
+                2.dp,
+                MaterialTheme.colorScheme.secondary.copy(alpha = 0.75f),
+                RoundedCornerShape(8.dp)
+            )
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        // Cuadrícula 2x2 con las portadas de los 4 ítems siguientes a la mesa.
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(3.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            val preview = overflowItems.take(4)
+            repeat(2) { row ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    repeat(2) { col ->
+                        val index = row * 2 + col
+                        Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                            if (index < preview.size) {
+                                MiniItemCover(
+                                    item = preview[index],
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Contador de ítems que quedan fuera de la mesa.
+        if (hiddenCount > 0) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(3.dp),
+                shape = RoundedCornerShape(6.dp),
+                color = MaterialTheme.colorScheme.primary
+            ) {
+                Text(
+                    text = "+$hiddenCount",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                )
+            }
+        }
+    }
+}
+
+/** Portada mini de un ítem de la mesa (individual o pareja BP+RP). */
+@Composable
+private fun MiniItemCover(
+    item: AddonDisplayItem,
+    modifier: Modifier = Modifier
+) {
+    val coverPath = when (item) {
+        is AddonDisplayItem.Single -> item.addon.iconPath
+        is AddonDisplayItem.Pair -> item.bp.iconPath ?: item.rp.iconPath
+    }
+    val label = when (item) {
+        is AddonDisplayItem.Single -> item.addon.name
+        is AddonDisplayItem.Pair -> item.pairKey
+    }
+
+    if (coverPath != null) {
+        CachedAsyncImage(
+            model = File(coverPath),
+            contentDescription = label,
+            modifier = modifier.clip(RoundedCornerShape(4.dp)),
+            contentScale = ContentScale.Crop
+        )
+    } else {
+        Box(
+            modifier = modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label.take(1).uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
+    }
+}
+
+/** Dos rayitas verticales: el asa de arrastre del menú de orden. */
+@Composable
+private fun DragBars(modifier: Modifier = Modifier, active: Boolean = false) {
+    val color = if (active) MaterialTheme.colorScheme.primary
+    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(2) {
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .height(18.dp)
+                    .background(color, RoundedCornerShape(1.dp))
+            )
+        }
+    }
+}
+
+/**
+ * Menú contextual que aparece al tocar la 9.ª casilla cuando la mesa tiene más
+ * de 9 ítems.
+ *
+ * Muestra TODOS los ítems en orden con su portada; a la izquierda de cada uno
+ * hay dos rayitas que, manteniéndolas presionadas y deslizando arriba/abajo,
+ * reordenan el ítem al instante (la mesa se redibuja en el mismo fotograma).
+ * Se cierra con la X de la esquina o tocando fuera del cuadro.
+ */
+@Composable
+private fun CraftingOverflowModal(
+    displayItems: List<AddonDisplayItem>,
+    onDismiss: () -> Unit,
+    onMove: (index: Int, direction: Int) -> Unit
+) {
+    val haptics = rememberExpressiveHaptics()
+    val rowHeight = 56.dp
+    val rowHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) { rowHeight.toPx() }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.94f)
+                .padding(vertical = 24.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            shadowElevation = 12.dp
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                // ── Cabecera con la X ──────────────────────────
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Orden de la mesa",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "${displayItems.size} addons · mantén las rayitas y desliza",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cerrar",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // ── Lista reordenable ──────────────────────────
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 380.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    itemsIndexed(
+                        items = displayItems,
+                        key = { _, item -> displayItemKey(item) }
+                    ) { index, item ->
+                        ReorderableRow(
+                            item = item,
+                            index = index,
+                            total = displayItems.size,
+                            rowHeight = rowHeight,
+                            rowHeightPx = rowHeightPx,
+                            onMove = { direction ->
+                                if (index + direction in displayItems.indices) {
+                                    haptics.light()
+                                    onMove(index, direction)
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun displayItemKey(item: AddonDisplayItem): String = when (item) {
+    is AddonDisplayItem.Single -> item.addon.id
+    is AddonDisplayItem.Pair -> "pair_${item.pairKey}"
+}
+
+/**
+ * Fila del menú de orden.
+ *
+ * Arrastre: `detectDragGesturesAfterLongPress` sobre las rayitas. Cada vez que
+ * el desplazamiento supera media fila se mueve un puesto y se reinicia el
+ * acumulador, así el reordenamiento se siente continuo.
+ */
+@Composable
+private fun ReorderableRow(
+    item: AddonDisplayItem,
+    index: Int,
+    total: Int,
+    rowHeight: androidx.compose.ui.unit.Dp,
+    rowHeightPx: Float,
+    onMove: (direction: Int) -> Unit
+) {
+    var dragAccum by remember { mutableStateOf(0f) }
+    var isDragging by remember { mutableStateOf(false) }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(rowHeight)
+            .graphicsLayer {
+                translationY = if (isDragging) dragAccum * 0.35f else 0f
+                alpha = if (isDragging) 0.85f else 1f
+            },
+        shape = RoundedCornerShape(12.dp),
+        color = if (isDragging) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Asa de arrastre: dos rayitas verticales.
+            Box(
+                modifier = Modifier
+                    .size(width = 32.dp, height = 44.dp)
+                    .pointerInput(displayItemKey(item)) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = {
+                                isDragging = true
+                                dragAccum = 0f
+                            },
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                dragAccum += dragAmount.y
+                                val threshold = rowHeightPx * 0.55f
+                                if (dragAccum <= -threshold) {
+                                    onMove(-1)
+                                    dragAccum = 0f
+                                } else if (dragAccum >= threshold) {
+                                    onMove(1)
+                                    dragAccum = 0f
+                                }
+                            },
+                            onDragEnd = {
+                                isDragging = false
+                                dragAccum = 0f
+                            },
+                            onDragCancel = {
+                                isDragging = false
+                                dragAccum = 0f
+                            }
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                DragBars(active = isDragging)
+            }
+
+            Text(
+                text = "${index + 1}",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.width(20.dp)
+            )
+
+            MiniItemCover(
+                item = item,
+                modifier = Modifier.size(36.dp)
+            )
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = when (item) {
+                        is AddonDisplayItem.Single -> item.addon.name
+                        is AddonDisplayItem.Pair -> item.pairKey.replaceFirstChar { it.uppercase() }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = when (item) {
+                        is AddonDisplayItem.Single -> item.addon.type.displayName
+                        is AddonDisplayItem.Pair -> "BP + RP"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            // Alternativa accesible al arrastre (y útil en pantallas pequeñas).
+            IconButton(
+                onClick = { onMove(-1) },
+                enabled = index > 0,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowUp,
+                    contentDescription = "Subir",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(
+                onClick = { onMove(1) },
+                enabled = index < total - 1,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = "Bajar",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }

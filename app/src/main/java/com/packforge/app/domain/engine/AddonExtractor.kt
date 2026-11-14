@@ -1,5 +1,6 @@
 package com.packforge.app.domain.engine
 
+import com.packforge.app.util.MinecraftTextSanitizer
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.util.logFile
 import org.json.JSONObject
@@ -18,10 +19,10 @@ object AddonExtractor {
     // ── LÍMITES DE SEGURIDAD AL DESCOMPRIMIR ─────────────────────────
     /** Máximo de entradas (archivos/carpetas) permitidas en un ZIP. */
     private const val MAX_ZIP_ENTRIES = 1_000_000
-    /** Tamaño máximo por archivo extraído (50 MB). */
-    private const val MAX_ENTRY_SIZE = 50L * 1024 * 1024
-    /** Tamaño total máximo acumulado de la extracción (200 MB). */
-    private const val MAX_TOTAL_SIZE = 200L * 1024 * 1024
+    /** Tamaño máximo por archivo extraído (500 MB). Soporta addons de hasta 180 MB. */
+    private const val MAX_ENTRY_SIZE = 500L * 1024 * 1024
+    /** Tamaño total máximo acumulado de la extracción (2 GB / 2000 MB). */
+    private const val MAX_TOTAL_SIZE = 2000L * 1024 * 1024
 
     val CRITICAL_PATTERNS = listOf(
         "manifest.json", "terrain_texture.json", "item_texture.json",
@@ -58,9 +59,27 @@ object AddonExtractor {
     sealed class AddonClassification {
         object BEHAVIOR_PACK : AddonClassification()
         object RESOURCE_PACK : AddonClassification()
+        /**
+         * Addon que trae Behavior Pack y Resource Pack.
+         *
+         * ⭐ [bpFolders]/[rpFolders] existen porque un addon puede traer **más de
+         * un** BP o RP. Caso real medido (`Origins-BE.mcaddon`): tres manifests →
+         * `OriginsBE v1.5.6 BP` (1.855 archivos: 1.534 functions, 171 entities,
+         * 89 scripts, 43 structures), `OriginsBE v1.5.6 RP` y
+         * `Origins Craftable Orb of Origin Bev` (6 archivos).
+         *
+         * La versión anterior guardaba SOLO el primer BP encontrado, así que en
+         * ese addon el BP grande se perdía **entero**: el modpack fusionado salía
+         * sin sus entidades, funciones ni scripts, sin ningún aviso.
+         *
+         * [bpSubfolder]/[rpSubfolder] se mantienen como "el primero" para no
+         * romper a quien solo consulte uno de los dos.
+         */
         data class BOTH(
             val bpSubfolder: File,
-            val rpSubfolder: File
+            val rpSubfolder: File,
+            val bpFolders: List<File> = listOf(bpSubfolder),
+            val rpFolders: List<File> = listOf(rpSubfolder)
         ) : AddonClassification()
         /** Varios packs anidados (.mcpack/.zip dentro del addon). Cada uno se clasifica por separado. */
         data class MULTI(
@@ -131,7 +150,8 @@ object AddonExtractor {
                         if (!entry.isDirectory) {
                             if (shouldExtractToDisk(entry.name)) {
                                 // 3) Límite por archivo según el tamaño declarado en la cabecera ZIP.
-                                if (entry.size > maxEntrySize) {
+                                // Ignora -1L y 0xFFFFFFFFL (comunes en Zip64 / Data Descriptor en Android para archivos grandes > 25MB)
+                                if (entry.size > 0L && entry.size != 0xFFFFFFFFL && entry.size > maxEntrySize) {
                                     throw IllegalStateException("Archivo demasiado grande en ZIP: ${entry.name} (${entry.size} bytes)")
                                 }
 
@@ -171,6 +191,19 @@ object AddonExtractor {
             }
 
             PackForgeLog.d(TAG, "Extracción completada en: $destinationPath")
+
+            // ⭐ FASE 5 (fix real): un archivo que NO es un ZIP no lanza excepción:
+            // ZipInputStream simplemente no devuelve ninguna entrada. Antes se
+            // devolvía la ruta igualmente, así que el orquestador daba la
+            // extracción por buena, seguía con una carpeta VACÍA y el reporte
+            // acababa diciendo "fusión completada" sobre un addon que jamás se
+            // pudo leer. Ahora, cero entradas = fallo explícito.
+            if (entryCount == 0) {
+                cleanupExtractedFolder(destinationPath)
+                PackForgeLog.e(TAG, "❌ El archivo no es un ZIP válido o está vacío: $sourcePath")
+                return null
+            }
+
             return destinationPath
 
         } catch (e: SecurityException) {
@@ -353,36 +386,99 @@ object AddonExtractor {
                     PackForgeLog.d("PackForge_Classify", "  ✅ Extraído: ${zip.name}")
                 }
             }
-            return AddonClassification.MULTI(packs)
+
+            // ⚠️ Además de los packs anidados hay que conservar las carpetas
+            // PROPIAS del addon (bp/, rp/). Antes se retornaba solo `packs`, así
+            // que un .mcaddon con sus carpetas Y un .mcpack dentro perdía TODO
+            // su contenido externo: sin Behavior Pack, sin texturas y sin
+            // modelos. Es un patrón muy común (el .mcaddon actúa de contenedor).
+            val ownFolders = dir.listFiles()
+                ?.filter { folder ->
+                    folder.isDirectory &&
+                        !folder.name.startsWith("nested_") &&
+                        File(folder, "manifest.json").exists()
+                }
+                .orEmpty()
+
+            return AddonClassification.MULTI(
+                if (ownFolders.isEmpty()) packs else ownFolders + packs
+            )
         }
 
-        // CASO 3: subcarpetas con manifest.json (Corecraft, Lost Mobs) → clasificar CADA UNA por contenido
-        val subManifests = dir.listFiles()
-            ?.filter { it.isDirectory && File(it, "manifest.json").exists() }
-            ?: emptyList()
+        // CASO 3: Búsqueda profunda de manifiesta (subcarpetas inmediatas o envueltas)
+        val allManifests = DirIndexCache.index(dir).allFiles
+            .filter { it.name.equals("manifest.json", ignoreCase = true) }
 
-        if (subManifests.size >= 2) {
-            var bpFolder: File? = null
-            var rpFolder: File? = null
+        if (allManifests.size >= 2) {
+            // ⭐ Se recogen TODOS los BP y RP, no solo el primero.
+            //
+            // Antes: `if (bpFolder == null) bpFolder = parent`. Un addon con dos
+            // Behavior Packs (caso real `Origins-BE`: el de 1.855 archivos y el
+            // "Craftable Orb" de 6) conservaba el que apareciera primero en el
+            // recorrido y DESCARTABA el otro sin ningún aviso, así que el modpack
+            // salía sin entidades ni funciones.
+            val bpFolders = mutableListOf<File>()
+            val rpFolders = mutableListOf<File>()
 
-            subManifests.forEach { folder ->
-                when (classifyByManifestContent(File(folder, "manifest.json"))) {
-                    is AddonClassification.BEHAVIOR_PACK -> bpFolder = folder
-                    is AddonClassification.RESOURCE_PACK -> rpFolder = folder
+            fun agregar(lista: MutableList<File>, carpeta: File) {
+                if (lista.none { it.absolutePath == carpeta.absolutePath }) lista.add(carpeta)
+            }
+
+            allManifests.forEach { manifestFile ->
+                val parent = manifestFile.parentFile ?: dir
+                when (classifyByManifestContent(manifestFile)) {
+                    is AddonClassification.BEHAVIOR_PACK -> agregar(bpFolders, parent)
+                    is AddonClassification.RESOURCE_PACK -> agregar(rpFolders, parent)
+                    is AddonClassification.BOTH -> {
+                        agregar(bpFolders, parent)
+                        agregar(rpFolders, parent)
+                    }
                     else -> {}
                 }
             }
 
-            if (bpFolder != null && rpFolder != null) {
+            if (bpFolders.isNotEmpty() && rpFolders.isNotEmpty()) {
                 PackForgeLog.d("PackForge_Classify", "🔀 BOTH detectado por contenido:")
-                PackForgeLog.d("PackForge_Classify", "   BP: ${bpFolder.name}")
-                PackForgeLog.d("PackForge_Classify", "   RP: ${rpFolder.name}")
-                return AddonClassification.BOTH(bpFolder, rpFolder)
+                bpFolders.forEach { PackForgeLog.d("PackForge_Classify", "   BP: ${it.name}") }
+                rpFolders.forEach { PackForgeLog.d("PackForge_Classify", "   RP: ${it.name}") }
+                return AddonClassification.BOTH(
+                    bpFolders.first(), rpFolders.first(), bpFolders, rpFolders
+                )
+            } else if (bpFolders.isNotEmpty()) {
+                return AddonClassification.BEHAVIOR_PACK
+            } else if (rpFolders.isNotEmpty()) {
+                return AddonClassification.RESOURCE_PACK
             }
         }
 
-        if (subManifests.size == 1) {
-            return classifyByManifestContent(File(subManifests[0], "manifest.json"))
+        if (allManifests.size == 1) {
+            val res = classifyByManifestContent(allManifests[0])
+            if (res !is AddonClassification.UNKNOWN) return res
+        }
+
+        // FALLBACK POR ESTRUCTURA DE ARCHIVOS DE LA CARPETA
+        val allFiles = DirIndexCache.index(dir).allFiles
+        val lowerPaths = allFiles.map { it.relativeTo(dir).path.replace("\\", "/").lowercase() }
+        val hasBp = lowerPaths.any {
+            it.contains("items/") || it.contains("entities/") || it.contains("recipes/") ||
+            it.contains("loot_tables/") || it.contains("functions/") || it.contains("scripts/") ||
+            it.contains("blocks/")
+        }
+        val hasRp = lowerPaths.any {
+            it.contains("textures/") || it.contains("models/") || it.contains("sounds/") ||
+            it.contains("entity/") || it.contains("render_controllers/") || it.contains("particles/") ||
+            it.contains("animation_controllers/") || it.contains("font/") || it.contains("ui/")
+        }
+
+        if (hasBp && hasRp) {
+            PackForgeLog.d("PackForge_Classify", "🔀 BOTH detectado por archivos de estructura en: ${dir.name}")
+            return AddonClassification.BOTH(dir, dir)
+        } else if (hasBp) {
+            PackForgeLog.d("PackForge_Classify", "🔵 BP detectado por archivos de estructura en: ${dir.name}")
+            return AddonClassification.BEHAVIOR_PACK
+        } else if (hasRp) {
+            PackForgeLog.d("PackForge_Classify", "🟢 RP detectado por archivos de estructura en: ${dir.name}")
+            return AddonClassification.RESOURCE_PACK
         }
 
         PackForgeLog.w("PackForge_Classify", "⚠️ Sin clasificación: ${dir.name}")
@@ -393,25 +489,32 @@ object AddonExtractor {
      * ⭐ LA CLAVE: clasificar por CONTENIDO del manifest, no por nombre ⭐
      * Lee modules[].type: "data" → BEHAVIOR_PACK, "resources"/"resource" → RESOURCE_PACK.
      * Funciona con CUALQUIER nombre de carpeta y con TODAS las versiones del manifest
-     * (format_version 0/1 usa "resource" en singular; format_version 2/3 usa "resources").
+     * (format_version 0/1 usa "resource" en singular; format_version 2/3 usa "resources";
+     * soporta también "script", "client_data", "interface", "javascript", "world_template").
      */
     fun classifyByManifestContent(manifestFile: File): AddonClassification {
         return try {
             val json = JSONObject(manifestFile.readText(Charsets.UTF_8))
             val modules = json.optJSONArray("modules") ?: return AddonClassification.UNKNOWN
+            var hasBp = false
+            var hasRp = false
+
             for (i in 0 until modules.length()) {
-                when (modules.getJSONObject(i).optString("type")) {
-                    "data" -> {
-                        PackForgeLog.d("PackForge_Classify", "🔵 BP por contenido: ${manifestFile.parentFile?.name}")
-                        return AddonClassification.BEHAVIOR_PACK
-                    }
-                    "resources", "resource" -> {
-                        PackForgeLog.d("PackForge_Classify", "🟢 RP por contenido: ${manifestFile.parentFile?.name}")
-                        return AddonClassification.RESOURCE_PACK
-                    }
+                val mod = modules.optJSONObject(i) ?: continue
+                val type = mod.optString("type", "").lowercase()
+                when (type) {
+                    "data", "script", "javascript", "world_template" -> hasBp = true
+                    "resources", "resource", "client_data", "interface", "textures" -> hasRp = true
                 }
             }
-            AddonClassification.UNKNOWN
+
+            val parent = manifestFile.parentFile ?: manifestFile
+            when {
+                hasBp && hasRp -> AddonClassification.BOTH(parent, parent)
+                hasBp -> AddonClassification.BEHAVIOR_PACK
+                hasRp -> AddonClassification.RESOURCE_PACK
+                else -> AddonClassification.UNKNOWN
+            }
         } catch (e: Exception) {
             PackForgeLog.e("PackForge_Classify", "❌ Error leyendo manifest: ${e.message}")
             AddonClassification.UNKNOWN
@@ -422,11 +525,32 @@ object AddonExtractor {
      * Raíz real de un pack anidado: la carpeta que contiene manifest.json.
      * Si el manifest está en la raíz de `dir`, se devuelve `dir` mismo.
      * ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
+     *
+     * @param tipoEsperado si se indica "data" o "resources", se elige la carpeta
+     *   cuyo manifest declare ese módulo. Necesario en .mcaddon que traen
+     *   `BP_x/manifest.json` y `RP_x/manifest.json`: devolver el PRIMERO (que la
+     *   API entrega como el BP) hacía que el pipeline tratase el Behavior Pack
+     *   como Resource Pack, buscando `models/` y `textures/` donde no están.
      */
-    fun resolvePackRoot(dir: File): File {
-        val manifest = DirIndexCache.index(dir).allFiles
-            .firstOrNull { it.name.equals("manifest.json", ignoreCase = true) }
-        return manifest?.parentFile ?: dir
+    fun resolvePackRoot(dir: File, tipoEsperado: String? = null): File {
+        val manifests = DirIndexCache.index(dir).allFiles
+            .filter { it.name.equals("manifest.json", ignoreCase = true) }
+
+        if (manifests.isEmpty()) return dir
+
+        // Sin tipo pedido: comportamiento histórico (primer manifest hallado).
+        if (tipoEsperado == null) return manifests.first().parentFile ?: dir
+
+        // Con tipo pedido: preferir el manifest que declare ese módulo.
+        val porTipo = manifests.firstOrNull { m ->
+            val modulos = runCatching {
+                JSONObject(m.readText(Charsets.UTF_8)).optJSONArray("modules")
+            }.getOrNull() ?: return@firstOrNull false
+            (0 until modulos.length()).any { i ->
+                modulos.optJSONObject(i)?.optString("type") == tipoEsperado
+            }
+        }
+        return (porTipo ?: manifests.first()).parentFile ?: dir
     }
 
     /**
@@ -520,41 +644,112 @@ object AddonExtractor {
     }
 
     /**
+     * Lee y parsea un archivo .lang de Minecraft, devolviendo clave -> valor.
+     * Soporta UTF-8, UTF-16LE/BE con BOM y comentarios (#).
+     */
+    fun parseLangFile(file: File): Map<String, String> {
+        val translations = mutableMapOf<String, String>()
+        try {
+            if (!file.exists() || !file.isFile) return translations
+            val bytes = file.readBytes()
+            val text = when {
+                bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() -> String(bytes, 2, bytes.size - 2, Charsets.UTF_16LE)
+                bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte() -> String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+                bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte() -> String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+                else -> String(bytes, Charsets.UTF_8)
+            }
+            text.lines().forEach { rawLine ->
+                val line = rawLine.substringBefore('#').trim()
+                if (line.isNotBlank()) {
+                    val parts = line.split("=", limit = 2)
+                    if (parts.size == 2) {
+                        val key = parts[0].trim().removePrefix("%").lowercase()
+                        val value = parts[1].trim()
+                        if (key.isNotBlank() && value.isNotBlank()) {
+                            translations[key] = value
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return translations
+    }
+
+    /**
+     * Busca todos los archivos .lang dentro de extractedDir (en texts/, RP/texts/, BP/texts/, subcarpetas)
+     * y extrae el mapa consolidado de traducciones.
+     */
+    fun resolveLangTranslations(extractedDir: File): Map<String, String> {
+        val result = mutableMapOf<String, String>()
+        try {
+            DirIndexCache.invalidate(extractedDir)
+            val langFiles = DirIndexCache.index(extractedDir).allFiles
+                .filter { it.extension.equals("lang", ignoreCase = true) }
+
+            // Priorizar en_US, es_ES, es_MX si existen
+            val sortedFiles = langFiles.sortedByDescending { file ->
+                val name = file.nameWithoutExtension.lowercase()
+                when {
+                    name == "en_us" -> 3
+                    name.startsWith("es_") -> 2
+                    name.startsWith("en_") -> 1
+                    else -> 0
+                }
+            }
+
+            sortedFiles.forEach { file ->
+                val parsed = parseLangFile(file)
+                parsed.forEach { (k, v) ->
+                    if (!result.containsKey(k)) {
+                        result[k] = v
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return result
+    }
+
+    /**
      * ⭐ RESOLUCIÓN UNIVERSAL de nombre + tipo buscando en 3 niveles ⭐
      *
      * NIVEL 1: manifest.json en la raíz
      * NIVEL 2: manifest.json en subcarpetas (BP_xxx/, RP_xxx/)
      * NIVEL 3: manifest.json DENTRO de .mcpack/.zip anidados (leer SIN extraer)
      *
-     * FALLBACK del nombre: NUNCA "desconocido" → usa el nombre del archivo original.
+     * FALLBACK del nombre: NUNCA "desconocido" / "pack.name" → resuelve desde .lang o nombre de archivo.
      */
     fun resolveAddonInfo(extractedDir: File, originalFile: File): AddonInfo {
-        var name: String? = null
+        var rawName: String? = null
+        var description: String? = null
 
         // ── NIVEL 1: manifest.json en la raíz ──
         val rootManifest = File(extractedDir, "manifest.json")
         if (rootManifest.exists()) {
             try {
                 val json = JSONObject(rootManifest.readText(Charsets.UTF_8))
-                name = json.optJSONObject("header")?.optString("name")
-                    ?.takeIf { it.isNotBlank() }
-                PackForgeLog.d("PackForge_Info", "  Nivel 1 (raíz): name=$name")
+                json.optJSONObject("header")?.let { h ->
+                    rawName = h.optString("name").takeIf { it.isNotBlank() }
+                    description = h.optString("description").takeIf { it.isNotBlank() }
+                }
+                PackForgeLog.d("PackForge_Info", "  Nivel 1 (raíz): rawName=$rawName")
             } catch (e: Exception) {
                 PackForgeLog.w("PackForge_Info", "  Nivel 1: manifest inválido: ${e.message}")
             }
         }
 
         // ── NIVEL 2: manifest.json en subcarpetas (BP_xxx, RP_xxx) ──
-        if (name.isNullOrBlank()) {
+        if (rawName.isNullOrBlank()) {
             extractedDir.listFiles()?.filter { it.isDirectory }?.forEach { sub ->
-                if (name.isNullOrBlank()) {
+                if (rawName.isNullOrBlank()) {
                     val m = File(sub, "manifest.json")
                     if (m.exists()) {
                         try {
                             val json = JSONObject(m.readText(Charsets.UTF_8))
-                            name = json.optJSONObject("header")?.optString("name")
-                                ?.takeIf { it.isNotBlank() }
-                            PackForgeLog.d("PackForge_Info", "  Nivel 2 (sub ${sub.name}): name=$name")
+                            json.optJSONObject("header")?.let { h ->
+                                rawName = h.optString("name").takeIf { it.isNotBlank() }
+                                description = h.optString("description").takeIf { it.isNotBlank() }
+                            }
+                            PackForgeLog.d("PackForge_Info", "  Nivel 2 (sub ${sub.name}): rawName=$rawName")
                         } catch (e: Exception) {
                             PackForgeLog.w("PackForge_Info", "  Nivel 2: manifest inválido en ${sub.name}: ${e.message}")
                         }
@@ -564,13 +759,7 @@ object AddonExtractor {
         }
 
         // ── NIVEL 3: manifest.json DENTRO de .mcpack/.zip anidados ──
-        if (name.isNullOrBlank()) {
-            // ⭐ DirIndexCache en lugar de walkTopDown().
-            // Se invalida ANTES de indexar: `classify()` acaba de extraer los
-            // .mcpack anidados a subcarpetas `nested_*`, y el índice cacheado de
-            // este directorio no los conoce todavía. Sin invalidar, los ZIPs
-            // anidados no aparecían en la lista, el nombre no se resolvía y sus
-            // iconos nunca se encontraban (el caso del modpack "Mini/Pack").
+        if (rawName.isNullOrBlank()) {
             DirIndexCache.invalidate(extractedDir)
             val nestedZips = DirIndexCache.index(extractedDir).allFiles
                 .filter {
@@ -579,21 +768,109 @@ object AddonExtractor {
                 }
             
             nestedZips.forEach { nested ->
-                if (name.isNullOrBlank()) {
+                if (rawName.isNullOrBlank()) {
                     val manifest = readManifestFromZip(nested)
-                    name = manifest?.optJSONObject("header")?.optString("name")
-                        ?.takeIf { it.isNotBlank() }
-                    PackForgeLog.d("PackForge_Info", "  Nivel 3 (ZIP ${nested.name}): name=$name")
+                    manifest?.optJSONObject("header")?.let { h ->
+                        rawName = h.optString("name").takeIf { it.isNotBlank() }
+                        description = h.optString("description").takeIf { it.isNotBlank() }
+                    }
+                    PackForgeLog.d("PackForge_Info", "  Nivel 3 (ZIP ${nested.name}): rawName=$rawName")
                 }
             }
         }
 
-        // ── FALLBACK: NUNCA "desconocido" ──
-        val finalName = if (name.isNullOrBlank()) {
-            PackForgeLog.d("PackForge_Info", "  Fallback: usando nombre del archivo: ${originalFile.nameWithoutExtension}")
-            originalFile.nameWithoutExtension
+        // ── TRADUCCIÓN DESDE .LANG Y SANITIZACIÓN DE CÓDIGOS § ──
+        val translations = resolveLangTranslations(extractedDir)
+
+        var resolvedName: String? = null
+
+        // 1. Si rawName es una clave de traducción (p. ej. "pack.name", "%pack.name"), buscar en .lang
+        if (!rawName.isNullOrBlank()) {
+            val key = rawName.trim().removePrefix("%").lowercase()
+            val translated = translations[key]
+            if (!translated.isNullOrBlank()) {
+                resolvedName = MinecraftTextSanitizer.clean(translated)
+            } else if (!MinecraftTextSanitizer.isTranslationKey(rawName)) {
+                resolvedName = MinecraftTextSanitizer.clean(rawName)
+            }
+        }
+
+        // 2. Si sigue sin resolverse, buscar claves estándar en .lang: pack.name, pack.name.rp, pack.name.bp, tile.pack.name
+        if (resolvedName.isNullOrBlank() || MinecraftTextSanitizer.isTranslationKey(resolvedName)) {
+            val fallbackKeys = listOf("pack.name", "pack.name.rp", "pack.name.bp", "tile.pack.name")
+            for (fk in fallbackKeys) {
+                val valInLang = translations[fk]
+                if (!valInLang.isNullOrBlank() && !MinecraftTextSanitizer.isTranslationKey(valInLang)) {
+                    resolvedName = MinecraftTextSanitizer.clean(valInLang)
+                    if (resolvedName.isNotBlank()) break
+                }
+            }
+        }
+
+        // 3. Fallback por traducciones en .lang que no sean claves
+        if (resolvedName.isNullOrBlank() || MinecraftTextSanitizer.isTranslationKey(resolvedName)) {
+            val nonKeyTranslation = translations.values.firstOrNull {
+                it.isNotBlank() && !MinecraftTextSanitizer.isTranslationKey(it)
+            }
+            if (!nonKeyTranslation.isNullOrBlank()) {
+                resolvedName = MinecraftTextSanitizer.clean(nonKeyTranslation)
+            }
+        }
+
+        // 4. Fallback por nombre de subcarpetas en extractedDir (ej: "MyAwesomePack_BP" -> "MyAwesomePack")
+        if (resolvedName.isNullOrBlank() || MinecraftTextSanitizer.isTranslationKey(resolvedName)) {
+            val subFolders = extractedDir.listFiles()?.filter { it.isDirectory }.orEmpty()
+            for (sub in subFolders) {
+                val cleanSub = sub.name
+                    .replace(Regex("(?i)_?(bp|rp|behavior|resource|packs?)$"), "")
+                    .replace('_', ' ')
+                    .replace('-', ' ')
+                    .trim()
+                if (cleanSub.isNotBlank() && !MinecraftTextSanitizer.isTranslationKey(cleanSub)) {
+                    resolvedName = MinecraftTextSanitizer.clean(cleanSub)
+                    break
+                }
+            }
+        }
+
+        // 5. Fallback por la descripción del manifiesto si no es una clave
+        if ((resolvedName.isNullOrBlank() || MinecraftTextSanitizer.isTranslationKey(resolvedName)) && !description.isNullOrBlank()) {
+            val descKey = description.trim().removePrefix("%").lowercase()
+            val descTranslated = translations[descKey]
+            val descClean = if (!descTranslated.isNullOrBlank() && !MinecraftTextSanitizer.isTranslationKey(descTranslated)) {
+                MinecraftTextSanitizer.clean(descTranslated)
+            } else if (!MinecraftTextSanitizer.isTranslationKey(description)) {
+                MinecraftTextSanitizer.clean(description)
+            } else ""
+
+            if (descClean.isNotBlank()) {
+                resolvedName = descClean
+            }
+        }
+
+        // 6. Fallback final: nombre del archivo original limpio
+        val candidateName = if (resolvedName.isNullOrBlank() || MinecraftTextSanitizer.isTranslationKey(resolvedName)) {
+            val fileClean = originalFile.nameWithoutExtension
+                .replace(Regex("(?i)\\.(mcaddon|mcpack|zip)$"), "")
+                .replace(Regex("(?i)_?(bp|rp|behavior|resource|packs?)$"), "")
+                .replace('_', ' ')
+                .replace('-', ' ')
+                .trim()
+            val cleaned = MinecraftTextSanitizer.clean(fileClean)
+            if (cleaned.isNotBlank() && !MinecraftTextSanitizer.isTranslationKey(cleaned)) {
+                cleaned
+            } else {
+                originalFile.nameWithoutExtension
+            }
         } else {
-            name
+            resolvedName
+        }
+
+        val finalName = if (candidateName.isBlank() || MinecraftTextSanitizer.isTranslationKey(candidateName)) {
+            val safeFile = originalFile.nameWithoutExtension
+            if (!MinecraftTextSanitizer.isTranslationKey(safeFile)) safeFile else "Addon Sin Nombre"
+        } else {
+            candidateName
         }
 
         PackForgeLog.d("PackForge_Info", "📛 Addon: ${originalFile.name} → nombre resuelto: $finalName")

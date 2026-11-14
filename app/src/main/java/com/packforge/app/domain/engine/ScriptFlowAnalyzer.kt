@@ -25,6 +25,36 @@ import java.io.File
  */
 object ScriptFlowAnalyzer {
 
+    /**
+     * Caché del resultado de la puerta de export por el conjunto de rutas de
+     * Behavior Packs.
+     *
+     * `loadScriptsFromBPs` lee manifest.json y TODO el código .js/.ts de cada
+     * pack, y el análisis de flujos recorre importaciones y ciclos: para modpacks
+     * con varios addons es costoso. El resultado depende SOLO de las rutas de los
+     * packs, así que al desplazar la pantalla o al editar metadatos (nombre,
+     * versión, portada) no hay motivo para repetirlo.
+     *
+     * La clave es la firma del conjunto de packs (ruta ordenada + tamaño +
+     * fecha de modificación), así que activar un addon, quitarlo o actualizarlo
+     * cambia la clave y el análisis se recalcula solo. No hace falta invalidarlo
+     * a mano.
+     *
+     * Acotado a [MAX_GATE_CACHE_ENTRIES] por LRU: en `mutableMapOf` sin límite,
+     * abrir muchos modpacks distintos acumulaba una decisión por combinación de
+     * rutas y la memoria crecía durante toda la sesión.
+     */
+    private const val MAX_GATE_CACHE_ENTRIES = 8
+
+    private val scriptGateCache = object : LinkedHashMap<String, ScriptGateDecision>(
+        /* initialCapacity = */ MAX_GATE_CACHE_ENTRIES,
+        /* loadFactor = */ 0.75f,
+        /* accessOrder = */ true
+    ) {
+        override fun removeEldestEntry(eldest: Map.Entry<String, ScriptGateDecision>) =
+            size > MAX_GATE_CACHE_ENTRIES
+    }
+
     /** Resultado del análisis de un único script. */
     data class ScriptAnalysisResult(
         val scriptId: String,
@@ -104,6 +134,46 @@ object ScriptFlowAnalyzer {
     fun getGateDecision(
         bpDirs: List<String> = emptyList(),
         rpDirs: List<String> = emptyList()
+    ): ScriptGateDecision {
+        // La clave no puede ser solo la ruta: al ACTUALIZAR un addon el archivo
+        // se reemplaza en la MISMA ubicación, así que una clave por ruta
+        // devolvería la decisión del addon viejo (por ejemplo, seguiría avisando
+        // de un script roto que la actualización ya arregló).
+        //
+        // Se firma cada pack con su ruta + tamaño + fecha de modificación. Para
+        // los addons importados —que PackForge guarda como .mcpack/.mcaddon/.zip—
+        // es exacto. En una carpeta extraída, un reemplazo de contenido actualiza
+        // la fecha del directorio al recrear entradas, pero no si se reescribe un
+        // archivo hijo con el mismo nombre: para ese caso la puerta se recalcula
+        // igualmente al cambiar la lista de addons activos.
+        //
+        // El orden se normaliza porque `[A, B]` y `[B, A]` describen el MISMO
+        // conjunto de addons y deben compartir entrada de caché.
+        val key = bpDirs.sorted().joinToString(":") { path ->
+            val f = File(path)
+            "$path@${f.length()}#${f.lastModified()}"
+        }
+
+        // `LinkedHashMap` en modo acceso NO es seguro para varios hilos: se
+        // consulta desde `Dispatchers.IO` (el `produceState` de la pantalla de
+        // exportación) y desde el ViewModel. Toda lectura y escritura pasa por
+        // este candado para no corromper la lista de orden interno.
+        synchronized(scriptGateCache) {
+            scriptGateCache[key]?.let { return it }
+        }
+
+        val decision = computeGateDecision(bpDirs, rpDirs)
+
+        synchronized(scriptGateCache) {
+            scriptGateCache[key] = decision
+        }
+        return decision
+    }
+
+    /** Cálculo real de la puerta; separado para no retener el candado mientras lee los packs. */
+    private fun computeGateDecision(
+        bpDirs: List<String>,
+        rpDirs: List<String>
     ): ScriptGateDecision {
         val scripts = ScriptRegistry.loadScriptsFromBPs(bpDirs, rpDirs)
         if (scripts.isEmpty()) return ScriptGateDecision.safe()

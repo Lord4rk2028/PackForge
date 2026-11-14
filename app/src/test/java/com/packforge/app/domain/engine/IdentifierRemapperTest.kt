@@ -1,5 +1,6 @@
 package com.packforge.app.domain.engine
 
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -12,6 +13,18 @@ import java.nio.file.Files
 class IdentifierRemapperTest {
 
     private val tempRoots = mutableListOf<File>()
+
+    /**
+     * `IdentifierRemapper.run` pasó a ser `suspend` (su callback de progreso
+     * también), pero este test seguía invocándolo de forma directa, así que el
+     * módulo de tests no compilaba. Este envoltorio mantiene los tests como
+     * funciones normales de JUnit, que no admiten `suspend`.
+     */
+    private fun remap(
+        behaviorDirs: List<File>,
+        resourceDirs: List<File>
+    ): List<IdentifierRemapper.RemapEntry> =
+        runBlocking { IdentifierRemapper.run(behaviorDirs, resourceDirs) }
 
     @After
     fun tearDown() {
@@ -76,7 +89,7 @@ class IdentifierRemapperTest {
         langFile(dirA, "tools:sword")
         langFile(dirB, "tools:sword")
 
-        val report = IdentifierRemapper.run(listOf(dirA, dirB), emptyList())
+        val report = remap(listOf(dirA, dirB), emptyList())
 
         // El ganador (A) NO se toca...
         val fileA = File(dirA, "entities/sword.entity.json")
@@ -109,7 +122,7 @@ class IdentifierRemapperTest {
         entityFile(dirA, "tools:sword")
         entityFile(dirB, "tools:sword")
 
-        IdentifierRemapper.run(listOf(dirA, dirB), emptyList())
+        remap(listOf(dirA, dirB), emptyList())
 
         // Tras el renombre, B ya NO pisa la ruta de A en la fusión.
         val remainingB = dirB.walkTopDown()
@@ -130,7 +143,7 @@ class IdentifierRemapperTest {
         entityFile(dirA, "minecraft:sword")
         entityFile(dirB, "minecraft:sword")
 
-        val report = IdentifierRemapper.run(listOf(dirA, dirB), emptyList())
+        val report = remap(listOf(dirA, dirB), emptyList())
 
         assertTrue("Los ids vanilla no se renombran (evita romper la paridad)", report.isEmpty())
         assertTrue(File(dirA, "entities/sword.entity.json").readText().contains("minecraft:sword"))
@@ -147,7 +160,7 @@ class IdentifierRemapperTest {
         entityFile(bp, "tools:golem")
         clientEntity(rp, "tools:golem")
 
-        val report = IdentifierRemapper.run(listOf(bp), listOf(rp))
+        val report = remap(listOf(bp), listOf(rp))
 
         assertTrue("El BP y el RP del MISMO addon NO deben considerarse colisión", report.isEmpty())
         assertTrue(File(bp, "entities/sword.entity.json").readText().contains("tools:golem"))
@@ -163,7 +176,7 @@ class IdentifierRemapperTest {
         entityFile(dirB, "tools:tool")
         entityFile(dirC, "tools:tool")
 
-        val report = IdentifierRemapper.run(listOf(dirA, dirB, dirC), emptyList())
+        val report = remap(listOf(dirA, dirB, dirC), emptyList())
 
         assertEquals("Los dos perdedores se renombran", 2, report.size)
         assertEquals("Cada renombrado debe ser único", report.size, report.map { it.newId }.distinct().size)

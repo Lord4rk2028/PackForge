@@ -19,9 +19,9 @@ object ModpackExporter {
         } catch (e: Exception) { false }
     }
 
-    fun getMinecraftVersion(context: Context): String? {
+    fun getMinecraftVersion(context: Context?): String? {
         return try {
-            context.packageManager.getPackageInfo(MINECRAFT_PACKAGE, 0).versionName
+            context?.packageManager?.getPackageInfo(MINECRAFT_PACKAGE, 0)?.versionName
         } catch (e: Exception) { null }
     }
 

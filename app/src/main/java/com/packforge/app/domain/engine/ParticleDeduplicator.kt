@@ -99,10 +99,10 @@ object ParticleDeduplicator {
 
     /** Archivos de definición de partículas dentro de la raíz de un addon. */
     private fun particleDefinitionFiles(root: File): List<File> =
-        root.walkTopDown()
-            .filter { it.isFile && it.extension.equals("json", true) }
+        // ⭐ OPTIMIZACIÓN FASE 2: DirIndexCache en lugar de walkTopDown().
+        // Una sola pasada por directorio, reutilizable por todos los componentes.
+        DirIndexCache.index(root).jsonFiles
             .filter { it.parentFile?.name.equals("particles", ignoreCase = true) }
-            .toList()
 
     /**
      * Reescribe las referencias a [oldIdentifier] SOLO dentro de [root].
@@ -113,24 +113,23 @@ object ParticleDeduplicator {
      */
     private fun rewriteReferencesWithin(root: File, oldIdentifier: String, newIdentifier: String) {
         val needle = "\"$oldIdentifier\""
-        root.walkTopDown()
-            .filter { it.isFile && it.extension.equals("json", true) }
-            .forEach { file ->
-                try {
-                    val text = file.readText(Charsets.UTF_8)
-                    if (!text.contains(needle)) return@forEach
+        // ⭐ OPTIMIZACIÓN FASE 2: DirIndexCache en lugar de walkTopDown().
+        DirIndexCache.index(root).jsonFiles.forEach { file ->
+            try {
+                val text = file.readText(Charsets.UTF_8)
+                if (!text.contains(needle)) return@forEach
 
-                    val json = JSONObject(text)
-                    if (json.has("particle_effect")) return@forEach
+                val json = JSONObject(text)
+                if (json.has("particle_effect")) return@forEach
 
-                    val probe = JSONObject(json.toString())
-                    ResourcePathRegistry.applyRenames(probe, mapOf(oldIdentifier to newIdentifier))
-                    writeJson(file, probe)
-                    PackForgeLog.d(TAG, "  ↪ referencia actualizada en ${file.name}")
-                } catch (_: Exception) {
-                    // Un JSON ilegible no debe abortar la desambiguación.
-                }
+                val probe = JSONObject(json.toString())
+                ResourcePathRegistry.applyRenames(probe, mapOf(oldIdentifier to newIdentifier))
+                writeJson(file, probe)
+                PackForgeLog.d(TAG, "  ↪ referencia actualizada en ${file.name}")
+            } catch (_: Exception) {
+                // Un JSON ilegible no debe abortar la desambiguación.
             }
+        }
     }
 
     private fun writeJson(file: File, json: JSONObject) {

@@ -40,9 +40,27 @@ object BedrockComponentMerger {
     private fun mergeComponentObjects(base: JSONObject, merge: JSONObject): JSONObject {
         val result = JSONObject(base.toString())
         merge.keys().forEach { key ->
-            result.put(key, merge.get(key)) // Sobrescribir propiedades internas o fusionar si fuera necesario
+            val baseVal = result.opt(key)
+            val mergeVal = merge.get(key)
+            result.put(key, deepMergeValues(baseVal, mergeVal))
         }
         return result
+    }
+
+    /**
+     * Deep merge recursivo de dos valores JSON.
+     * - JSONObject + JSONObject  → fusiona recursivamente (ambos sobreviven)
+     * - JSONArray   + JSONArray   → combina evitando duplicados
+     * - Cualquier otra combinación → el valor de [merge] gana (sobreescritura)
+     */
+    private fun deepMergeValues(base: Any?, merge: Any?): Any? {
+        if (base == null) return merge
+        if (merge == null) return base
+        return when {
+            base is JSONObject && merge is JSONObject -> mergeComponentObjects(base, merge)
+            base is JSONArray && merge is JSONArray -> mergeComponentArrays(base, merge)
+            else -> merge
+        }
     }
 
     private fun mergeComponentArrays(base: JSONArray, merge: JSONArray): JSONArray {

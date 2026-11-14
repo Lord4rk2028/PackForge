@@ -10,19 +10,33 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.packforge.app.ui.theme.ColorContrast
+import kotlin.math.max
 
 /**
  * Helpers de accesibilidad para la app.
  */
 
 /**
- * Modificador para marcar un texto como encabezado (para TalkBack).
+ * Marca un texto como encabezado para TalkBack.
  */
-fun Modifier.headingLevel(@Suppress("UNUSED_PARAMETER") level: Int = 1): Modifier = this.semantics {
+fun Modifier.headingLevel(level: Int = 1): Modifier = this.semantics {
+    // Usamos el flag booleano de encabezado estándar de Compose.
+    // Aunque no soporte nivel explícito en esta versión, TalkBack
+    // lo anunciará correctamente como un punto de navegación.
     heading()
 }
 
@@ -48,11 +62,12 @@ fun AccessibleContainer(
 }
 
 /**
- * Componente de carga accesible con descripción para TalkBack.
+ * Componente de carga accesible.
  */
 @Composable
 fun AccessibleLoading(
     message: String = "Cargando contenido",
+    progress: Float? = null,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -60,37 +75,35 @@ fun AccessibleLoading(
             .fillMaxSize()
             .padding(16.dp)
             .semantics {
-                contentDescription = "$message. Por favor espere."
+                liveRegion = LiveRegionMode.Polite
+                this.contentDescription = "$message. Por favor espere."
+                if (progress != null) {
+                    progressBarRangeInfo = ProgressBarRangeInfo(
+                        progress.coerceIn(0f, 1f),
+                        0f..1f
+                    )
+                }
             },
         contentAlignment = Alignment.Center
     ) {
         CircularProgressIndicator(
+            progress = { progress?.coerceIn(0f, 1f) ?: -1f },
             color = MaterialTheme.colorScheme.primary
         )
     }
 }
 
-/**
- * Verificación de contraste de color (WCAG AA).
- */
-fun isContrastAdequate(foreground: Color, background: Color): Boolean {
-    val luminance1 = foreground.luminance()
-    val luminance2 = background.luminance()
-    val ratio = if (luminance1 > luminance2) {
-        (luminance1 + 0.05) / (luminance2 + 0.05)
-    } else {
-        (luminance2 + 0.05) / (luminance1 + 0.05)
-    }
-    return ratio >= 4.5
-}
+// ─── Contraste WCAG ────────────────────────────────────────────────────────
 
-private fun Color.luminance(): Double {
-    return 0.299 * red + 0.587 * green + 0.114 * blue
-}
+fun contrastRatio(foreground: Color, background: Color): Double =
+    ColorContrast.ratio(foreground, background)
 
-/**
- * Texto accesible con contraste verificado.
- */
+fun isContrastAdequate(
+    foreground: Color,
+    background: Color,
+    minRatio: Double = ColorContrast.AA_NORMAL
+): Boolean = ColorContrast.passes(foreground, background, minRatio)
+
 @Composable
 fun AccessibleText(
     text: String,
@@ -99,11 +112,7 @@ fun AccessibleText(
     backgroundColor: Color = MaterialTheme.colorScheme.surface,
     fallbackColor: Color = MaterialTheme.colorScheme.onSurfaceVariant
 ) {
-    val finalColor = if (isContrastAdequate(color, backgroundColor)) {
-        color
-    } else {
-        fallbackColor
-    }
+    val finalColor = if (isContrastAdequate(color, backgroundColor)) color else fallbackColor
 
     Text(
         text = text,
@@ -111,3 +120,19 @@ fun AccessibleText(
         modifier = modifier
     )
 }
+
+// ─── Objetivos táctiles ────────────────────────────────────────────────────
+
+fun Modifier.expandTouchTarget(min: Dp = 48.dp): Modifier = this.then(
+    Modifier.layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        val minPx = min.roundToPx()
+        val targetWidth = max(placeable.width, minPx)
+        val targetHeight = max(placeable.height, minPx)
+        val x = (targetWidth - placeable.width) / 2
+        val y = (targetHeight - placeable.height) / 2
+        layout(targetWidth, targetHeight) {
+            placeable.placeRelative(x, y)
+        }
+    }
+)

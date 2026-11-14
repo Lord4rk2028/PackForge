@@ -37,7 +37,7 @@ Explora cada fase del flujo de PackForge a través de su interfaz en Jetpack Com
 > **Carga rápida y soporte multiformato:** Arrastra o selecciona archivos `.mcaddon`, `.mcpack` o `.zip` directamente desde el almacenamiento.
 
 <div align="center">
-  <img src="screenshots/01-import.jpg" width="300" alt="Pantalla Importar Addons" style="max-width: 85%; border-radius: 16px; border: 1px solid #333;" />
+  <img src="screenshots/01-import.jpg" width="300" alt="Pantalla Importar Addons" style="max-width: 85%; border-radius: 20px; border: 2px solid #4a90e2; background: #1e1e2f; padding: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);" />
 </div>
 
 - 📂 **Explorador integrado:** Compatible con SAF (*Storage Access Framework*) y exploradores de archivos externos.
@@ -49,7 +49,7 @@ Explora cada fase del flujo de PackForge a través de su interfaz en Jetpack Com
 > **Supervisión predictiva del modpack:** Organiza visualmente tus paquetes activos y mide su tasa de compatibilidad antes de fusionar.
 
 <div align="center">
-  <img src="screenshots/03-studio.jpg" width="300" alt="Mesa de Crafteo y Diagnóstico" style="max-width: 85%; border-radius: 16px; border: 1px solid #333;" />
+  <img src="screenshots/03-studio.jpg" width="300" alt="Mesa de Crafteo y Diagnóstico" style="max-width: 85%; border-radius: 20px; border: 2px solid #7dd3f3; background: #1e1e2f; padding: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);" />
 </div>
 
 - 🧱 **Mesa 3x3 Interactiva:** Visualiza las miniaturas y estados de hasta 9 addons activos a la vez.
@@ -61,7 +61,7 @@ Explora cada fase del flujo de PackForge a través de su interfaz en Jetpack Com
 > **Toma el control absoluto de las colisiones:** Elige estrategias automáticas o inspecciona recurso por recurso.
 
 <div align="center">
-  <img src="screenshots/02-conflicts.jpg" width="300" alt="Pantalla de Resolución de Conflictos" style="max-width: 85%; border-radius: 16px; border: 1px solid #333;" />
+  <img src="screenshots/02-conflicts.jpg" width="300" alt="Pantalla de Resolución de Conflictos" style="max-width: 85%; border-radius: 20px; border: 2px solid #f5a623; background: #1e1e2f; padding: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);" />
 </div>
 
 - 🎯 **Estrategias en un toque:** Alterna entre `Keep first`, `Keep last` o `Log and skip` para archivos no fusionables.
@@ -73,7 +73,7 @@ Explora cada fase del flujo de PackForge a través de su interfaz en Jetpack Com
 > **Tu taller, tu estilo:** Personaliza la estética de la app con colores dinámicos y temas inspirados en Minecraft.
 
 <div align="center">
-  <img src="screenshots/04-theme.jpg" width="300" alt="Selector de Tema y Paleta de Colores" style="max-width: 85%; border-radius: 16px; border: 1px solid #333;" />
+  <img src="screenshots/04-theme.jpg" width="300" alt="Selector de Tema y Paleta de Colores" style="max-width: 85%; border-radius: 20px; border: 2px solid #e84393; background: #1e1e2f; padding: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.5);" />
 </div>
 
 - 🎨 **Espectro HEX:** Selector cromático completo con soporte de copia y pegado de código hexadecimal.

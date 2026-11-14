@@ -54,24 +54,31 @@ fun LandscapeSiteSelector(
                 tint = MaterialTheme.colorScheme.onSurface
             )
         }
-        if (expanded) {
-            DropdownMenu(
-                expanded = expanded,
-                onDismissRequest = { expanded = false },
-                modifier = Modifier.width(180.dp)
-            ) {
-                sites.forEach { site ->
-                    DropdownMenuItem(
-                        text = { Text(text = site.displayName) },
-                        onClick = {
-                            if (site != currentSite) onSelect(site)
-                            expanded = false
-                        },
-                        trailingIcon = {
-                            if (site == currentSite) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.cd_selected), tint = MaterialTheme.colorScheme.primary)
-                        }
-                    )
-                }
+        // El menú se compone SIEMPRE y se controla con `expanded`.
+        //
+        // Antes se envolvía en `if (expanded) { DropdownMenu(expanded = true) }`:
+        // al pulsar fuera, `onDismissRequest` ponía `expanded = false` y el menú
+        // se desmontaba en el mismo fotograma, sin dar margen a la ventana de
+        // Android a retirarse. El patrón canónico de Material deja que el propio
+        // `DropdownMenu` gestione su visibilidad interna (incluida la animación
+        // de salida) a partir de `expanded`, y así no hay ventana huérfana —el
+        // otro camino por el que un menú "se queda trabado" en pantalla—.
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.width(180.dp)
+        ) {
+            sites.forEach { site ->
+                DropdownMenuItem(
+                    text = { Text(text = site.displayName) },
+                    onClick = {
+                        if (site != currentSite) onSelect(site)
+                        expanded = false
+                    },
+                    trailingIcon = {
+                        if (site == currentSite) Icon(Icons.Default.Check, contentDescription = stringResource(R.string.cd_selected), tint = MaterialTheme.colorScheme.primary)
+                    }
+                )
             }
         }
     }

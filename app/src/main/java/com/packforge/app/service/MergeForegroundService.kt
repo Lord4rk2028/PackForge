@@ -14,12 +14,17 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.google.gson.Gson
 import com.packforge.app.MainActivity
+import com.packforge.app.ui.navigation.Screen
 import com.packforge.app.R
 import com.packforge.app.data.PackForgeDatabase
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.SavedModpack
 import com.packforge.app.domain.model.withSafeLists
+import com.packforge.app.domain.engine.CompatibilitySummary
+import com.packforge.app.domain.engine.ConflictEngine
 import com.packforge.app.domain.engine.PackForgeOrchestrator
+import com.packforge.app.domain.engine.ResolutionApplier
+import com.packforge.app.domain.model.ConflictResolution
 import com.packforge.app.ui.viewmodel.ThemeAccent
 import com.packforge.app.util.PackForgeLog
 import kotlinx.coroutines.CoroutineScope
@@ -55,7 +60,9 @@ object MergeSession {
         /** "editor" (exportación normal, UI propia) | "library" (re-fusión con overlay). */
         val origin: String = "idle",
         /** Portada auto-seleccionada cuando el usuario no puso una */
-        val autoCoverPath: String? = null
+        val autoCoverPath: String? = null,
+        /** Veredicto de compatibilidad con semáforo, para la pantalla de éxito. */
+        val compatibility: CompatibilitySummary.Report? = null
     )
 
     private val _state = MutableStateFlow(State())
@@ -78,13 +85,15 @@ object MergeSession {
 
     internal fun finish(
         success: Boolean, message: String, fileName: String?, outputPath: String?,
-        reportPath: String?, regenerateId: String?, autoCoverPath: String? = null
+        reportPath: String?, regenerateId: String?, autoCoverPath: String? = null,
+        compatibility: CompatibilitySummary.Report? = null
     ) {
         _state.value = _state.value.copy(
             done = true, success = success, message = message,
             fileName = fileName, outputPath = outputPath,
             reportPath = reportPath, regenerateId = regenerateId,
-            autoCoverPath = autoCoverPath
+            autoCoverPath = autoCoverPath,
+            compatibility = compatibility
         )
     }
 }
@@ -110,15 +119,17 @@ class MergeForegroundService : Service() {
     private var activeMergeJob: Job? = null
     private var lastUpdateTime = mutableMapOf<Any?, Long>().withDefault { 0L }
     private var lastNotifiedPercent = 0
+    /** Cachea el acento UI para no releer prefs en cada actualización de progreso. */
+    @Volatile private var mergeAccentColor: Int = 0xFF2ECC71.toInt()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val accentColor = ThemeAccent.colorBlocking(this)
+        mergeAccentColor = ThemeAccent.colorBlocking(this)
         // Crear canal ANTES de cualquier notify/startForeground (evita crash API 26-27)
         ensureChannel()
         // Siempre recrear la notificación cuando se re-inicia el servicio
-        startForegroundCompat(buildNotification("Preparando fusión…", 0, true, accentColor))
+        startForegroundCompat(buildNotification("Preparando fusión…", 0, true, mergeAccentColor))
 
         when (intent?.action) {
             ACTION_CANCEL -> {
@@ -132,12 +143,12 @@ class MergeForegroundService : Service() {
                 lastNotifiedPercent = 0
                 val id = intent.getStringExtra(EXTRA_REGENERATE_ID)
                 activeMergeJob?.cancel()
-                activeMergeJob = scope.launch { runRegenerate(id, accentColor) }
+                activeMergeJob = scope.launch { runRegenerate(id, mergeAccentColor) }
             }
             else -> {
                 lastNotifiedPercent = 0
                 activeMergeJob?.cancel()
-                activeMergeJob = scope.launch { runExport(intent, accentColor) }
+                activeMergeJob = scope.launch { runExport(intent, mergeAccentColor) }
             }
         }
         return START_NOT_STICKY
@@ -231,9 +242,15 @@ class MergeForegroundService : Service() {
                 success = true, message = "¡Modpack fusionado con éxito!",
                 fileName = "$name.mcaddon", outputPath = visiblePath,
                 reportPath = reportPath, regenerateId = null,
-                autoCoverPath = result.autoCoverPath
+                autoCoverPath = result.autoCoverPath,
+                compatibility = result.compatibility
             )
-            notifyFinal(true, "Guardado en ${dest.whereLabel}. ${reportHint(reportPath, dest)}", accentColor)
+            notifyFinal(
+                true,
+                "Guardado en ${dest.whereLabel}. ${reportHint(reportPath, dest)}" +
+                    (result.compatibility?.let { " ${it.level.emoji} ${it.level.label}." } ?: ""),
+                accentColor
+            )
         } catch (e: CancellationException) {
             PackForgeLog.d(TAG, "Export cancelled")
             throw e
@@ -269,6 +286,42 @@ class MergeForegroundService : Service() {
             MergeSession.update("Re-fusionando '${row.name}' con el motor actual…", 5)
             PackForgeLog.d(TAG, "Regenerando '${row.name}' (${usable.size} addons)")
 
+            // ── MISMAS DECISIONES QUE EN LA EXPORTACIÓN ──
+            // "Regenerar" re-fusionaba con el orden por defecto, así que los
+            // ganadores elegidos en Conflictos se ignoraban y el MISMO modpack
+            // salía distinto según se entrara por Exportar o por Regenerar.
+            // Se recalculan los conflictos con las resoluciones guardadas para
+            // derivar el mismo mapa de decisiones por archivo.
+            val fileWinners: Map<String, String> = runCatching {
+                val resolutionsJson = row.resolutionsJson
+                if (resolutionsJson.isBlank()) return@runCatching emptyMap<String, String>()
+
+                val resType = object :
+                    com.google.gson.reflect.TypeToken<Map<String, String>>() {}.type
+                val resolutions: Map<String, String> =
+                    Gson().fromJson<Map<String, String>>(resolutionsJson, resType).orEmpty()
+                if (resolutions.isEmpty()) return@runCatching emptyMap<String, String>()
+
+                ConflictEngine.analyze(usable, resolutions)
+                    .filter { conflict ->
+                        conflict.winnerAddonId != null &&
+                            !conflict.isAutoResolved &&
+                            conflict.resolution != ConflictResolution.DISMISSED &&
+                            ResolutionApplier.isResolvableByFileCopy(conflict.affectedFile)
+                    }
+                    .associate { conflict ->
+                        ResolutionApplier.normalizeAffectedPath(conflict.affectedFile) to
+                            conflict.winnerAddonId!!
+                    }
+            }.getOrDefault(emptyMap())
+
+            if (fileWinners.isNotEmpty()) {
+                PackForgeLog.d(
+                    TAG,
+                    "Regenerando con ${fileWinners.size} decisión(es) del usuario aplicadas por archivo"
+                )
+            }
+
             val result = PackForgeOrchestrator.mergeAddons(
                 addonPaths = usable.map { it.sourceFilePath },
                 outputDir = cacheDir.absolutePath,
@@ -278,7 +331,9 @@ class MergeForegroundService : Service() {
                 customAuthor = row.author,
                 customVersion = row.version.ifBlank { "1.0.0" },
                 customDescription = row.description,
-                customIconPath = row.coverUriString?.takeIf { it.startsWith("/") && File(it).exists() }
+                customIconPath = row.coverUriString?.takeIf { it.startsWith("/") && File(it).exists() },
+                addonIds = usable.map { it.id },
+                fileWinners = fileWinners
             )
 
             if (!result.success || result.outputPath == null) {
@@ -303,7 +358,12 @@ class MergeForegroundService : Service() {
                 fileName = row.fileName, outputPath = dest.visiblePath,
                 reportPath = reportPath, regenerateId = modpackId
             )
-            notifyFinal(true, "Regenerado con el motor actual. ${reportHint(reportPath, dest)}", accentColor)
+            notifyFinal(
+                true,
+                "Regenerado con el motor actual. ${reportHint(reportPath, dest)}" +
+                    (result.compatibility?.let { " ${it.level.emoji} ${it.level.label}." } ?: ""),
+                accentColor
+            )
         } catch (e: CancellationException) {
             PackForgeLog.d(TAG, "Regeneration cancelled")
             throw e
@@ -334,7 +394,7 @@ class MergeForegroundService : Service() {
             lastNotifiedPercent = p
             MergeSession.update(message, p)
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.notify(NOTIFICATION_ID, buildNotification(message, p, true, ThemeAccent.colorBlocking(this@MergeForegroundService)))
+            nm.notify(NOTIFICATION_ID, buildNotification(message, p, true, mergeAccentColor))
         }
     }
 
@@ -647,23 +707,36 @@ class MergeForegroundService : Service() {
         // Muestra el porcentaje numérico exacto delante del texto de fase, para que
         // el usuario vea el avance real y no solo una barra sin escala.
         val percentLabel = if (percent in 0..100) "$percent% · " else ""
+        val openApp = PendingIntent.getActivity(
+            this, REQ_OPEN_MERGE,
+            Intent(this, MainActivity::class.java)
+                .setAction(ACTION_OPEN_MERGE)
+                .putExtra(EXTRA_OPEN_MERGE, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_merge)
             .setContentTitle("PackForge · Fusionando modpack")
             .setContentText("$percentLabel$text")
-            .setProgress(100, percent, false)
+            .setProgress(100, percent.coerceIn(0, 100), percent !in 0..100)
             .setOngoing(ongoing)
             .setOnlyAlertOnce(true)
             .setColor(accentColor)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setColorized(false)
+            .setContentIntent(openApp)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .build()
     }
 
     private fun notifyFinal(success: Boolean, message: String, accentColor: Int) {
         ensureChannel()
         val openApp = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            this, REQ_OPEN_MERGE,
+            Intent(this, MainActivity::class.java)
+                .setAction(ACTION_OPEN_MERGE)
+                .putExtra(EXTRA_OPEN_MERGE, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val n = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -674,6 +747,7 @@ class MergeForegroundService : Service() {
             .setOngoing(false)
             .setAutoCancel(true)
             .setColor(accentColor)
+            .setColorized(false)
             .setContentIntent(openApp)
             .build()
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -693,10 +767,13 @@ class MergeForegroundService : Service() {
         private const val TAG = "PackForge_Service"
         const val CHANNEL_ID = "packforge_merge"
         const val NOTIFICATION_ID = 4201
+        private const val REQ_OPEN_MERGE = 4202
 
         const val ACTION_EXPORT = "com.packforge.app.action.EXPORT_MERGE"
         const val ACTION_REGENERATE = "com.packforge.app.action.REGENERATE_MERGE"
         const val ACTION_CANCEL = "com.packforge.app.action.CANCEL_MERGE"
+        const val ACTION_OPEN_MERGE = "com.packforge.app.action.OPEN_MERGE"
+        const val EXTRA_OPEN_MERGE = "open_merge"
 
         const val EXTRA_PATHS = "paths"
         const val EXTRA_NAMES = "names"

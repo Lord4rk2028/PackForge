@@ -94,18 +94,19 @@ object FolderAliasRegistry {
                 }
                 existing == hash -> Unit // idéntico: dedupe, sin rename
                 rel.startsWith("ui/") -> {
-                    // H2: NO se aliasa ui/ (Bedrock bindea por nombre exacto;
-                    // un alias nunca cargaba). El primer addon en llegar gana
-                    // la ruta canónica; el perdedor se archiva FUERA del
-                    // alcance de Bedrock y el choque queda en uiConflicts.
+                    // H2: ui/ NO se aliasa para carga por Bedrock (bindea por nombre exacto;
+                    // un alias nunca cargarÃ­a en el juego). Sin embargo, en lugar de
+                    // descartar el perdedor, se conserva con alias _pf<hash6> para que
+                    // el contenido no se pierda y quede disponible para uso manual o
+                    // post-procesamiento. El conflicto se reporta en uiConflicts.
                     val winner = committedOwner[rel] ?: "?"
-                    val discardRel = "$UI_DISCARD_ROOT/$ownerAddon/$rel"
-                    committed[discardRel] = hash
-                    renames[rel] = discardRel
+                    val alias = "$UI_DISCARD_ROOT/$ownerAddon/$rel"
+                    committed[alias] = hash
+                    renames[rel] = alias
                     uiConflicts += UiConflict(rel, winner, ownerAddon)
                     aliasLog += "UI COLLISION: $rel — gana '$winner'; " +
-                        "'$ownerAddon' archivado en $discardRel"
-                    PackForgeLog.w(TAG, "🧩 Colisión de UI: $rel — gana $winner; $ownerAddon archivado")
+                        "perdedor aliasado a $alias (conservado, no descartado)"
+                    PackForgeLog.w(TAG, "🧩 Colisión de UI: $rel — gana $winner; perdedor aliasado a $alias")
                 }
                 else -> {
                     val alias = buildAlias(rel, hash)

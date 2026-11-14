@@ -9,6 +9,17 @@ import java.util.UUID
 
 object ConflictEngine {
 
+    /**
+     * Topes de conflictos por categoría.
+     *
+     * Un modpack con muchas texturas compartidas puede generar decenas de miles
+     * de conflictos legítimos, pero mostrarlos todos bloquea la UI (composición
+     * de la lista, ConflictRegistry y el recálculo del score). Se emite un
+     * resumen cuando se supera el tope, así el usuario sabe que hay más.
+     */
+    private const val MAX_FILE_OVERLAP_CONFLICTS = 400
+    private const val MAX_TEXTURE_CONFLICTS = 60
+
     fun analyze(addons: List<Addon>, resolutions: Map<String, String> = emptyMap()): List<Conflict> {
         val active = addons.filter { it.enabled }
         if (active.size < 2) return emptyList()
@@ -37,28 +48,37 @@ object ConflictEngine {
 
         // ⭐ Filtrar conflictos con un solo addon afectado (sin sentido para resolver)
         // y conflictos donde TODOS los addons afectados son del MISMO pack (RP+BP).
-        // Cuando un addon se importa como RP y BP por separado, generan miles de
-        // falsos conflictos entre ellos. Si comparten la misma clave de pareja
-        // (mismo nombre normalizado → "My Addon BP" y "My Addon RP" → "my addon")
-        // son partes del mismo addon y no tienen sentido como conflicto.
+        // Cuando un addon se importa como RP y BP por separado (o provienen del mismo
+        // archivo .mcaddon), generaban falsos conflictos entre ellos.
+        val pairMap = com.packforge.app.ui.components.buildAddonDisplayItems(active)
+            .filterIsInstance<com.packforge.app.ui.components.AddonDisplayItem.Pair>()
+            .flatMap { pair -> listOf(pair.bp.id to pair.pairKey, pair.rp.id to pair.pairKey) }
+            .toMap()
+
         val filtered = deduped.filter { c ->
             if (c.affectedAddonIds.size < 2) return@filter false
 
-            // Clave de pareja de CADA addon afectado. Solo se descarta cuando
-            // TODOS tienen clave conocida y coinciden; si alguna queda vacía no
-            // se puede afirmar que sean el mismo pack y el conflicto se conserva.
-            // (Antes se filtraban las claves vacías y luego se comparaba, así que
-            // un único nombre reconocible bastaba para borrar conflictos reales:
-            // "Addon A" → "a" y "Addon B" → "" dejaba pairKeys = ["a"] y se
-            // descartaba TODO.)
-            val pairKeys = c.affectedAddonIds.map { id ->
-                addonMap[id]?.name
-                    ?.let { com.packforge.app.ui.components.normalizedPairKey(it) }
-                    .orEmpty()
-            }
-            val isSamePackPair = pairKeys.isNotEmpty() &&
-                pairKeys.none { it.isBlank() } &&
-                pairKeys.distinct().size == 1
+            val affectedAddons = c.affectedAddonIds.mapNotNull { addonMap[it] }
+            if (affectedAddons.size < 2) return@filter false
+
+            // Comprobar si TODOS los addons afectados pertenecen a la MISMA pareja / pack:
+            // 1) Mismo sourceFilePath (provienen del mismo archivo .mcaddon/.zip importado)
+            val sourceFiles = affectedAddons.map { it.sourceFilePath }.filter { it.isNotBlank() }
+            val sameSourceFile = sourceFiles.size == affectedAddons.size && sourceFiles.distinct().size == 1
+
+            // 2) Mismo fileName
+            val fileNames = affectedAddons.map { it.fileName }.filter { it.isNotBlank() }
+            val sameFileName = fileNames.size == affectedAddons.size && fileNames.distinct().size == 1
+
+            // 3) Mismo par en buildAddonDisplayItems
+            val pairKeysFromItems = affectedAddons.mapNotNull { pairMap[it.id] }
+            val samePairKey = pairKeysFromItems.size == affectedAddons.size && pairKeysFromItems.distinct().size == 1
+
+            // 4) Misma clave normalizada de nombre
+            val nameKeys = affectedAddons.map { com.packforge.app.ui.components.normalizedPairKey(it.name) }.filter { it.isNotBlank() }
+            val sameNameKey = nameKeys.size == affectedAddons.size && nameKeys.distinct().size == 1
+
+            val isSamePackPair = sameSourceFile || sameFileName || samePairKey || sameNameKey
             !isSamePackPair
         }
 
@@ -138,12 +158,26 @@ object ConflictEngine {
 
         val winner = ranked[0]
         val runnerUp = ranked[1]
-        if (winner.first == runnerUp.first) return conflict
+        // ⚠️ Empate de prioridad: es el caso NORMAL (todos los addons entran con
+        // prioridad 0). Antes se dejaba sin resolver, así que cada identificador
+        // o archivo compartido contaba como conflicto pendiente y el modpack se
+        // bloqueaba con 5 colisiones (25/100) — aunque la fusión SÍ lo resuelve:
+        // el pipeline copia los addons en orden y el último gana de forma
+        // determinista. `ranked` es estable, así que ranked[0] es justamente el
+        // que sobrevive; se usa como desempate explícito en vez de dejar el
+        // conflicto abierto e impedir la exportación.
+        val empate = winner.first == runnerUp.first
 
         return conflict.copy(
             resolution = ConflictResolution.FIRST_WINS,
             winnerAddonId = winner.second,
-            isAutoResolved = true
+            isAutoResolved = true,
+            description = if (empate) {
+                conflict.description + " (Desempate automático por orden de fusión: " +
+                    "gana el addon que se copia al final.)"
+            } else {
+                conflict.description
+            }
         )
     }
 
@@ -195,15 +229,25 @@ object ConflictEngine {
                 Conflict(
                     id = UUID.randomUUID().toString(),
                     type = ConflictType.ENTITY_IDENTIFIER,
-                    severity = if (isPlayer) ConflictSeverity.CRITICAL
+                    // ⚠️ El jugador NO es un bloqueo crítico.
+                    //
+                    // `minecraft:player` es una entidad VANILLA que varios addons
+                    // pueden sobrescribir a la vez, y eso es habitual (Origins +
+                    // cualquier addon de mochila). La fusión YA resuelve el empate
+                    // de forma determinista: conserva la definición del addon de
+                    // mayor prioridad y aparta las demás como `_pf*`, y el reporte
+                    // lo documenta. Marcarlo CRITICAL (y además no descartable)
+                    // bloqueaba la exportación de un paquete perfectamente válido:
+                    // caso real medido, 25/100 con exportación bloqueada.
+                    severity = if (isPlayer) ConflictSeverity.MEDIUM
                                else ConflictSeverity.HIGH,
-                    title = if (isPlayer) "Conflicto en Entidad: Jugador"
+                    title = if (isPlayer) "Varios addons modifican al jugador"
                             else "Entidad Duplicada: $identifier",
                     description = if (isPlayer)
-                        "Ambos addons modifican al jugador ('$identifier'). " +
-                        "Solo una definición puede existir. Esto puede causar " +
-                        "que el juego crashee o que el jugador se comporte de " +
-                        "forma incorrecta."
+                        "Varios addons modifican al jugador ('$identifier'). " +
+                        "La fusión conserva la definición del addon de mayor " +
+                        "prioridad y aparta las demás, así que el paquete es válido; " +
+                        "solo se pierden los cambios de los addons perdedores."
                     else
                         "La entidad '$identifier' está definida en múltiples " +
                         "addons. Solo la definición del addon con mayor " +
@@ -215,7 +259,8 @@ object ConflictEngine {
                     affectedAddonIds = owners.map { it.id },
                     affectedFile = "entities/$identifier.json",
                     resolution = ConflictResolution.UNRESOLVED,
-                    canBeDismissed = !isPlayer
+                    // Descartable: el usuario puede aceptar el ganador por prioridad.
+                    canBeDismissed = true
                 )
             )
         }
@@ -309,19 +354,31 @@ object ConflictEngine {
                     return@forEach
                 }
 
-                // Solo archivos importantes, ignorar subdirectorios vacíos
-                if (file.endsWith(".json") || file.endsWith(".js") ||
-                    file.endsWith(".png") || file.endsWith(".ogg") ||
-                    file.endsWith(".fsb")) {
+                // Solo archivos FUNCIONALES (.json/.js). Antes también entraban
+                // .png/.ogg/.fsb: como los resource packs comparten miles de
+                // texturas y sonidos, cada uno generaba un `Conflict` propio y
+                // con muchos addons se creaban decenas de miles de objetos (más
+                // el coste de ConflictRegistry y del reciclado de la lista).
+                // Ese era el lag "abrupto" al importar en lote. Las texturas
+                // siguen detectándose aparte en [detectTextureConflicts].
+                if (file.endsWith(".json") || file.endsWith(".js")) {
                     fileMap.getOrPut(file) { mutableListOf() }.add(addon)
                 }
             }
         }
 
         fileMap.filter { it.value.size > 1 }.forEach { (file, owners) ->
+            // Tope de seguridad: un modpack enorme no debe poder generar
+            // cientos de miles de conflictos y congelar la UI.
+            if (conflicts.size >= MAX_FILE_OVERLAP_CONFLICTS) return@forEach
             val severity = when {
-                file.contains("scripts/") -> ConflictSeverity.CRITICAL
-                file.contains("entities/player") -> ConflictSeverity.CRITICAL
+                // Los scripts y el jugador se FUSIONAN en el pipeline (mergeScripts
+                // y la resolución de dependencias): el resultado es un paquete
+                // válido, así que no pueden bloquear la exportación. Antes eran
+                // CRITICAL y bastaba un `scripts/main.js` compartido o un
+                // `entities/player.json` común para dejar el modpack sin exportar.
+                file.contains("scripts/") -> ConflictSeverity.HIGH
+                file.contains("entities/player") -> ConflictSeverity.MEDIUM
                 file.contains("ui/hud_screen") -> ConflictSeverity.HIGH
                 file.contains("entities/") -> ConflictSeverity.HIGH
                 file.contains("terrain_texture") -> ConflictSeverity.MEDIUM
@@ -333,7 +390,7 @@ object ConflictEngine {
 
             val title = when {
                 file.contains("entities/player") ->
-                    "Conflicto Crítico: Archivo del Jugador"
+                    "Archivo del Jugador Compartido"
                 file.contains("terrain_texture") ->
                     "Conflicto de Texturas de Terreno"
                 file.contains("ui/") ->
@@ -728,16 +785,30 @@ object ConflictEngine {
         val textureMap = mutableMapOf<String, MutableList<Addon>>()
 
         addons.forEach { addon ->
-            val allFiles = addon.files + addon.behaviorFiles + addon.resourceFiles
-            allFiles.forEach { filepath ->
+            // Sin concatenar las tres listas (una alloc por addon) y sin
+            // registrar dos veces el mismo addon para la misma ruta: antes,
+            // cuando `files` ya incluía las rutas de `resourceFiles`, el addon
+            // aparecía duplicado y "conflictaba" consigo mismo.
+            fun register(filepath: String) {
                 val lower = filepath.lowercase()
                 if (lower.contains("texture") || lower.contains("terrain") || lower.contains("item_texture")) {
-                    textureMap.getOrPut(filepath) { mutableListOf() }.add(addon)
+                    val owners = textureMap.getOrPut(filepath) { mutableListOf() }
+                    if (owners.none { it.id == addon.id }) owners.add(addon)
                 }
             }
+            addon.resourceFiles.forEach(::register)
+            addon.behaviorFiles.forEach(::register)
+            addon.files.forEach(::register)
         }
 
-        textureMap.filter { it.value.size > 1 }.forEach { (texturePath, owners) ->
+        var emitted = 0
+        var omitted = 0
+        for ((texturePath, owners) in textureMap) {
+            if (owners.size <= 1) continue
+            if (emitted >= MAX_TEXTURE_CONFLICTS) {
+                omitted++
+                continue
+            }
             val addonNames = owners.map { it.name }
             conflicts.add(
                 Conflict(
@@ -753,6 +824,26 @@ object ConflictEngine {
                     canBeDismissed = true
                 )
             )
+            emitted++
+        }
+
+        // Resumen cuando se supera el tope: el usuario sabe que hay más sin
+        // que la app tenga que renderizar miles de tarjetas de conflicto.
+        if (omitted > 0) {
+            conflicts.add(
+                Conflict(
+                    id = "texture_summary_$omitted",
+                    type = ConflictType.TEXTURE_ATLAS,
+                    severity = ConflictSeverity.LOW,
+                    title = "$omitted conflictos de textura adicionales",
+                    description = "Hay $omitted texturas más compartidas entre addons que no se listan para mantener la app fluida.",
+                    technicalDetail = "Texturas compartidas no listadas: $omitted",
+                    affectedAddonIds = addons.take(2).map { it.id },
+                    affectedFile = "textures/",
+                    resolution = ConflictResolution.UNRESOLVED,
+                    canBeDismissed = true
+                )
+            )
         }
 
         return conflicts
@@ -761,8 +852,36 @@ object ConflictEngine {
     // ─── COMPATIBILIDAD GENERAL ──────────────────────────────
     fun getCompatibilityScore(addons: List<Addon>): Int {
         val conflicts = analyze(addons)
-        if (conflicts.isEmpty()) return 100
-        val penalty = conflicts.sumOf { conflict ->
+        return scoreOfConflicts(conflicts)
+    }
+
+    /**
+     * Puntaje de compatibilidad a partir de una lista de conflictos YA calculada.
+     *
+     * Existe porque [getCompatibilityScore] vuelve a ejecutar [analyze] —quince
+     * detectores sobre todos los archivos de todos los addons— solo para sumar
+     * penalizaciones. Quien ya tiene los conflictos en la mano (el ViewModel, la
+     * pantalla de Exportación) no debe pagar ese barrido otra vez: con modpacks
+     * grandes eran cientos de milisegundos en el hilo de UI cada vez que la
+     * tarjeta de exportación entraba en pantalla.
+     *
+     * La tabla de penalizaciones es EXACTAMENTE la misma que usaba
+     * [getCompatibilityScore], así que el resultado no cambia.
+     */
+    fun scoreOfConflicts(conflicts: List<Conflict>): Int {
+        // ⚠️ Solo penalizan los conflictos que siguen ABIERTOS.
+        //
+        // Antes se sumaba la severidad de TODOS, incluidos los ya resueltos y los
+        // auto-resueltos por prioridad. Resultado: un modpack donde la fusión
+        // había resuelto todo seguía mostrando una nota pésima (25/100) y el gate
+        // bloqueaba la exportación. Un conflicto resuelto no es incompatibilidad.
+        val abiertos = conflicts.filter {
+            it.resolution == com.packforge.app.domain.model.ConflictResolution.UNRESOLVED &&
+                !it.isAutoResolved &&
+                !it.isDismissed
+        }
+        if (abiertos.isEmpty()) return 100
+        val penalty = abiertos.sumOf { conflict ->
             when (conflict.severity) {
                 ConflictSeverity.CRITICAL -> 30
                 ConflictSeverity.HIGH     -> 15

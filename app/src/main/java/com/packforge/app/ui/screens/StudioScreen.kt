@@ -1,5 +1,7 @@
 package com.packforge.app.ui.screens
 
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.packforge.app.R
 import androidx.compose.ui.res.stringResource
 import android.content.Intent
@@ -53,12 +55,14 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.painter.ColorPainter
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -213,6 +217,19 @@ fun StudioScreen(
             isCheckingUpdates = isCheckingUpdates,
             checkingUpdatesForId = checkingUpdatesForId
         )
+        // ═══ DIÁLOGOS DE LA BIBLIOTECA — EXCLUSIVIDAD MUTUA ═══
+        //
+        // El de regenerar y el centro de actualizaciones se componían AMBOS con
+        // `let`, sin nada que impidiera tenerlos abiertos a la vez. Como cada uno
+        // abre su propia ventana de Android con su propio scrim, quedaban dos
+        // ventanas apiladas: la de arriba se quedaba con la entrada y la de abajo
+        // seguía visible sin poder cerrarse. Es el "menú que se traba al
+        // superponerse" llevado al caso más visible, porque la biblioteca es la
+        // pantalla con más diálogos de la app.
+        //
+        // Se da prioridad a la regeneración (acción destructiva que el usuario
+        // acaba de confirmar) y el centro de actualizaciones espera a que se
+        // cierre.
         modpackToRegenerate?.let { target ->
             ExpressiveAlertDialog(
                 onDismissRequest = { modpackToRegenerate = null },
@@ -243,27 +260,32 @@ fun StudioScreen(
         // vea el progreso) y PERMANECE abierto cuando la búsqueda termina,
         // aunque no haya nada nuevo: solo se cierra si el usuario toca fuera
         // de la ventana o pulsa la X.
-        updateTargetModpack?.let { targetPack ->
-            val packAddons = remember(targetPack.id) { decodeModpackAddons(targetPack.addonsJson) }
-            val effectiveReport = updateReport
-                ?: ModpackUpdateReport(targetPack.id, packAddons.map { AddonUpdateState(addonId = it.id) })
-            UpdateCenterDialog(
-                modpackName = targetPack.name,
-                addons = packAddons,
-                report = effectiveReport,
-                isChecking = isCheckingUpdates,
-                applyingAddonId = isApplyingUpdate,
-                resolvingAddonId = resolvingAddonId,
-                justUpdatedAddonId = justUpdatedAddonId,
-                onOpenSource = { site, url ->
-                    viewModel.openAddonSource(site, url)
-                },
-                onApplyUpdate = { addonId, site, downloadUrl ->
-                    viewModel.applyAddonUpdate(appContext, targetPack, addonId, site, downloadUrl)
-                },
-                onResolveDownloads = { addonId -> viewModel.resolveSourceDownloads(addonId) },
-                onDismiss = { viewModel.closeUpdateDialog() }
-            )
+        //
+        // Solo se compone si no hay una regeneración pendiente: ver la nota de
+        // exclusividad mutua de arriba.
+        if (modpackToRegenerate == null) {
+            updateTargetModpack?.let { targetPack ->
+                val packAddons = remember(targetPack.id) { decodeModpackAddons(targetPack.addonsJson) }
+                val effectiveReport = updateReport
+                    ?: ModpackUpdateReport(targetPack.id, packAddons.map { AddonUpdateState(addonId = it.id) })
+                UpdateCenterDialog(
+                    modpackName = targetPack.name,
+                    addons = packAddons,
+                    report = effectiveReport,
+                    isChecking = isCheckingUpdates,
+                    applyingAddonId = isApplyingUpdate,
+                    resolvingAddonId = resolvingAddonId,
+                    justUpdatedAddonId = justUpdatedAddonId,
+                    onOpenSource = { site, url ->
+                        viewModel.openAddonSource(site, url)
+                    },
+                    onApplyUpdate = { addonId, site, downloadUrl ->
+                        viewModel.applyAddonUpdate(appContext, targetPack, addonId, site, downloadUrl)
+                    },
+                    onResolveDownloads = { addonId -> viewModel.resolveSourceDownloads(addonId) },
+                    onDismiss = { viewModel.closeUpdateDialog() }
+                )
+            }
         }
         return
     }
@@ -522,14 +544,17 @@ fun StudioScreen(
                                     modifier = Modifier.size(46.dp)
                                 ) {
                                     AsyncImage(
-                                        model = ImageRequest.Builder(LocalContext.current)
-                                            .data(site.logoUrl)
-                                            // El favicon se dibuja en 34dp: pedirlo
-                                            // ya reducido evita decodificar el PNG
-                                            // original del servicio de favicons.
-                                            .size(34 * 3)
-                                            .crossfade(false)
-                                            .build(),
+                                        // ⚡ MEMOIZADO por sitio: construir el
+                                        // `ImageRequest` en cada composición
+                                        // asignaba un objeto nuevo y obligaba a
+                                        // Coil a rehacer el pipeline de la
+                                        // imagen cada vez que el carrusel se
+                                        // recomponía (al scrollear el Studio).
+                                        //
+                                        // `LocalContext.current` se lee AQUÍ, en
+                                        // contexto @Composable: dentro de la
+                                        // lambda de `remember` no se puede.
+                                        model = siteLogoRequest(site),
                                         contentDescription = stringResource(
                                             R.string.cd_logo_of,
                                             site.displayName
@@ -592,9 +617,10 @@ fun StudioScreen(
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.weight(1f)
                         )
+                        // Sin `.size(24.dp)`: Material reserva 48dp de
+                        // objetivo táctil para el botón de cerrar el banner.
                         IconButton(
-                            onClick = { showInfoBanner = false },
-                            modifier = Modifier.size(24.dp)
+                            onClick = { showInfoBanner = false }
                         ) {
                             Icon(
                                 Icons.Default.Close,
@@ -706,6 +732,12 @@ fun StudioCard(
                     haptics.light()
                 }
                 onClick()
+            }
+            .semantics(mergeDescendants = true) {
+                // Tarjeta como botón grande y navegable: TalkBack anuncia
+                // qué hace y el título asociado.
+                role = Role.Button
+                contentDescription = "$title: $description"
             },
         shape = ExpressiveShapes.heroCard,
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = elevation),
@@ -759,6 +791,7 @@ fun StudioCard(
 @Composable
 fun MyModpacksScreen(
     modpacks: List<SavedModpackSummary>,
+    isLoading: Boolean = false,
     onBack: () -> Unit,
     onDelete: (String) -> Unit,
     onLoad: (SavedModpackSummary) -> Unit,
@@ -775,6 +808,154 @@ fun MyModpacksScreen(
     val haptics = rememberExpressiveHaptics()
     var modpackToDelete by remember { mutableStateOf<SavedModpackSummary?>(null) }
     var showShareDialog by remember { mutableStateOf(false) }
+
+    // ═══ ESTADO DE MENÚS Y DIÁLOGOS — A NIVEL DE PANTALLA ═══
+    //
+    // Ni el menú "⋮" de una tarjeta ni el visor de addons pueden guardar su
+    // estado dentro de la tarjeta: la tarjeta es un ítem de la grilla perezosa y
+    // se recicla al scrollear. Con el estado dentro, (a) el menú/ventana quedaba
+    // abierto sin dueño al reciclar el ítem —el "se traban cuando se sobreponen"
+    // reportado— y (b) al reutilizarse el ítem para OTRO modpack el menú
+    // reaparecía sobre la tarjeta equivocada. Aquí, en cambio, el estado tiene la
+    // misma vida que la pantalla.
+    //
+    // Se guarda el ID (no el objeto completo) del modpack con el menú abierto:
+    // así, si la lista se recarga, el menú simplemente se cierra en vez de
+    // apuntar a una tarjeta que ya no existe.
+    var openMenuModpackId by remember { mutableStateOf<String?>(null) }
+    var addonsDialogModpack by remember { mutableStateOf<SavedModpackSummary?>(null) }
+
+    // ═══ DATOS DE TARJETA PRECALCULADOS — LA SOLUCIÓN DEFINITIVA AL LAG ═══
+    //
+    // Antes cada tarjeta lanzaba SUS PROPIAS corrutinas al entrar en el viewport
+    // (`LaunchedEffect` por tarjeta) para: (a) parsear hasta 64 KB de JSON
+    // buscando el origen web y (b) decodificar la portada y extraer su color
+    // dominante. Con un deslizamiento rápido eso eran 6-10 parses concurrentes
+    // POR FOTOGRAMA compitiendo por CPU con el hilo de render: el jank no venía
+    // del hilo principal sino de la saturación de núcleos, y por eso las
+    // optimizaciones anteriores del hilo principal no bastaron.
+    //
+    // La alternativa completa: el trabajo se hace UNA vez por modpack, AQUÍ a
+    // nivel de pantalla y FUERA del recorrido del scroll. La grilla solo LEE
+    // resultados listos; la tarjeta es un composable puro sin corrutinas.
+    //
+    // Detalles que lo hacen correcto:
+    //  · `mutableStateMapOf` observa POR CLAVE: cuando termina el cálculo de un
+    //    modpack solo se recompose SU tarjeta, no la grilla entera.
+    //  · Mientras el dato no está (primer arranque), la tarjeta se pinta al
+    //    instante con sus respaldos (borde del tema, sin badge, sin fecha) y se
+    //    completa al llegar el cálculo: la composición NUNCA espera.
+    //  · El llenado es SECUENCIAL y en orden de lista (las visibles primero):
+    //    no lanza N parses en paralelo que compitan entre sí.
+    //  · Reabrir la pantalla es casi gratis: `extractModpackSource` y
+    //    `CoverColorExtractor.extract` tienen caché propia por contenido.
+    val cardData = remember { mutableStateMapOf<String, ModpackCardUi>() }
+    LaunchedEffect(modpacks) {
+        val appContext = context.applicationContext
+
+        // Limpieza: si un modpack fue borrado, su dato precalculado no sirve
+        // ya y solo ocuparía memoria (y crecería con cada borrado/creación).
+        val validIds = modpacks.mapTo(mutableSetOf()) { it.id }
+        cardData.keys.removeAll { it !in validIds }
+
+        for (modpack in modpacks) {
+            val existing = cardData[modpack.id]
+            if (existing != null && existing.summary == modpack) continue
+
+            // Origen web: parseo del head de 64 KB en Default.
+            val source = if (modpack.sourceJsonHead.isBlank()) null
+            else withContext(Dispatchers.Default) { extractModpackSource(modpack.sourceJsonHead) }
+
+            // Color dominante de la portada: IO + decodificado a 32 px.
+            val coverColor = CoverColorExtractor.extract(appContext, modpack.coverUriString)
+
+            cardData[modpack.id] = ModpackCardUi(
+                summary = modpack,
+                source = source,
+                coverColor = coverColor,
+                versionLine = buildVersionLine(modpack),
+                coverModel = resolveCoverModel(modpack.coverUriString)
+            )
+        }
+    }
+
+    // ═══ VISOR DE ADDONS — FUERA DE LA LISTA ═══
+    // El `addonsJson` completo NO vive en el summary ligero (leerlo de todas las
+    // filas reventaba el CursorWindow), así que se pide la fila completa por id
+    // en segundo plano al abrir el visor: es un evento puntual, no parte del scroll.
+    //
+    // `modpackToDelete == null` implementa la exclusividad mutua: si el usuario
+    // pide borrar mientras el visor está abierto, solo se compone la confirmación
+    // de borrado. Sin esta guarda habría dos ventanas de diálogo apiladas y la de
+    // abajo quedaría visible pero inalcanzable —el "menú trabado".
+    //
+    // Además cede frente al menú de compartir (`showShareDialog`): si el usuario
+    // está eligiendo un modpack para compartir y mientras tanto pulsa "Ver addons",
+    // solo se muestra el visor de compartir.
+    addonsDialogModpack?.takeIf {
+        modpackToDelete == null && !showShareDialog
+    }?.let { target ->
+        val db = remember { PackForgeDatabase.getInstance(context.applicationContext) }
+        var dialogAddons by remember(target.id) { mutableStateOf<List<Addon>?>(null) }
+        LaunchedEffect(target.id) {
+            dialogAddons = withContext(Dispatchers.IO) {
+                val full = db.savedModpackDao().getById(target.id)
+                val parsed = decodeModpackAddons(full?.addonsJson.orEmpty())
+                // Los iconos se cachean en filesDir/addon_icons. Si el sistema
+                // limpió la caché, `iconPath` apunta a un archivo que ya no
+                // existe y la portada NO se ve: Coil recibe una ruta muerta.
+                // Aquí se re-extrae del addon fuente, igual que hace
+                // `hydrateModpackForEditing` al abrir el editor.
+                // En PARALELO: cada recuperación abre el ZIP del addon, así que
+                // hacerlo en serie multiplicaba la espera por el número de addons.
+                coroutineScope {
+                    parsed.map { addon ->
+                        async<Addon> {
+                            val cachedIcon = addon.iconPath
+                            val exists = cachedIcon != null &&
+                                runCatching { File(cachedIcon).exists() }.getOrDefault(false)
+                            if (exists || addon.sourceFilePath.isBlank()) {
+                                addon
+                            } else {
+                                val recovered = AddonParser.recoverIconFromSource(
+                                    addon.sourceFilePath,
+                                    addon.id,
+                                    context.applicationContext
+                                )
+                                if (recovered != null) addon.copy(iconPath = recovered) else addon
+                            }
+                        }
+                    }.awaitAll()
+                }
+            }
+        }
+
+        if (dialogAddons != null) {
+            ModpackAddonsDialog(
+                modpackName = target.name,
+                addons = dialogAddons!!,
+                onDismiss = { addonsDialogModpack = null }
+            )
+        } else {
+            // Mientras carga la fila completa: ventana con indicador, para que
+            // el toque tenga respuesta inmediata en lugar de no hacer nada.
+            ExpressiveDialog(onDismissRequest = { addonsDialogModpack = null }) {
+                Surface(
+                    shape = ExpressiveShapes.dialog,
+                    color = MaterialTheme.colorScheme.surface
+                ) {
+                    Row(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Text("Leyendo addons...", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+    }
 
     // Diálogo con bordes de colores para compartir modpacks
     if (showShareDialog) {
@@ -937,6 +1118,37 @@ fun MyModpacksScreen(
         }
     }
 
+    // ═══ CARGA DE LA PANTALLA — BARRA DE CARGA ═══
+    // La pantalla completa (grilla + contenido) se carga de forma secuencial:
+    // 1. Se recibe la lista de modpacks (puede estar vacía inicialmente)
+    // 2. Si `isLoading` es true, se muestra la barra de carga hasta que los datos
+    //    estén completamente listos para mostrar.
+    // 3. Solo cuando `isLoading` es false se renderiza la grilla real.
+    //    Esto garantiza que el usuario no vea contenido parcial durante el
+    //    primer render, eliminando el jank visible en la implementación anterior.
+    if (isLoading) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 3.dp
+                )
+                Text(
+                    "Cargando tu biblioteca...",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+        return
+    }
+
     Scaffold(
         topBar = {
             // Barra flotante superior con efecto de vidrio
@@ -1037,7 +1249,15 @@ fun MyModpacksScreen(
                     val onLoadThis = remember(modpack.id) {
                         { currentOnLoad(currentModpack); currentOnBack() }
                     }
-                    val onDeleteThis = remember(modpack.id) { { modpackToDelete = modpack } }
+                    val onDeleteThis = remember(modpack.id) {
+                        {
+                            // Cerrar el menú antes de abrir el diálogo: el menú es
+                            // otra ventana flotante y, si sigue abierta, compite
+                            // con el scrim del diálogo.
+                            openMenuModpackId = null
+                            modpackToDelete = modpack
+                        }
+                    }
                     val onShareThis = remember(modpack.id) {
                         { shareModpack(currentContext, currentModpack, currentShareScope) }
                     }
@@ -1045,35 +1265,46 @@ fun MyModpacksScreen(
                     val onCheckUpdatesThis = remember(modpack.id) {
                         { currentOnCheckUpdates(modpack.id) }
                     }
-                    // El origen web se resuelve en segundo plano, NO durante la
-                    // composición. `extractModpackSource` parsea hasta 64 KB de
-                    // JSON por tarjeta; hacerlo en el hilo principal en cada
-                    // pasada de composición era trabajo de decenas de
-                    // milisegundos justo mientras se desliza la lista.
+                    // ⚡ Menú "⋮" con invalidación POR TARJETA.
                     //
-                    // El valor inicial sale de la caché (peek): sin eso, cada
-                    // vez que una tarjeta reaparecía al scrollear se volvía a
-                    // empezar en `null` y el badge de origen poppeaba 1-2
-                    // frames después —un "parpadeo" perceptible en el scroll.
-                    val sourceHead = modpack.sourceJsonHead
-                    var source by remember(modpack.id) { mutableStateOf(ModpackParsingCache.cachedSource(sourceHead)?.value as? ModpackSource) }
-                    LaunchedEffect(modpack.id) {
-                        if (sourceHead.isNotBlank()) {
-                            source = withContext(Dispatchers.Default) {
-                                extractModpackSource(sourceHead)
-                            }
-                        }
+                    // Leer `openMenuModpackId == modpack.id` directamente dentro
+                    // del ítem hacía que CADA cambio del id abierto recompusiera
+                    // TODAS las tarjetas visibles (todas leen el mismo estado).
+                    // Con un `derivedStateOf` por tarjeta, cada una solo se
+                    // invalida cuando SU propio booleano gira: abrir o cerrar el
+                    // menú recompone una tarjeta, no diez.
+                    val menuOpenForThis by remember(modpack.id) {
+                        derivedStateOf { openMenuModpackId == modpack.id }
                     }
+                    val checkingThis = isCheckingUpdates && checkingUpdatesForId == modpack.id
+
+                    // Datos PRECALCULADOS a nivel de pantalla (ver arriba): la
+                    // lectura es por clave y solo dispara la recomposición de
+                    // ESTA tarjeta cuando su dato llega o cambia. Durante el
+                    // scroll no hay corrutinas ni parseos: todo ya está listo.
+                    val cardUi = cardData[modpack.id]
+
                     ModpackLibraryCard(
                         modpack = modpack,
-                        modpackSource = source,
+                        cardUi = cardUi,
                         onLoad = onLoadThis,
                         onDelete = onDeleteThis,
                         onShare = onShareThis,
                         onRegenerate = onRegenThis,
-                        onOpenSource = { source?.let { currentOnOpenSource(it.site, it.url) } },
+                        onOpenSource = { cardUi?.source?.let { currentOnOpenSource(it.site, it.url) } },
                         onCheckUpdates = onCheckUpdatesThis,
-                        isCheckingUpdates = isCheckingUpdates && checkingUpdatesForId == modpack.id
+                        onShowAddons = {
+                            openMenuModpackId = null
+                            addonsDialogModpack = modpack
+                        },
+                        // Estado del menú controlado por la pantalla: sobrevive al
+                        // reciclado del ítem y garantiza que solo UNA tarjeta
+                        // tenga su menú abierto a la vez.
+                        menuOpen = menuOpenForThis,
+                        onMenuOpenChange = { open ->
+                            openMenuModpackId = if (open) modpack.id else null
+                        },
+                        isCheckingUpdates = checkingThis
                         // Sin `animateItem()`: animaba la entrada y el
                         // reordenamiento de CADA tarjeta, y con una lista corta
                         // eso añade trabajo de animación por fotograma sin
@@ -1084,8 +1315,24 @@ fun MyModpacksScreen(
         }
     }
 
+    // ═══ EXCLUSIVIDAD MUTUA DE DIÁLOGOS ═══
+    //
+    // Cada `ExpressiveDialog`/`ExpressiveAlertDialog` abre su PROPIA ventana de
+    // Android, con su propio scrim que captura todos los toques. Con flags
+    // independientes nada impedía tener dos en `true` a la vez, y entonces quedan
+    // dos ventanas apiladas: la de arriba roba la entrada y la de abajo sigue
+    // visible pero inalcanzable. Ese es el síntoma "se traban cuando se
+    // sobreponen sobre otros".
+    //
+    // La exclusividad se garantiza por CONSTRUCCIÓN: el visor de addons solo se
+    // compone si no hay confirmación de borrado pendiente (ver la guarda
+    // `takeIf { modpackToDelete == null }` en el bloque del visor). El borrado
+    // gana porque es la acción que el usuario acaba de pedir y la única con
+    // consecuencia destructiva.
     modpackToDelete?.let { m ->
-        ExpressiveAlertDialog(onDismissRequest = { modpackToDelete = null }, title = { Text(stringResource(R.string.studio_delete_title)) },
+        ExpressiveAlertDialog(
+            onDismissRequest = { modpackToDelete = null },
+            title = { Text(stringResource(R.string.studio_delete_title)) },
             text = { Text(stringResource(R.string.studio_delete_message, m.name)) },
             confirmButton = {
                 TextButton(onClick = {
@@ -1094,7 +1341,11 @@ fun MyModpacksScreen(
                     modpackToDelete = null
                 }) { Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { modpackToDelete = null }) { Text(stringResource(R.string.common_cancel)) } }
+            dismissButton = {
+                TextButton(onClick = { modpackToDelete = null }) {
+                    Text(stringResource(R.string.common_cancel))
+                }
+            }
         )
     }
 }
@@ -1218,24 +1469,29 @@ private fun DirectCardAction(
     isHighlighted: Boolean = false
 ) {
     val haptics = rememberExpressiveHaptics()
-    val motionLevel = currentMotionLevel
 
-    val containerColor by animateColorAsState(
-        targetValue = if (isHighlighted)
-            MaterialTheme.colorScheme.primaryContainer
-        else
-            MaterialTheme.colorScheme.surfaceContainerHighest,
-        animationSpec = mediumTweenOf(motionLevel),
-        label = "directActionContainer"
-    )
+    // ⚡ Color DIRECTO, sin `animateColorAsState`.
+    //
+    // Antes cada botón instalaba un `Animatable<Color>` con su corrutina y su
+    // observador de estado: tres por tarjeta, decenas vivas durante el scroll,
+    // para un color que en la práctica NUNCA cambia (solo "Actualizar" se
+    // resalta mientras consulta las fuentes, un caso puntual). El cambio
+    // instantáneo es imperceptible en un botón de 36 dp y cuesta cero
+    // fotogramas.
+    val containerColor = if (isHighlighted)
+        MaterialTheme.colorScheme.primaryContainer
+    else
+        MaterialTheme.colorScheme.surfaceContainerHighest
     val contentColor = if (isHighlighted)
         MaterialTheme.colorScheme.onPrimaryContainer
     else
         MaterialTheme.colorScheme.onSurfaceVariant
 
-    // `Surface(onClick = ...)` ya aporta el gesto; añadir `bounceClick` con
-    // onClick propio disparaba la acción DOS veces por toque. Aquí el
-    // modificador solo aporta el efecto de compresión y el háptico.
+    // `Surface(onClick = ...)` ya aporta el gesto Y el ripple de Material, que
+    // es la respuesta táctil estándar. Antes se le sumaba `bounceClick(0.9f)` —
+    // un `Modifier.composed` con interaction source, `collectIsPressedAsState` y
+    // un `Animatable` POR BOTÓN— solo para el gesto de compresión: tres por
+    // tarjeta, multiplicado por las tarjetas visibles durante el scroll.
     Surface(
         onClick = {
             haptics.light()
@@ -1244,9 +1500,7 @@ private fun DirectCardAction(
         enabled = !isSpinning,
         shape = ExpressiveShapes.action,
         color = containerColor,
-        modifier = modifier
-            .height(36.dp)
-            .bounceClick(scaleDown = 0.9f, hapticFeedback = false)
+        modifier = modifier.height(36.dp)
     ) {
         Row(
             modifier = Modifier
@@ -1289,128 +1543,67 @@ private fun DirectCardAction(
 @Composable
 fun ModpackLibraryCard(
     modpack: SavedModpackSummary,
+    /**
+     * Datos PRECALCULADOS a nivel de pantalla (`ModpackCardUi`), o `null`
+     * mientras el cálculo de fondo no haya llegado.
+     *
+     * La tarjeta es un composable PURO: no lanza corrutinas, no parsea JSON ni
+     * decodifica imágenes para extraer color. Todo eso se hizo una vez por
+     * modpack en `MyModpacksScreen`, fuera del recorrido del scroll. Con `null`
+     * se pintan los respaldos (borde del tema, sin badge, línea sin fecha) y el
+     * dato completo llega un instante después sin bloquear la composición.
+     */
+    cardUi: ModpackCardUi? = null,
     onLoad: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
     onRegenerate: () -> Unit = {},
-    modpackSource: ModpackSource? = null,
     onOpenSource: () -> Unit = {},
     onCheckUpdates: () -> Unit = {},
+    onShowAddons: () -> Unit = {},
     isCheckingUpdates: Boolean = false,
+    /**
+     * Estado del menú "⋮" CONTROLADO POR LA PANTALLA, no local a la tarjeta.
+     *
+     * El `DropdownMenu` debe seguir viviendo dentro de la tarjeta porque ancla su
+     * posición al `Box` del botón; si se moviera al nivel de pantalla aparecería
+     * descolgado, en el centro. Lo que se iza es solo el ESTADO.
+     *
+     * Con el estado dentro de la tarjeta (un `remember` local), y siendo la
+     * tarjeta un ítem de una lista perezosa, al scrollear la grilla recicla el
+     * ítem: el estado volvía a `false` con la ventana del menú todavía abierta,
+     * dejando un menú huérfano y sin dueño que lo cerrara —el "menú trabado"— y,
+     * peor, al reutilizarse el ítem para otro modpack el menú reaparecía sobre la
+     * tarjeta equivocada. Con el estado en la pantalla, la tarjeta solo lo informa.
+     */
+    menuOpen: Boolean = false,
+    onMenuOpenChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
     val haptics = rememberExpressiveHaptics()
 
-    val coverPath = modpack.coverUriString
-    // Coil necesita un File (no un String de ruta absoluta) para cargar la
-    // portada persistida en almacenamiento interno; un content:// se pasa tal cual.
-    // ⚡ MEMOIZADO: sin `remember`, cada recomposición (scroll, redraw, resize)
-    // volvía a ejecutar startsWith + exception handling + constructor de File.
-    // Ahora se calcula solo cuando coverPath cambia realmente.
-    val coverModel: Any? = remember(coverPath) {
-        when {
-            coverPath == null -> null
-            coverPath.startsWith("/") -> File(coverPath)
-            coverPath.startsWith("file://") -> try { File(java.net.URI(coverPath)) } catch (e: Exception) { coverPath }
-            else -> coverPath
-        }
-    }
-
-    // ── Borde con el COLOR DOMINANTE de la portada ─────────────────
-    // El análisis corre en IO y solo una vez por portada (hay caché), así que
-    // no afecta al scroll. Si el modpack no tiene portada o el color no se
-    // puede extraer, `coverColor` queda null y el borde usa el acento del
-    // tema, que es el respaldo acordado.
-    var coverColor by remember(coverPath) {
-        mutableStateOf(CoverColorExtractor.peek(coverPath.orEmpty()))
-    }
-    val appContext = LocalContext.current.applicationContext
-    LaunchedEffect(coverPath) {
-        // `extract` ya consulta la caché internamente y devuelve al instante si
-        // el color está calculado. Se mantiene la comprobación previa para no
-        // lanzar siquiera la corrutina en el caso habitual de scroll repetido.
-        if (coverPath != null && coverColor == null) {
-            coverColor = CoverColorExtractor.extract(appContext, coverPath)
-        }
-    }
+    // ═══ TARJETA PURA — CERO TRABAJO POR COMPOSICIÓN ═══
+    //
+    // Todo lo que aquí se calculaba (resolver el File de la portada, lanzar una
+    // corrutina por tarjeta para extraer el color dominante, parsear el origen
+    // web) vive ahora en `ModpackCardUi`, precalculado UNA vez por modpack en
+    // `MyModpacksScreen`, fuera del recorrido del scroll. La tarjeta solo lee.
+    //
+    // Con `cardUi == null` (dato aún en camino) se usan los respaldos: borde del
+    // acento del tema, sin badge de origen y línea de versión sin fecha. La
+    // tarjeta nunca se bloquea esperando un cálculo.
+    val modpackSource = cardUi?.source
+    val coverModel: Any? = cardUi?.coverModel
+    val coverColor = cardUi?.coverColor
     val borderColor = coverColor ?: MaterialTheme.colorScheme.primary
 
-    // Visor de addons: se decodifica al abrir, no durante el scroll.
-    var showAddonsDialog by remember { mutableStateOf(false) }
-
-    if (showAddonsDialog) {
-        // El addonsJson completo NO vive en el summary ligero (leerlo de todas
-        // las filas reventaba el CursorWindow). Se pide la fila completa por id
-        // en segundo plano al abrir el visor, que es un evento puntual.
-        val db = remember { PackForgeDatabase.getInstance(appContext) }
-        var dialogAddons by remember { mutableStateOf<List<Addon>?>(null) }
-        LaunchedEffect(modpack.id) {
-            dialogAddons = withContext(Dispatchers.IO) {
-                val full = db.savedModpackDao().getById(modpack.id)
-                val parsed = decodeModpackAddons(full?.addonsJson.orEmpty())
-                // Los iconos se cachean en filesDir/addon_icons. Si el sistema
-                // limpió la caché, `iconPath` apunta a un archivo que ya no
-                // existe y la portada NO se ve: Coil recibe una ruta muerta.
-                // Aquí se re-extrae del addon fuente, igual que hace
-                // `hydrateModpackForEditing` al abrir el editor.
-                // En PARALELO: cada recuperación abre el ZIP del addon, así que
-                // hacerlo en serie multiplicaba la espera por el número de addons.
-                // `coroutineScope` aporta el scope que `async` necesita para
-                // poder lanzar todas las recuperaciones a la vez.
-                coroutineScope {
-                    parsed.map { addon ->
-                        // Tipo explícito: `async` infiere `Any` cuando las ramas
-                        // devuelven `Addon` y `Addon.copy(...)` sin anotación, y
-                        // luego el resultado no encaja en List<Addon>.
-                        async<Addon> {
-                            // `iconPath` ya se comprobó no-nulo arriba, así que se
-                            // captura en local: evita el `!!` y el warning.
-                            val cachedIcon = addon.iconPath
-                            val exists = cachedIcon != null &&
-                                runCatching { File(cachedIcon).exists() }.getOrDefault(false)
-                            if (exists || addon.sourceFilePath.isBlank()) {
-                                addon
-                            } else {
-                                val recovered = AddonParser.recoverIconFromSource(
-                                    addon.sourceFilePath,
-                                    addon.id,
-                                    appContext
-                                )
-                                if (recovered != null) addon.copy(iconPath = recovered) else addon
-                            }
-                        }
-                    }.awaitAll()
-                }
-            }
-        }
-
-        if (dialogAddons != null) {
-            ModpackAddonsDialog(
-                modpackName = modpack.name,
-                addons = dialogAddons!!,
-                onDismiss = { showAddonsDialog = false }
-            )
-        } else {
-            // Mientras carga la fila completa: ventana con indicador, para que
-            // el toque tenga respuesta inmediata en lugar de no hacer nada.
-            ExpressiveDialog(onDismissRequest = { showAddonsDialog = false }) {
-                Surface(
-                    shape = ExpressiveShapes.dialog,
-                    color = MaterialTheme.colorScheme.surface
-                ) {
-                    Row(
-                        modifier = Modifier.padding(24.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Text("Leyendo addons...", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-        }
-    }
+    // Visor de addons: el ESTADO vive en la pantalla (ver MyModpacksScreen), no
+    // aquí. Antes este `remember` y el `ModpackAddonsDialog` estaban DENTRO de
+    // la tarjeta, que es un ítem de una lista perezosa: al scrollear, la grilla
+    // recicla el ítem, la tarjeta se recompone con `showAddonsDialog = false` y
+    // el `Dialog` —que ya había abierto su propia ventana de Android— quedaba
+    // huérfano, sin dueño que lo cerrara. Ese es el "menú que se traba".
+    // Ahora la tarjeta solo AVISA de que se pulsó "Ver addons".
 
     // La flecha de "Actualizar" gira mientras el motor revisa las 3 fuentes.
     val spinAngle by if (isCheckingUpdates) {
@@ -1446,12 +1639,25 @@ fun ModpackLibraryCard(
                                 color = borderColor.copy(alpha = 0.45f),
                                 shape = ExpressiveShapes.card
                             )
-                            .bounceClick(
-                                scaleDown = 1f,
-                                hapticFeedback = false
+                            // ⚡ `clickable(interactionSource = null, ...)`: la
+                            // sobrecarga con `null` ni siquiera asigna el
+                            // interaction source. Antes aquí iba `bounceClick`:
+                            // con `scaleDown = 1f` no deformaba nada visible,
+                            // pero su `Modifier.composed` se instanciaba por
+                            // tarjeta en cada composición del scroll.
+                            .clickable(
+                                interactionSource = null,
+                                indication = null
                             ) {
                                 haptics.light()
                                 onLoad()
+                            }
+                            .semantics(mergeDescendants = true) {
+                                // Tarjeta de biblioteca: botón navegable con
+                                // nombre y cantidad de addons.
+                                role = Role.Button
+                                contentDescription =
+                                    "Modpack ${modpack.name}, ${modpack.addonCount} addons"
                             },
                         shape = ExpressiveShapes.card,
                         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -1481,7 +1687,11 @@ fun ModpackLibraryCard(
                         cornerRadius = 20.dp,
                         // La portada se dibuja en 118dp: que Coil la decodifique
                         // ya a ese tamaño evita cargar la imagen completa.
-                        decodeSize = 118.dp
+                        decodeSize = 118.dp,
+                        // El Box padre YA recorta con la misma forma (20dp): el
+                        // clip interno sería un segundo outline+canvas por
+                        // portada en cada fotograma del scroll.
+                        clip = false
                     )
                     else -> Icon(
                         Icons.Default.Extension,
@@ -1550,7 +1760,7 @@ fun ModpackLibraryCard(
                     // Menú de acciones secundarias: mantiene la fila limpia.
                     Box {
                         Surface(
-                            onClick = { menuOpen = true },
+                            onClick = { onMenuOpenChange(true) },
                             shape = CircleShape,
                             color = MaterialTheme.colorScheme.surfaceContainerHighest
                         ) {
@@ -1563,7 +1773,7 @@ fun ModpackLibraryCard(
                         }
                         DropdownMenu(
                             expanded = menuOpen,
-                            onDismissRequest = { menuOpen = false }
+                            onDismissRequest = { onMenuOpenChange(false) }
                         ) {
                             DropdownMenuItem(
                                 text = { Text("Ver addons (${modpack.addonCount})") },
@@ -1575,15 +1785,15 @@ fun ModpackLibraryCard(
                                     )
                                 },
                                 onClick = {
-                                    menuOpen = false
+                                    onMenuOpenChange(false)
                                     haptics.light()
-                                    showAddonsDialog = true
+                                    onShowAddons()
                                 }
                             )
                             DropdownMenuItem(
                                 text = { Text("Compartir") },
                                 leadingIcon = { Icon(Icons.Default.Share, null, Modifier.size(18.dp)) },
-                                onClick = { menuOpen = false; haptics.medium(); onShare() }
+                                onClick = { onMenuOpenChange(false); haptics.medium(); onShare() }
                             )
                             if (modpackSource != null) {
                                 DropdownMenuItem(
@@ -1591,7 +1801,7 @@ fun ModpackLibraryCard(
                                     leadingIcon = {
                                         Icon(Icons.AutoMirrored.Filled.OpenInNew, null, Modifier.size(18.dp))
                                     },
-                                    onClick = { menuOpen = false; haptics.light(); onOpenSource() }
+                                    onClick = { onMenuOpenChange(false); haptics.light(); onOpenSource() }
                                 )
                             }
                             DropdownMenuItem(
@@ -1605,25 +1815,20 @@ fun ModpackLibraryCard(
                                 },
                                 // Háptico de rechazo: avisa de que la acción es destructiva
                                 // antes de que aparezca el diálogo de confirmación.
-                                onClick = { menuOpen = false; haptics.reject(); onDelete() }
+                                onClick = { onMenuOpenChange(false); haptics.reject(); onDelete() }
                             )
                         }
                     }
                 }
 
-                // Versión + fecha en una sola línea.
+                // Versión + fecha en una sola línea. PRECALCULADA en
+                // `ModpackCardUi`: formatear la fecha con `SimpleDateFormat` por
+                // tarjeta y por composición asignaba buffers justo cuando la
+                // tarjeta entra al viewport. El respaldo sin fecha solo se ve
+                // durante el instante en que el cálculo de fondo llega.
                 Text(
-                    text = buildString {
-                        append("v")
-                        append(modpack.version)
-                        append(" · MC ")
-                        append(modpack.mcVersion)
-                        val date = formatModpackDate(modpack.createdAt)
-                        if (date.isNotBlank()) {
-                            append(" · ")
-                            append(date)
-                        }
-                    },
+                    text = cardUi?.versionLine
+                        ?: "v${modpack.version} · MC ${modpack.mcVersion}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -1679,6 +1884,22 @@ private object ModpackDateCache {
     val format = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
 }
 
+/**
+ * Reutiliza el `ImageRequest` del favicon por sitio, evitando reconstruir el
+ * pipeline de Coil en cada composición del carrusel horizontal.
+ */
+@Composable
+private fun siteLogoRequest(site: AddonSite): Any {
+    val context = LocalContext.current
+    return remember(site, context) {
+        ImageRequest.Builder(context)
+            .data(site.logoUrl)
+            .size(34 * 3)
+            .crossfade(false)
+            .build()
+    }
+}
+
 /** Origen web de un addon dentro de un modpack guardado. */
 @Immutable
 data class ModpackSource(
@@ -1686,6 +1907,60 @@ data class ModpackSource(
     val url: String,       // URL de la página del addon
     val addonName: String  // nombre del addon para mostrar en el botón
 )
+
+/**
+ * Datos de una tarjeta de la biblioteca PRECALCULADOS una vez por modpack.
+ *
+ * Es la pieza central de la solución al lag del scroll: todo lo que antes se
+ * calculaba DENTRO de la tarjeta (y por tanto durante el deslizamiento) ahora
+ * se calcula a nivel de pantalla, fuera del recorrido del scroll:
+ *
+ *  · [source] — parseo del head de 64 KB del `addonsJson` (antes: una corrutina
+ *    con Gson + regexes POR TARJETA cada vez que entraba al viewport).
+ *  · [coverColor] — decodificado de la portada a 32 px y extracción del color
+ *    dominante (antes: otra corrutina con I/O por tarjeta).
+ *  · [versionLine] — la línea "v1.2 · MC 1.20.10 · 12 ene 2025" ya formateada
+ *    (antes: `SimpleDateFormat.format` por tarjeta y por composición).
+ *  · [coverModel] — el `File`/URI que Coil necesita, resuelto una vez.
+ *
+ * `@Immutable` + igualdad estructural: `MyModpacksScreen` compara el summary
+ * guardado con el actual para decidir si recalcular, así que reabrir la
+ * pantalla o recargar la lista no repite ningún trabajo.
+ */
+@Immutable
+data class ModpackCardUi(
+    val summary: SavedModpackSummary,
+    val source: ModpackSource?,
+    val coverColor: Color?,
+    val versionLine: String,
+    val coverModel: Any?
+)
+
+/** Línea de versión+MC+fecha de una tarjeta, formateada UNA vez por modpack. */
+private fun buildVersionLine(modpack: SavedModpackSummary): String = buildString {
+    append("v")
+    append(modpack.version)
+    append(" · MC ")
+    append(modpack.mcVersion)
+    val date = formatModpackDate(modpack.createdAt)
+    if (date.isNotBlank()) {
+        append(" · ")
+        append(date)
+    }
+}
+
+/**
+ * Resuelve el modelo que Coil necesita para la portada, UNA vez por modpack.
+ * Coil quiere un `File` (no un String de ruta absoluta) para la portada
+ * persistida en almacenamiento interno; un `content://` se pasa tal cual.
+ */
+private fun resolveCoverModel(coverPath: String?): Any? = when {
+    coverPath == null -> null
+    coverPath.startsWith("/") -> File(coverPath)
+    coverPath.startsWith("file://") ->
+        try { File(java.net.URI(coverPath)) } catch (e: Exception) { coverPath }
+    else -> coverPath
+}
 
 /**
  * Deserializa la lista de addons guardada en un modpack, para pintarlos

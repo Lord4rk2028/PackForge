@@ -87,6 +87,14 @@ android {
         buildConfig = true
     }
 
+    sourceSets {
+        // El catálogo vanilla (`vanilla_all_keys_complete.txt`) se empaqueta como
+        // asset de la app Y como recurso de classpath. Los tests JVM no tienen
+        // Context, así que VanillaAssets.loadBundledCatalog() lo busca primero en
+        // el classpath y luego en assets: un solo archivo, dos vías de acceso.
+        getByName("main").resources.srcDir("src/main/assets")
+    }
+
     testOptions {
         unitTests.isReturnDefaultValues = true
         // Nota: en máquinas cuyo PATH incluye rutas con espacios (p.ej. "Microsoft VS Code"),

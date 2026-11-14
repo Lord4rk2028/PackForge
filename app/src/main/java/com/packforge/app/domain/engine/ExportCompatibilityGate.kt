@@ -73,7 +73,14 @@ object ExportCompatibilityGate {
         addons: List<Addon>,
         conflicts: List<com.packforge.app.domain.model.Conflict>
     ): ExportDecision {
-        val score = ConflictEngine.getCompatibilityScore(addons)
+        // El score se deriva de los conflictos YA calculados. Antes se llamaba a
+        // `ConflictEngine.getCompatibilityScore(addons)`, que vuelve a ejecutar
+        // `ConflictEngine.analyze(addons)`: los quince detectores completos
+        // (barrido de archivos, texturas, scripts…) otra vez, descartando la
+        // lista `conflicts` que ya venía por parámetro. Esta función se evalúa
+        // dentro de la pantalla de Exportación, así que ese barrido redundante
+        // corría en el hilo de UI cada vez que el ítem del botón se componía.
+        val score = ConflictEngine.scoreOfConflicts(conflicts)
         val blockers = mutableListOf<String>()
         val warnings = mutableListOf<String>()
 

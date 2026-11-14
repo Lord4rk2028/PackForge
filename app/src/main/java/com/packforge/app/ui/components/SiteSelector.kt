@@ -26,6 +26,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.ColorPainter
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -102,7 +108,7 @@ fun SiteSelector(
         AddonSite.entries.forEach { site ->
             SiteCard(
                 site = site,
-                selected = site == currentSite,
+                isSelected = site == currentSite,
                 onClick = { onSelect(site) },
                 modifier = Modifier.weight(1f)
             )
@@ -113,12 +119,12 @@ fun SiteSelector(
 @Composable
 private fun SiteCard(
     site: AddonSite,
-    selected: Boolean,
+    isSelected: Boolean, // Renombrado de 'selected'
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val containerColor by animateColorAsState(
-        targetValue = if (selected)
+        targetValue = if (isSelected)
             MaterialTheme.colorScheme.primaryContainer
         else
             MaterialTheme.colorScheme.surfaceContainerLow,
@@ -126,7 +132,7 @@ private fun SiteCard(
         label = "siteContainer"
     )
     val borderColor by animateColorAsState(
-        targetValue = if (selected)
+        targetValue = if (isSelected)
             MaterialTheme.colorScheme.primary
         else
             MaterialTheme.colorScheme.outlineVariant,
@@ -137,9 +143,18 @@ private fun SiteCard(
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = containerColor,
-        border = BorderStroke(if (selected) 2.dp else 1.dp, borderColor),
-        shadowElevation = if (selected) 4.dp else 1.dp,
-        modifier = modifier.clickable { onClick() }
+        border = BorderStroke(if (isSelected) 2.dp else 1.dp, borderColor),
+        shadowElevation = if (isSelected) 4.dp else 1.dp,
+        modifier = modifier
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                this[SemanticsProperties.Selected] = isSelected
+                this.contentDescription = if (isSelected) {
+                    "${site.displayName}, seleccionado"
+                } else {
+                    site.displayName
+                }
+            }
     ) {
         Column(
             modifier = Modifier
@@ -166,7 +181,7 @@ private fun SiteCard(
                 text = site.displayName,
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = if (selected)
+                color = if (isSelected)
                     MaterialTheme.colorScheme.onPrimaryContainer
                 else
                     MaterialTheme.colorScheme.onSurface,

@@ -148,7 +148,7 @@ object AddonParser {
             }
 
             val info = AddonExtractor.resolveAddonInfo(parseTempDir, internalFile)
-            val displayName = info.displayName
+            val displayName = com.packforge.app.util.MinecraftTextSanitizer.clean(info.displayName)
             val addonClassification = info.classification
 
             // CRÍTICO: invalidate DirIndexCache después de resolveAddonInfo.
@@ -168,9 +168,7 @@ object AddonParser {
             val allFiles = mutableListOf<String>()
             val behaviorFiles = mutableListOf<String>()
             val resourceFiles = mutableListOf<String>()
-            val entityIdentifiers = mutableListOf<String>()
-            val itemIdentifiers = mutableListOf<String>()
-            val recipeIdentifiers = mutableListOf<String>()
+            val identifierIndex = AddonIdentifierIndex.Builder()
             var hasScripts = false
             var version = "1.0.0"
             var manifestUuid = UUID.randomUUID().toString()
@@ -276,18 +274,23 @@ object AddonParser {
                     } catch (e: Exception) {}
                 }
 
-                if (lower.endsWith(".json")) {
-                    try {
-                        val json = JSONObject(file.readText(Charsets.UTF_8))
-                        if (lower.contains("entities/")) extractEntityIdentifier(json)?.let { entityIdentifiers.add(it) }
-                        if (lower.contains("items/")) extractItemIdentifier(json)?.let { itemIdentifiers.add(it) }
-                        if (lower.contains("recipes/")) extractRecipeIdentifier(json)?.let { recipeIdentifiers.add(it) }
-                    } catch (e: Exception) {}
+                if (lower.endsWith(".json") || lower.endsWith(".material")) {
+                    // Toda la recolección de identificadores vive en
+                    // AddonIdentifierIndex: así se prueba con el MISMO código que
+                    // corre aquí (el parser necesita un Context y no es testeable).
+                    val json = try {
+                        JSONObject(file.readText(Charsets.UTF_8))
+                    } catch (_: Exception) {
+                        null
+                    }
+                    identifierIndex.accept(entryName, json)
                 }
             }
 
             // Limpiar carpeta temporal de análisis
             parseTempDir.deleteRecursively()
+
+            val identifiers = identifierIndex.build()
 
             Addon(
                 id = addonId,
@@ -295,13 +298,18 @@ object AddonParser {
                 fileName = fileName,
                 type = addonType,
                 version = version,
-                sizeBytes = fileSize,
+                sizeBytes = if (fileSize > 0L) fileSize else internalFile.length(),
                 files = allFiles,
                 behaviorFiles = behaviorFiles,
                 resourceFiles = resourceFiles,
-                entityIdentifiers = entityIdentifiers,
-                itemIdentifiers = itemIdentifiers,
-                recipeIdentifiers = recipeIdentifiers,
+                entityIdentifiers = identifiers.entity,
+                itemIdentifiers = identifiers.item,
+                recipeIdentifiers = identifiers.recipe,
+                lootTableIdentifiers = identifiers.lootTable,
+                particleIdentifiers = identifiers.particle,
+                materialInstanceIdentifiers = identifiers.materialInstance,
+                soundDefinitionIdentifiers = identifiers.soundDefinition,
+                animationControllerIdentifiers = identifiers.animationController,
                 hasScripts = hasScripts,
                 minEngineVersion = minEngineVersion,
                 manifestUuid = manifestUuid,
@@ -317,6 +325,21 @@ object AddonParser {
 
     private fun extractEntityIdentifier(json: JSONObject): String? = 
         json.optJSONObject("minecraft:entity")?.optJSONObject("description")?.optString("identifier")?.takeIf { it.isNotBlank() }
+
+    /** Las partículas declaran su identificador en `description.identifier`. */
+    private fun extractParticleIdentifier(json: JSONObject): String? =
+        json.optJSONObject("particle_effect")?.optJSONObject("description")
+            ?.optString("identifier")?.takeIf { it.isNotBlank() }
+
+    /**
+     * Claves de un objeto raíz.
+     *
+     * @param rootKey nombre del objeto contenedor; `null` usa la raíz misma.
+     */
+    private fun extractRootObjectKeys(json: JSONObject, rootKey: String?): List<String> {
+        val container = if (rootKey == null) json else json.optJSONObject(rootKey) ?: return emptyList()
+        return container.keys().asSequence().filter { it.isNotBlank() }.toList()
+    }
 
     private fun extractItemIdentifier(json: JSONObject): String? = 
         json.optJSONObject("minecraft:item")?.optJSONObject("description")?.optString("identifier")?.takeIf { it.isNotBlank() }

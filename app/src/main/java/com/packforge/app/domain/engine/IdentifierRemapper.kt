@@ -1,11 +1,16 @@
 package com.packforge.app.domain.engine
 
 import com.packforge.app.util.PackForgeLog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.regex.Pattern
 
 /**
@@ -32,6 +37,17 @@ import java.util.regex.Pattern
 object IdentifierRemapper {
     private const val TAG = "PackForge_Remap"
     private const val PF_NAMESPACE = "pf"
+
+    /**
+     * Hilos para el escaneo de identificadores declarados.
+     *
+     * El trabajo es I/O de lectura independiente por archivo y está limitado por
+     * la latencia de apertura (antivirus incluido), no por CPU: por eso conviene
+     * repartirlo. Se acota a 8 para no saturar discos mecánicos ni el escáner del
+     * antivirus con demasiadas aperturas concurrentes.
+     */
+    private val PARALELISMO: Int =
+        Runtime.getRuntime().availableProcessors().coerceIn(2, 8)
 
     /** Un identificador renombrado. */
     data class RemapEntry(
@@ -76,10 +92,10 @@ object IdentifierRemapper {
      * @param behaviorDirs directorios BP por addon (cada uno = raíz de un pack)
      * @param resourceDirs directorios RP por addon
      */
-    fun run(
+    suspend fun run(
         behaviorDirs: List<File>,
         resourceDirs: List<File>,
-        progress: ((String) -> Unit)? = null
+        progress: (suspend (String) -> Unit)? = null
     ): List<RemapEntry> {
         val allDirs = behaviorDirs + resourceDirs
         if (allDirs.size < 2) return emptyList()
@@ -90,7 +106,12 @@ object IdentifierRemapper {
             // con el MISMO timestamp; ambos pertenecen al mismo addon.
             val dirsByOwner = LinkedHashMap<String, MutableList<File>>()
             allDirs.forEach { dir ->
-                dirsByOwner.getOrPut(ownerKey(dir)) { mutableListOf() }.add(dir)
+                // Sin repetir rutas: un addon BOTH cuyas subcarpetas no existen
+                // aporta la MISMA carpeta como BP y como RP. Antes eso no podía
+                // pasar porque la separación creaba dos carpetas distintas; ahora
+                // escanearla o reescribirla dos veces sería trabajo duplicado.
+                val lista = dirsByOwner.getOrPut(ownerKey(dir)) { mutableListOf() }
+                if (lista.none { it.absolutePath == dir.absolutePath }) lista.add(dir)
             }
 
             if (dirsByOwner.size < 2) return emptyList()
@@ -106,7 +127,8 @@ object IdentifierRemapper {
             // inútiles. El RP SIGUE reescribiéndose como referencia (paso 4).
             val declaringOwners = LinkedHashMap<String, MutableList<File>>()
             behaviorDirs.forEach { dir ->
-                declaringOwners.getOrPut(ownerKey(dir)) { mutableListOf() }.add(dir)
+                val lista = declaringOwners.getOrPut(ownerKey(dir)) { mutableListOf() }
+                if (lista.none { it.absolutePath == dir.absolutePath }) lista.add(dir)
             }
             val declaredByOwner = LinkedHashMap<String, MutableMap<String, File>>()
             declaringOwners.forEach { (owner, dirs) ->
@@ -202,26 +224,60 @@ object IdentifierRemapper {
     /**
      * Recorre los ficheros de un pack recogiendo los identificadores DECLARADOS.
      * Devuelve map id → fichero que lo declara (ultima declaración gana).
+     *
+     * ⭐ RENDIMIENTO (medido con el reporte de fases): esta pasada era el
+     * **40% de la fusión** (545 s de 1368 s en Better MC). El motivo es que el
+     * filtro barato H1 tiene que leer el texto COMPLETO de cada JSON del BP para
+     * comprobar si contiene la palabra "identifier": son miles de aperturas de
+     * archivo, y el antivirus de Windows cobra por apertura, no por byte.
+     *
+     * La lectura de cada archivo es independiente de las demás, así que se
+     * reparte entre hilos. El resultado se fusiona después **en el orden
+     * original del índice**, de modo que la política "última declaración gana"
+     * sigue siendo determinista y reproducible (si cada hilo escribiera
+     * directo al mapa, el ganador dependería de qué hilo terminase antes).
      */
-    private fun collectDeclaredIds(packDir: File): Map<String, File>? {
+    private suspend fun collectDeclaredIds(packDir: File): Map<String, File>? {
         val result = mutableMapOf<String, File>()
         try {
             // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
             val cachedFiles = DirIndexCache.index(packDir).jsonFiles
-            for (file in cachedFiles) {
-                // Filtro barato H1: un JSON que declara un identificador SIEMPRE
-                // contiene el texto "identifier"; sin él ni se lee ni se parsea.
-                // Esto convierte la detección en O(bytes) en lugar de O(parseos).
-                val preview = try {
-                    file.readText(StandardCharsets.UTF_8)
-                } catch (e: Exception) {
-                    continue
-                }
-                if (!preview.contains("identifier")) continue
-                val id = readDeclaredIdentifier(file, preview) ?: continue
-                // Evitar renombrar manifest.json por accidente
-                if (file.name.equals("manifest.json", true)) continue
-                result[id] = file
+            if (cachedFiles.isEmpty()) return null
+
+            val total = cachedFiles.size
+            val siguiente = AtomicInteger(0)
+            val parciales = withContext(Dispatchers.IO) {
+                (1..PARALELISMO).map {
+                    async(Dispatchers.IO) {
+                        val lote = ArrayList<Pair<Int, Pair<String, File>>>(128)
+                        while (true) {
+                            val i = siguiente.getAndIncrement()
+                            if (i >= total) break
+                            val file = cachedFiles[i]
+                            // Filtro barato H1: un JSON que declara un
+                            // identificador SIEMPRE contiene el texto
+                            // "identifier"; sin él ni se lee ni se parsea.
+                            val preview = try {
+                                file.readText(StandardCharsets.UTF_8)
+                            } catch (e: Exception) {
+                                continue
+                            }
+                            if (!preview.contains("identifier")) continue
+                            val id = readDeclaredIdentifier(file, preview) ?: continue
+                            // Evitar renombrar manifest.json por accidente
+                            if (file.name.equals("manifest.json", true)) continue
+                            lote.add(i to (id to file))
+                        }
+                        lote
+                    }
+                }.awaitAll()
+            }
+
+            // Fusión determinista en el orden del índice original.
+            val porIndice = arrayOfNulls<Pair<String, File>>(total)
+            parciales.forEach { lote -> lote.forEach { (i, par) -> porIndice[i] = par } }
+            for (par in porIndice) {
+                if (par != null) result[par.first] = par.second
             }
         } catch (e: Exception) {
             PackForgeLog.e(TAG, "Error escaneando ${packDir.name}: ${e.message}")
@@ -366,8 +422,20 @@ object IdentifierRemapper {
 
     // ── HELPERS ───────────────────────────────────────────────────────────
 
-    /** Clave de addon: agrupa separated_bp_TS con separated_rp_TS del mismo BOTH. */
+    /**
+     * Clave de addon: agrupa el BP y el RP que pertenecen al MISMO `.mcaddon`.
+     *
+     * ⭐ RENDIMIENTO (punto 1): antes el orquestador copiaba cada subcarpeta a
+     * `separated_bp_<estampa>` / `separated_rp_<estampa>` y esta función deducía
+     * la agrupación **parseando esa estampa del nombre**. Esa copia duplicaba el
+     * addon entero en disco sin aportar nada, así que ahora el orquestador
+     * declara la agrupación en [AddonOwnerRegistry] y se consulta aquí.
+     *
+     * Se conserva la lectura por nombre como respaldo para que cualquier ruta
+     * antigua (o una carpeta que nadie registró) siga agrupándose igual que antes.
+     */
     private fun ownerKey(dir: File): String {
+        AddonOwnerRegistry.ownerOf(dir)?.let { return it }
         val ts = Regex("separated_(?:bp|rp)_(\\d+)").find(dir.name)?.groupValues?.get(1)
         return if (ts != null) "sep_$ts" else dir.absolutePath
     }
@@ -378,6 +446,8 @@ object IdentifierRemapper {
     }
 
     private fun shortOwner(ownerKey: String): String {
+        // Los addons registrados por el orquestador ya tienen nombre legible.
+        AddonOwnerRegistry.labelOf(ownerKey)?.let { return it }
         if (ownerKey.startsWith("sep_")) return "BOTH(ts=${ownerKey.removePrefix("sep_")})"
         return File(ownerKey).name
     }

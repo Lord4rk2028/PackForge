@@ -304,4 +304,88 @@ class MergePipelineEndToEndTest {
             report.checkedReferences >= 2
         )
     }
+
+    // ── Binarios y ZIPs anidados ─────────────────────────────────────────
+
+    /**
+     * PNG real de 1×1 (válido, no texto): comprueba que el pipeline no corrompe
+     * binarios al copiarlos y fusionarlos.
+     */
+    private val onePixelPng: ByteArray = java.util.Base64.getDecoder().decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+    )
+
+    private fun nestedPack(name: String, uuid: String, textureContent: String): ByteArray {
+        val baos = java.io.ByteArrayOutputStream()
+        ZipOutputStream(baos).use { zip ->
+            zip.putNextEntry(ZipEntry("manifest.json"))
+            zip.write(rpManifest(uuid, name).toByteArray())
+            zip.closeEntry()
+            zip.putNextEntry(ZipEntry("textures/blocks/nested.png"))
+            zip.write(textureContent.toByteArray())
+            zip.closeEntry()
+        }
+        return baos.toByteArray()
+    }
+
+    @Test
+    fun binaryTexturesAndNestedPacksSurviveTheMerge() = runBlocking {
+        val work = tempDir("pf_bin_")
+
+        val addonFile = File(tempDir("pf_bin_src_"), "bin.mcaddon")
+        ZipOutputStream(addonFile.outputStream()).use { zip ->
+            fun put(path: String, content: String) {
+                zip.putNextEntry(ZipEntry(path)); zip.write(content.toByteArray()); zip.closeEntry()
+            }
+            fun putBytes(path: String, bytes: ByteArray) {
+                zip.putNextEntry(ZipEntry(path)); zip.write(bytes); zip.closeEntry()
+            }
+
+            put("bp/manifest.json", bpManifest("44444444-4444-4444-4444-444444444444", "Bin"))
+            put("rp/manifest.json", rpManifest("44444444-4444-4444-4444-444444444445", "Bin"))
+            // PNG binario real.
+            putBytes("rp/textures/blocks/real.png", onePixelPng)
+            // Addon con un .mcpack ANIDADO dentro.
+            putBytes(
+                "rp/nested/inner.mcpack",
+                nestedPack("Inner", "55555555-5555-5555-5555-555555555555", "NESTED-PNG")
+            )
+        }
+
+        val result = PackForgeOrchestrator.mergeAddons(
+            addonPaths = listOf(addonFile.absolutePath),
+            outputDir = work.absolutePath,
+            addonNames = listOf("Bin"),
+            customName = "E2E_Bin",
+            addonIds = listOf("bin")
+        )
+
+        assertTrue("La fusión debe terminar bien: ${result.errorMessage}", result.success)
+
+        ZipFile(File(result.outputPath!!)).use { zip ->
+            val names = entryNames(zip)
+
+            // 1. El PNG llega byte a byte idéntico (sin corromper binarios).
+            val pngEntry = names.firstOrNull { it.endsWith("textures/blocks/real.png") }
+            assertNotNull("El PNG real debe estar en el modpack: $names", pngEntry)
+            val bytes = zip.getInputStream(zip.getEntry(pngEntry!!)).use { it.readBytes() }
+            assertTrue(
+                "El PNG debe conservarse íntegro (${bytes.size} bytes)",
+                bytes.contentEquals(onePixelPng)
+            )
+
+            // 2. El contenido del .mcpack anidado también se integra.
+            val nestedEntry = names.firstOrNull { it.endsWith("textures/blocks/nested.png") }
+            assertNotNull(
+                "El contenido del .mcpack anidado debe integrarse en el modpack: $names",
+                nestedEntry
+            )
+            val nestedBytes = zip.getInputStream(zip.getEntry(nestedEntry!!)).use { it.readBytes() }
+            assertEquals(
+                "El binario del pack anidado no debe alterarse",
+                "NESTED-PNG",
+                nestedBytes.toString(Charsets.UTF_8)
+            )
+        }
+    }
 }

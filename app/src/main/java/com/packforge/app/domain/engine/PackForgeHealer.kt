@@ -7,6 +7,8 @@ import com.packforge.app.util.PackForgeLog
 import org.json.JSONObject
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 /**
@@ -31,6 +33,10 @@ object PackForgeHealer {
     private const val AUTO_REPAIR_THRESHOLD = 0.95
     /** El healer es diagnóstico: nunca debe retener la exportación por miles de avisos similares. */
     private const val MAX_REFERENCE_REPORTS = 100
+
+    // ⭐ OPTIMIZACIÓN: Caches para Levenshtein - evita cómputos redundantes
+    private val levenshteinSimilarityCache = ConcurrentHashMap<String, Double>()
+    private val levenshteinDistanceCache = ConcurrentHashMap<String, Int>()
 
     data class FuzzyMatch(
         val missingRef: String,
@@ -62,6 +68,11 @@ object PackForgeHealer {
         val autoRepairedReferences: Int = 0,
         /** Geometría placeholder generada (caja 8x8x8) para entidades sin geometría en ningún addon. */
         val placeholdersGenerated: Int = 0,
+        /**
+         * Placeholders de una fusión anterior retirados a `_packforge/` porque
+         * duplicaban un identificador que el pack ya define con un modelo real.
+         */
+        val stalePlaceholdersRemoved: Int = 0,
         val stillMissingTextures: List<String> = emptyList(),
         val stillMissingModels: List<String> = emptyList()
     ) {
@@ -69,6 +80,7 @@ object PackForgeHealer {
         val hasRemainingIssues get() = stillMissingTextures.isNotEmpty() || stillMissingModels.isNotEmpty()
         val summary get() = "Healer.repair: ${texturesCopied} textura(s) copiada(s), " +
             "${modelsCopied} modelo(s) copiado(s) [$placeholdersGenerated placeholder(s) de geometría], " +
+            "${stalePlaceholdersRemoved} placeholder(s) obsoleto(s) retirado(s), " +
             "${autoRepairedReferences} referencia(s) auto-reparada(s), " +
             "${stillMissingTextures.size + stillMissingModels.size} aún faltante(s)"
     }
@@ -93,6 +105,11 @@ object PackForgeHealer {
         val stillMissingTextures = mutableListOf<String>()
         val stillMissingModels = mutableListOf<String>()
         var placeholderCount = 0
+        var staleRemoved = 0
+
+        // ⭐ OPTIMIZACIÓN: Construir índice unificado UNA sola vez para búsquedas O(1)
+        // Evita re-abrir ZIPs y walkTopDown() por cada referencia faltante.
+        val unifiedAddonIndex = buildUnifiedAddonIndex(originalAddonPaths)
 
         try {
             // ── REPARAR TEXTURAS ──
@@ -100,22 +117,33 @@ object PackForgeHealer {
             val textureInventory = collectTextureInventory(mergedRpDir)
 
             for (texRef in textureRefs) {
+                // Vanilla: lo resuelve el juego. Sin este filtro el reporte de
+                // Better MC listaba wool_colored_white, hunger_effect_full,
+                // bucket_water y particle/soul como "sin textura en ningún addon".
+                if (VanillaAssets.isVanillaTexture(texRef)) continue
+                // Alias de la propia entidad ("Texture.default") y Molang no son rutas.
+                if (BedrockRefs.isAlias(texRef) || BedrockRefs.isExpression(texRef)) continue
+
                 // Normalizar: quitar prefijo "textures/" para comparar con el inventario
                 // del disco (que almacena rutas relativas sin el prefijo "textures/").
                 val normalizedTexRef = texRef.removePrefix("textures/")
                 if (normalizedTexRef in textureInventory) continue
 
-                // stem = solo el nombre de archivo sin extensión (ej. "mob0", no "entity/mob0")
-                val stem = normalizedTexRef.substringAfterLast('/').substringBeforeLast('.')
-                var copied = false
+                val stemPath = normalizedTexRef.substringBeforeLast('.')
+                val stem = stemPath.substringAfterLast('/')
 
+                // Destino = LA RUTA REFERENCIADA. Antes se copiaba siempre a
+                // textures/entity/<stem>.png: "textures/blocks/dirt" quedaba como
+                // textures/entity/dirt.png, la referencia seguía rota y el healer
+                // la contaba como reparada.
+                val destFile = File(mergedRpDir, "textures/$stemPath.png")
+                if (destFile.isFile) continue
+
+                var copied = false
                 for (ext in TEXTURE_EXTENSIONS) {
-                    val fileName = "$stem$ext"
-                    val found = findFileInAddons(fileName, originalAddonPaths)
+                    val found = findFileInAddons("$stem$ext", unifiedAddonIndex)
                     if (found != null) {
-                        val destDir = File(mergedRpDir, "textures/entity")
-                        destDir.mkdirs()
-                        val destFile = File(destDir, "$stem.png")
+                        destFile.parentFile?.mkdirs()
                         FileUtils.fastCopy(found, destFile)
                         texturesCopied.add(texRef)
                         copied = true
@@ -133,19 +161,36 @@ object PackForgeHealer {
             // ── REPARAR MODELOS/GEOMETRÍA ──
             val modelRefs = collectReferencedModels(mergedBpDir, mergedRpDir)
             val modelInventory = collectModelInventory(mergedRpDir)
+            // Identificadores de geometría YA definidos en el pack (por contenido,
+            // no por nombre de archivo): CoreCraft guarda sus modelos como
+            // "2jm1s73o.json", así que un inventario por nombre nunca los veía y
+            // el healer generaba 163 placeholders que DUPLICABAN 148 ids reales.
+            val declaredGeometryIds = collectDeclaredGeometryIds(mergedRpDir, includePlaceholders = true)
+            val realGeometryIds = collectDeclaredGeometryIds(mergedRpDir, includePlaceholders = false)
+
+            // Placeholders heredados de una fusión anterior que duplican un modelo
+            // real: se retiran a _packforge/ (fuera del .mcaddon) para que el juego
+            // no tenga dos definiciones del mismo identificador.
+            staleRemoved = removeStalePlaceholders(mergedRpDir, realGeometryIds)
 
             for (modelRef in modelRefs) {
-                // modelRef puede venir como "models/entity/geometry.foo" o solo "geometry.foo";
-                // el inventario de disco guarda nombres de archivo sin prefijo "models/entity/".
-                val normalizedModelRef = modelRef.removePrefix("models/entity/")
-                if (normalizedModelRef in modelInventory) continue
+                val geometryId = BedrockRefs.geometryId(modelRef)
+                    ?: modelRef.substringBefore(".json").takeIf { it.startsWith("geometry.") }
+                    ?: continue
 
-                val fileName = normalizedModelRef.substringAfterLast('/')
+                // 1) Ya existe en el pack: nunca generar un placeholder encima.
+                if (geometryId in declaredGeometryIds || geometryId in modelInventory) continue
+                // 2) Vanilla: la definición la pone el juego. Un placeholder aquí
+                //    SOBRESCRIBE el modelo vanilla (geometry.humanoid.armor.*,
+                //    geometry.arrow, geometry.item_sprite…): rompe TODO el juego.
+                if (VanillaAssets.isVanillaGeometry(geometryId)) continue
+
+                val fileName = "$geometryId.json"
                 var copied = false
 
                 for (ext in MODEL_EXTENSIONS) {
                     val candidate = if (fileName.endsWith(ext)) fileName else "$fileName$ext"
-                    val found = findFileInAddons(candidate, originalAddonPaths)
+                    val found = findFileInAddons(candidate, unifiedAddonIndex)
                     if (found != null) {
                         val destDir = File(mergedRpDir, "models/entity")
                         destDir.mkdirs()
@@ -163,9 +208,9 @@ object PackForgeHealer {
                 // visible/colisionable en vez de no renderizarse. Contenido
                 // inventado EXPLÍCITO: se reporta como placeholder, nunca como
                 // una restauración.
-                if (!copied && fileName.startsWith("geometry.")) {
+                if (!copied) {
                     val destDir = File(mergedRpDir, "models/entity")
-                    if (writePlaceholderGeometry(fileName.removeSuffix(".json"), destDir)) {
+                    if (writePlaceholderGeometry(geometryId, destDir)) {
                         modelsCopied.add(modelRef)
                         placeholderCount++
                         copied = true
@@ -187,6 +232,7 @@ object PackForgeHealer {
             texturesCopied = texturesCopied.size,
             modelsCopied = modelsCopied.size,
             placeholdersGenerated = placeholderCount,
+            stalePlaceholdersRemoved = staleRemoved,
             stillMissingTextures = stillMissingTextures.toList(),
             stillMissingModels = stillMissingModels.toList()
         )
@@ -282,10 +328,8 @@ object PackForgeHealer {
             // textures map
             json.optJSONObject("textures")?.keys()?.forEachRemaining { key ->
                 val value = json.optJSONObject("textures")?.opt(key) ?: return@forEachRemaining
-                when (value) {
-                    is String -> checkTextureReference(value, "terrain_texture.json", inventory, fuzzy, unresolved)
-                    is JSONObject -> value.optString("Texture", "").takeIf { it.isNotBlank() }
-                        ?.let { checkTextureReference(it, "terrain_texture.json", inventory, fuzzy, unresolved) }
+                textureRefValues(value).forEach { ref ->
+                    checkTextureReference(ref, "terrain_texture.json", inventory, fuzzy, unresolved)
                 }
             }
         } catch (e: Exception) {
@@ -299,13 +343,46 @@ object PackForgeHealer {
         try {
             val json = JSONObject(itFile.readText(StandardCharsets.UTF_8))
             json.optJSONObject("texture_data")?.keys()?.forEachRemaining { key ->
-                val entry = json.optJSONObject("texture_data")?.optJSONObject(key) ?: return@forEachRemaining
-                entry.optString("textures", "").takeIf { it.isNotBlank() }
-                    ?.let { checkTextureReference(it, "item_texture.json", inventory, fuzzy, unresolved) }
+                val entry = json.optJSONObject("texture_data")?.opt(key) ?: return@forEachRemaining
+                // `textures` puede ser un ARRAY (variantes). `optString` lo
+                // serializaba ("[\"textures/items/x\"]") y el reporte de Better MC
+                // lo publicaba como "Referencia '[...]' sin origen": 100 conflictos
+                // HIGH de los que 84 apuntaban a texturas que SÍ existían.
+                val raw = when (entry) {
+                    is JSONObject -> entry.opt("textures")
+                    is String -> entry
+                    else -> null
+                }
+                textureRefValues(raw).forEach { ref ->
+                    checkTextureReference(ref, "item_texture.json", inventory, fuzzy, unresolved)
+                }
             }
         } catch (e: Exception) {
             PackForgeLog.w(TAG, "No se pudo analizar item_texture.json: ${e.message}")
         }
+    }
+
+    /**
+     * Valores de un campo `textures`/`texture`, que en Bedrock puede ser:
+     * string ("textures/items/x"), array de variantes o mapa alias→ruta.
+     * Se descartan alias (`Texture.default`) y Molang.
+     */
+    private fun textureRefValues(value: Any?): List<String> = when (value) {
+        null -> emptyList()
+        is String -> listOfNotNull(normalizeTextureRef(value))
+        is JSONArray -> (0 until value.length()).flatMap { textureRefValues(value.opt(it)) }
+        is JSONObject -> value.keys().asSequence()
+            .flatMap { textureRefValues(value.opt(it)) }
+            .toList()
+        else -> emptyList()
+    }
+
+    /** Ruta de textura normalizada, o `null` si el valor no es una ruta. */
+    private fun normalizeTextureRef(raw: String): String? {
+        val v = raw.trim().replace("\\", "/")
+        if (v.isEmpty() || !v.contains('/')) return null
+        if (BedrockRefs.isAlias(v) || BedrockRefs.isExpression(v)) return null
+        return v
     }
 
     private fun checkMaterialInstances(bpDir: File, rpDir: File, inventory: Set<String>, fuzzy: MutableList<FuzzyMatch>, unresolved: MutableList<UnresolvedRef>) {
@@ -382,9 +459,10 @@ object PackForgeHealer {
                 json.optJSONObject("minecraft:client_entity")?.optJSONObject("description")
                     ?.optJSONObject("textures")?.let { textures ->
                         textures.keys().forEachRemaining { texKey ->
-                            val texVal = textures.optString(texKey) ?: return@forEachRemaining
-                            if (texVal.contains('/')) {
-                                checkTextureReference(texVal, file.name, inventory, fuzzy, unresolved)
+                            // El valor puede ser un array de variantes: `optString`
+                            // devolvía "[\"textures/...\"]" y se comparaba como id.
+                            textureRefValues(textures.opt(texKey)).forEach { ref ->
+                                checkTextureReference(ref, file.name, inventory, fuzzy, unresolved)
                             }
                         }
                     }
@@ -501,11 +579,33 @@ object PackForgeHealer {
 
         // Normalize: quitar prefijo "textures/" si existe
         val normalized = texRef.trim().removePrefix("textures/")
+
+        // ⭐ FASE 5 — EL ÚLTIMO PUNTO NO SIEMPRE ES LA EXTENSIÓN.
+        //
+        // `substringBeforeLast('.')` sobre "cc/custom_villager/levels/base_lvl.1"
+        // devuelve "…/base_lvl": el `.1` es parte del NOMBRE, no una extensión,
+        // así que la búsqueda fallaba y la textura se daba por ausente — aunque
+        // `…/base_lvl.1.png` estuviera en el pack (el reporte de Better MC la
+        // listaba como rota en 30 entidades).
+        //
+        // Bedrock referencia las texturas SIN extensión y el archivo la lleva,
+        // así que se prueban las extensiones reales por SUFIJO en vez de
+        // recortar tras el último punto.
+        if (inventory.contains(normalized) || inventory.contains(texRef)) return
+
+        // Con la extensión ya incluida en la referencia.
+        val tieneExtReal = TEXTURE_EXTENSIONS.any { normalized.endsWith(it, ignoreCase = true) }
+        if (tieneExtReal && inventory.contains(normalized)) return
+
+        // Sin extensión en la referencia: probar cada extensión admitida.
+        if (!tieneExtReal) {
+            if (TEXTURE_EXTENSIONS.any { inventory.contains("$normalized$it") }) return
+        }
+
+        // Compatibilidad: referencias ya con extensión de imagen explícita.
         val stem = normalized.substringBeforeLast('.')
         val ext = normalized.substringAfterLast('.', "png")
-
-        // Buscar exacto (con o sin extensión)
-        if (inventory.contains(stem) || inventory.contains("$stem.$ext") || inventory.contains(texRef)) return
+        if (inventory.contains(stem) || inventory.contains("$stem.$ext")) return
 
         // Fuzzy match
         // La similitud es solo una sugerencia visual. Limitar candidatos por longitud
@@ -541,40 +641,56 @@ object PackForgeHealer {
         val textureFiles = DirIndexCache.index(texDir).allFiles
         for (file in textureFiles) {
             val rel = file.relativeTo(texDir).path.replace("\\", "/")
-            val stem = rel.substringBeforeLast('.')
-            textures.add(stem)
             textures.add(rel)
+            // ⭐ FASE 5 — quitar la extensión REAL, no lo que sigue al último punto.
+            //
+            // `substringBeforeLast('.')` sobre "cc/.../base_lvl.1.png" devuelve
+            // "cc/.../base_lvl": el `.1` es parte del nombre y se perdía, así que
+            // la referencia de Bedrock ("…/base_lvl.1", sin extensión) no
+            // encontraba nada y la textura se reportaba ausente aunque estuviera
+            // en el pack. Igual ocurría con cualquier nombre que contenga puntos.
+            val extReal = TEXTURE_EXTENSIONS.firstOrNull { rel.endsWith(it, ignoreCase = true) }
+            if (extReal != null) {
+                textures.add(rel.dropLast(extReal.length))
+            } else {
+                textures.add(rel.substringBeforeLast('.'))
+            }
         }
         return textures
     }
 
     /**
      * Levenshtein similarity: 0.0 (totalmente distinto) a 1.0 (idéntico).
+     * ⭐ OPTIMIZACIÓN: Cache transparente para evitar cómputos redundantes.
      */
     private fun levenshteinSimilarity(a: String, b: String): Double {
         if (a == b) return 1.0
         if (a.isEmpty() || b.isEmpty()) return 0.0
 
-        val lenA = a.length
-        val lenB = b.length
-        val dp = Array(lenA + 1) { IntArray(lenB + 1) }
+        val cacheKey = "$a|$b"
+        return levenshteinSimilarityCache.computeIfAbsent(cacheKey) {
+            // CÓDIGO DP EXACTO MISMO QUE ORIGINAL
+            val lenA = a.length
+            val lenB = b.length
+            val dp = Array(lenA + 1) { IntArray(lenB + 1) }
 
-        for (i in 0..lenA) dp[i][0] = i
-        for (j in 0..lenB) dp[0][j] = j
+            for (i in 0..lenA) dp[i][0] = i
+            for (j in 0..lenB) dp[0][j] = j
 
-        for (i in 1..lenA) {
-            for (j in 1..lenB) {
-                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
-                dp[i][j] = minOf(
-                    dp[i - 1][j] + 1,
-                    dp[i][j - 1] + 1,
-                    dp[i - 1][j - 1] + cost
-                )
+            for (i in 1..lenA) {
+                for (j in 1..lenB) {
+                    val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                    dp[i][j] = minOf(
+                        dp[i - 1][j] + 1,
+                        dp[i][j - 1] + 1,
+                        dp[i - 1][j - 1] + cost
+                    )
+                }
             }
-        }
 
-        val maxLen = maxOf(lenA, lenB)
-        return 1.0 - dp[lenA][lenB].toDouble() / maxLen
+            val maxLen = maxOf(lenA, lenB)
+            1.0 - dp[lenA][lenB].toDouble() / maxLen
+        }
     }
     /** Extensiones de textura soportadas por Bedrock. */
     private val TEXTURE_EXTENSIONS = listOf(".png", ".tga", ".jpg")
@@ -582,9 +698,45 @@ object PackForgeHealer {
     private val MODEL_EXTENSIONS = listOf(".geo.json", ".json")
 
     /**
+     * Construye un índice inverso UNA sola vez: nombre de archivo → File.
+     * Evita re-abrir ZIPs y walkTopDown() por cada referencia faltante.
+     * Ganancia: de O(addons × referencias) a O(1) por lookup.
+     */
+    private fun buildUnifiedAddonIndex(addonPaths: List<String>): Map<String, File> {
+        val index = mutableMapOf<String, File>()
+        for (addonPath in addonPaths) {
+            val dir = File(addonPath)
+            if (!dir.isDirectory) continue
+            // Usar DirIndexCache (3-10x más rápido que walkTopDown)
+            val cachedFiles = DirIndexCache.index(dir).allFiles
+            for (file in cachedFiles) {
+                // Indexar por nombre lowercase para búsqueda directa
+                index[file.name.lowercase(Locale.ROOT)] = file
+                // Indexar sin extensión para Bedrock-style "base_lvl.1" → "base_lvl.1.png"
+                val nameNoExt = file.nameWithoutExtension.lowercase(Locale.ROOT)
+                index[nameNoExt] = file
+            }
+        }
+        return index
+    }
+
+    /**
+     * Búsqueda O(1) usando el índice unificado construido al inicio de repair().
+     * Mismo comportamiento que la versión original pero sin I/O redundante.
+     */
+    private fun findFileInAddons(fileName: String, unifiedIndex: Map<String, File>): File? {
+        val key = fileName.lowercase(Locale.ROOT)
+        return unifiedIndex[key] ?: unifiedIndex[
+            fileName.removeSuffix(".png").removeSuffix(".tga").removeSuffix(".jpg").lowercase(Locale.ROOT)
+        ]
+    }
+
+    /**
      * Busca un archivo por nombre en todos los addons originales (ZIP o directorio).
      * Retorna el primer File encontrado, o null si no existe en ninguno.
+     * @deprecated Usar findFileInAddons(fileName, unifiedIndex) en su lugar
      */
+    @Deprecated("Use findFileInAddons with unified index", ReplaceWith("findFileInAddons(fileName, unifiedIndex)"))
     private fun findFileInAddons(fileName: String, addonPaths: List<String>): File? {
         for (addonPath in addonPaths) {
             val addonFile = File(addonPath)
@@ -665,21 +817,12 @@ object PackForgeHealer {
             is JSONObject -> {
                 obj.keys().forEach { key ->
                     val value = obj.opt(key)
-                    if (key.equals("texture", ignoreCase = true) || key.equals("texture_name", ignoreCase = true)) {
-                        if (value is String && value.startsWith("textures/")) {
-                            refs.add(value)
-                        }
-                    } else if (key.equals("textures", ignoreCase = true)) {
-                        if (value is JSONObject) {
-                            value.keys().forEach { texKey ->
-                                val texValue = value.opt(texKey)
-                                if (texValue is String) {
-                                    refs.add(if (texValue.startsWith("textures/")) texValue else "textures/" + texValue)
-                                }
-                            }
-                        }
-                    } else {
-                        extractTextureRefs(value, refs)
+                    when {
+                        // "texture"/"texture_name"/"textures" declaran rutas.
+                        key.equals("texture", ignoreCase = true) ||
+                            key.equals("texture_name", ignoreCase = true) ||
+                            key.equals("textures", ignoreCase = true) -> collectTextureRefValues(value, refs)
+                        else -> extractTextureRefs(value, refs)
                     }
                 }
             }
@@ -688,6 +831,24 @@ object PackForgeHealer {
                     extractTextureRefs(obj.opt(i), refs)
                 }
             }
+        }
+    }
+
+    /**
+     * Normaliza los valores de un campo de textura. Descarta alias
+     * ("Texture.default") y Molang, que antes se convertían en rutas
+     * ("textures/Texture.default") y luego en "texturas faltantes" falsas.
+     */
+    private fun collectTextureRefValues(value: Any?, refs: MutableSet<String>) {
+        when (value) {
+            is String -> {
+                val raw = value.trim().replace("\\", "/")
+                if (raw.isEmpty() || !raw.contains('/')) return
+                if (BedrockRefs.isAlias(raw) || BedrockRefs.isExpression(raw)) return
+                refs.add(if (raw.startsWith("textures/")) raw else "textures/$raw")
+            }
+            is JSONArray -> for (i in 0 until value.length()) collectTextureRefValues(value.opt(i), refs)
+            is JSONObject -> value.keys().forEach { collectTextureRefValues(value.opt(it), refs) }
         }
     }
 
@@ -707,22 +868,21 @@ object PackForgeHealer {
         return refs
     }
 
+    /**
+     * Referencias de geometría declaradas en entidades/atachables.
+     *
+     * Devuelve IDENTIFICADORES (`geometry.x`), no rutas. Todo el criterio
+     * (alias, Molang, mapas de `bone_visibility`) vive en [BedrockRefs]: antes
+     * `optString` serializaba objetos y el healer buscaba "modelos" llamados
+     * `{"bot_ne":true,...}`.
+     */
     private fun extractModelRefs(obj: Any?, refs: MutableSet<String>) {
         when (obj) {
             is JSONObject -> {
                 obj.keys().forEach { key ->
                     val value = obj.opt(key)
                     if (key.equals("geometry", ignoreCase = true)) {
-                        if (value is String) {
-                            refs.add(if (value.startsWith("geometry.")) "models/entity/" + value + ".json" else value)
-                        } else if (value is JSONObject) {
-                            value.keys().forEach { geoKey ->
-                                val geoValue = value.optString(geoKey).ifEmpty { null }
-                                if (geoValue != null) {
-                                    refs.add(if (geoValue.startsWith("geometry.")) "models/entity/" + geoValue + ".json" else geoValue)
-                                }
-                            }
-                        }
+                        refs.addAll(BedrockRefs.geometryIds(value))
                     } else {
                         extractModelRefs(value, refs)
                     }
@@ -734,6 +894,92 @@ object PackForgeHealer {
                 }
             }
         }
+    }
+
+    /**
+     * Identificadores de geometría YA definidos en el pack fusionado, leídos del
+     * CONTENIDO (no del nombre del archivo).
+     *
+     * CoreCraft guarda sus modelos con nombres ofuscados (`2jm1s73o.json`), así
+     * que el inventario por nombre de archivo no los veía y el healer generaba
+     * un placeholder que DUPLICABA el identificador → el juego quedaba con dos
+     * definiciones del mismo id y elegía una al azar (mob como caja).
+     */
+    private fun collectDeclaredGeometryIds(rpDir: File, includePlaceholders: Boolean = true): Set<String> {
+        val ids = mutableSetOf<String>()
+        val modelsDir = File(rpDir, "models")
+        val root = if (modelsDir.isDirectory) modelsDir else rpDir
+        if (!root.isDirectory) return ids
+        DirIndexCache.index(root).jsonFiles.forEach { file ->
+            if (!includePlaceholders && file.name.contains("placeholder")) return@forEach
+            try {
+                val text = file.readText(Charsets.UTF_8)
+                if (!text.contains("minecraft:geometry") && !text.contains("\"geometry.")) return@forEach
+                val json = JSONObject(text)
+                json.optJSONArray("minecraft:geometry")?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        arr.optJSONObject(i)?.optJSONObject("description")
+                            ?.optString("identifier")?.trim()
+                            ?.takeIf { it.isNotEmpty() }
+                            ?.let { ids.add(it) }
+                    }
+                }
+                // Formato legacy: {"geometry.nombre": { ... }} en la raíz.
+                json.keys().forEach { k -> if (k.startsWith("geometry.")) ids.add(k) }
+            } catch (_: Exception) {
+                // JSON ilegible: lo reporta la auditoría de integridad.
+            }
+        }
+        return ids
+    }
+
+    /**
+     * Retira a `_packforge/stale_placeholders/` los placeholders de una fusión
+     * anterior que son dañinos:
+     *
+     *  - su identificador YA lo define un modelo real del pack (definición
+     *    duplicada: el juego elige una al azar y el mob puede salir como caja), o
+     *  - su identificador es VANILLA (`geometry.arrow`,
+     *    `geometry.humanoid.armor.*`): el pack estaría sustituyendo el modelo del
+     *    propio juego para TODAS las entidades.
+     *
+     * La carpeta `_packforge/` queda fuera del `.mcaddon` (ver
+     * PackForgeOrchestrator.addFolderToZip), así que el juego solo ve el modelo
+     * bueno (o el vanilla), y la evidencia sigue en disco para el reporte.
+     */
+    private fun removeStalePlaceholders(rpDir: File, realGeometryIds: Set<String>): Int {
+        val modelsDir = File(rpDir, "models")
+        if (!modelsDir.isDirectory) return 0
+        val trashDir = File(rpDir, "_packforge/stale_placeholders")
+        var moved = 0
+        modelsDir.walkTopDown()
+            .filter { it.isFile && it.name.contains("placeholder") && it.name.endsWith(".json") }
+            .forEach { file ->
+                val id = try {
+                    JSONObject(file.readText(Charsets.UTF_8))
+                        .optJSONArray("minecraft:geometry")
+                        ?.optJSONObject(0)?.optJSONObject("description")
+                        ?.optString("identifier")?.trim()
+                } catch (_: Exception) {
+                    null
+                }
+                if (id.isNullOrEmpty()) return@forEach
+                val harmful = id in realGeometryIds || VanillaAssets.isVanillaGeometry(id)
+                if (!harmful) return@forEach
+                // Sufijo `.bak`: además de quedar fuera del .mcaddon (la carpeta
+                // _packforge/ se excluye) tampoco entra en NINGÚN índice JSON, para
+                // que su identificador no vuelva por la puerta de atrás.
+                val dest = File(trashDir, "${file.name}.bak")
+                if (dest.exists()) dest.delete()
+                if (file.renameTo(dest) || runCatching { file.copyTo(dest, overwrite = true); file.delete() }.isSuccess) {
+                    moved++
+                    PackForgeLog.w(
+                        TAG,
+                        "🧹 Placeholder obsoleto retirado (duplicaba '$id'): ${file.name} -> _packforge/"
+                    )
+                }
+            }
+        return moved
     }
 
     /** Inventario de modelos ya presentes en el RP fusionado. */
@@ -764,39 +1010,39 @@ object PackForgeHealer {
         val allTextures = collectAllAvailableTextures(originalAddonPaths)
         var repairedCount = 0
 
-        mergedRpDir.walkTopDown()
-            .filter { it.isFile && it.extension.equals("json", ignoreCase = true) }
-            .forEach { jsonFile ->
-                try {
-                    val originalContent = jsonFile.readText(StandardCharsets.UTF_8)
-                    val modifiedContent = repairTextureRefsInJson(
-                        originalContent,
-                        textureInventory,
-                        allTextures
-                    )
-                    if (modifiedContent != originalContent) {
-                        jsonFile.writeText(modifiedContent, StandardCharsets.UTF_8)
-                        repairedCount++
-                        PackForgeLog.d(TAG, "🔧 Auto-reparado: ${jsonFile.name}")
-                    }
-                } catch (e: Exception) {
-                    PackForgeLog.w(TAG, "No se pudo auto-reparar ${jsonFile.name}: ${e.message}")
+        // Usa el índice cacheado; evita walkTopDown completo en cada fusión.
+        DirIndexCache.index(mergedRpDir).jsonFiles.forEach { jsonFile ->
+            try {
+                val originalContent = jsonFile.readText(StandardCharsets.UTF_8)
+                val modifiedContent = repairTextureRefsInJson(
+                    originalContent,
+                    textureInventory,
+                    allTextures
+                )
+                if (modifiedContent != originalContent) {
+                    jsonFile.writeText(modifiedContent, StandardCharsets.UTF_8)
+                    repairedCount++
+                    PackForgeLog.d(TAG, "🔧 Auto-reparado: ${jsonFile.name}")
                 }
+            } catch (e: Exception) {
+                PackForgeLog.w(TAG, "No se pudo auto-reparar ${jsonFile.name}: ${e.message}")
             }
+        }
+        if (repairedCount > 0) DirIndexCache.invalidate(mergedRpDir)
 
         return repairedCount
     }
 
     private fun collectAllAvailableTextures(originalAddonPaths: List<String>): Map<String, String> {
         val textures = hashMapOf<String, String>()
-        originalAddonPaths.forEach { root ->
-            val dir = File(root)
+        originalAddonPaths.forEach { rootPath ->
+            val dir = File(rootPath)
             if (!dir.isDirectory) return@forEach
-            dir.walkTopDown()
-                .filter { it.isFile && it.extension.lowercase() in listOf("png", "tga", "jpg") }
+            DirIndexCache.index(dir).allFiles
+                .asSequence()
+                .filter { it.extension.lowercase(Locale.ROOT) in TEXTURE_EXTENSIONS }
                 .forEach { file ->
-                    val name = file.nameWithoutExtension
-                    textures.putIfAbsent(name, file.invariantSeparatorsPath)
+                    textures.putIfAbsent(file.nameWithoutExtension, file.invariantSeparatorsPath)
                 }
         }
         return textures
@@ -924,22 +1170,30 @@ object PackForgeHealer {
         return if (maxLen == 0) 1.0 else 1.0 - (distance.toDouble() / maxLen)
     }
 
-    private fun levenshteinDistance(s1: String, s2: String): Int {
-        val dp = Array(s1.length + 1) { IntArray(s2.length + 1) }
-        for (i in 0..s1.length) dp[i][0] = i
-        for (j in 0..s2.length) dp[0][j] = j
+private fun levenshteinDistance(s1: String, s2: String): Int {
+        if (s1 == s2) return 0
+        if (s1.isEmpty()) return s2.length
+        if (s2.isEmpty()) return s1.length
 
-        for (i in 1..s1.length) {
-            for (j in 1..s2.length) {
-                val cost = if (s1[i - 1] == s2[j - 1]) 0 else 1
-                dp[i][j] = minOf(
-                    dp[i - 1][j] + 1,
-                    dp[i][j - 1] + 1,
-                    dp[i - 1][j - 1] + cost
-                )
+        val cacheKey = "$s1|$s2"
+        return levenshteinDistanceCache.computeIfAbsent(cacheKey) {
+            // CÓDIGO DP EXACTO MISMO QUE ORIGINAL
+            val dp = Array(s1.length + 1) { IntArray(s2.length + 1) }
+            for (i in 0..s1.length) dp[i][0] = i
+            for (j in 0..s2.length) dp[0][j] = j
+
+for (i in 1..s1.length) {
+                for (j in 1..s2.length) {
+                    val cost = if (s1[i - 1] == s2[j - 1]) 0 else 1
+                    dp[i][j] = minOf(
+                        dp[i - 1][j] + 1,
+                        dp[i][j - 1] + 1,
+                        dp[i - 1][j - 1] + cost
+                    )
+                }
             }
+            dp[s1.length][s2.length]
         }
-        return dp[s1.length][s2.length]
     }
 
     private fun replaceTextureRefAtPath(

@@ -314,4 +314,3 @@ object CustomComponentRewriter {
             lower.startsWith("item_behaviors/")
     }
 }
-

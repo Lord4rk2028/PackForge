@@ -1,5 +1,6 @@
 package com.packforge.app.domain.engine
 
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -120,7 +121,9 @@ class SafeResolveTextureExtensionTest {
         val (sources, merged) = stage("png", "textures/entity/steve", "textures/entity/steve")
 
         DirIndexCache.clear()
-        val notes = EntityDependencyResolver.resolve(listOf(sources), merged)
+        val notes = runBlocking {
+            EntityDependencyResolver.resolve(listOf(sources), merged)
+        }
 
         assertTrue(
             "La textura SÍ está en disco como .png: no debe reportarse ausente. Notas: $notes",
@@ -135,7 +138,9 @@ class SafeResolveTextureExtensionTest {
                 stage("ext_$ext", "textures/entity/steve", "textures/entity/steve", ext)
 
             DirIndexCache.clear()
-            val notes = EntityDependencyResolver.resolve(listOf(sources), merged)
+            val notes = runBlocking {
+                EntityDependencyResolver.resolve(listOf(sources), merged)
+            }
 
             assertTrue(
                 "La extensión .$ext está en disco y no debe reportarse ausente. Notas: $notes",
@@ -151,7 +156,9 @@ class SafeResolveTextureExtensionTest {
         val (sources, merged) = stage("missing", "textures/entity/inexistente", null)
 
         DirIndexCache.clear()
-        val notes = EntityDependencyResolver.resolve(listOf(sources), merged)
+        val notes = runBlocking {
+            EntityDependencyResolver.resolve(listOf(sources), merged)
+        }
 
         assertTrue(
             "Una textura realmente ausente DEBE reportarse. Notas: $notes",
@@ -170,7 +177,9 @@ class SafeResolveTextureExtensionTest {
         File(merged, "textures/entity/sonido.ogg").writeBytes(byteArrayOf(1, 2, 3))
 
         DirIndexCache.clear()
-        val notes = EntityDependencyResolver.resolve(listOf(sources), merged)
+        val notes = runBlocking {
+            EntityDependencyResolver.resolve(listOf(sources), merged)
+        }
 
         assertTrue(
             "Un archivo de audio no debe satisfaer una referencia de textura. Notas: $notes",
@@ -188,7 +197,9 @@ class SafeResolveTextureExtensionTest {
         write(merged, "entity/golem.json", entityJson("geometry.pack.golem", "../../etc/passwd"))
 
      DirIndexCache.clear()
-  EntityDependencyResolver.resolve(listOf(sources), merged)
+  runBlocking {
+    EntityDependencyResolver.resolve(listOf(sources), merged)
+  }
 
         val details = missingTextureDetails()
         assertTrue(
@@ -210,7 +221,9 @@ class SafeResolveTextureExtensionTest {
         )
 
         DirIndexCache.clear()
-        EntityDependencyResolver.resolve(listOf(sources), merged)
+        runBlocking {
+            EntityDependencyResolver.resolve(listOf(sources), merged)
+        }
 
         assertFalse(
             "No debe crearse ningún archivo fuera del directorio del pack",

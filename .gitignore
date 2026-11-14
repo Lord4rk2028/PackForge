@@ -92,3 +92,10 @@ keystore.properties
 
 # â”€â”€â”€ Datos vanilla generados (no versionar) â”€â”€â”€
 vanilla_*.txt
+
+# Evidencia de auditorías locales (packs extraídos, scripts de análisis)
+.research/
+
+# ...pero el catálogo SÍ se versiona: es un asset de la app (fuente de verdad
+# de 'esto lo resuelve el juego, no lo reportes').
+!app/src/main/assets/vanilla_all_keys_complete.txt
