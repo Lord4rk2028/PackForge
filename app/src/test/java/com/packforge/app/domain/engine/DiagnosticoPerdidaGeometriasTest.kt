@@ -33,8 +33,9 @@ class DiagnosticoPerdidaGeometriasTest {
 
     @Test
     fun `cuantas geometrias sobreviven a mergeGeometryFiles`() {
-        val src = File(System.getenv("USERPROFILE"), "Downloads/core-craft_v1.2.8.mcaddon")
-        assumeTrue("Falta el addon real", src.isFile)
+        val srcFound = TestFixtures.addon("core-craft_v1.2.8.mcaddon")
+        assumeTrue(TestFixtures.describe("core-craft_v1.2.8.mcaddon"), srcFound != null)
+        val src = srcFound!!
 
         val original = declaradasEn(src)
         println("DIAG | geometrias en el ORIGINAL: ${original.size}")

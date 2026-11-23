@@ -187,6 +187,23 @@ object ConflictEngine {
         c.affectedAddonIds.sorted().joinToString(",")
 
     // ─── 1. CONFLICTOS DE SCRIPTS ────────────────────────────
+    //
+    // ⭐ TICKET-CORE-004 — ESTO YA NO ES UN CONFLICTO QUE EL USUARIO DEBA RESOLVER.
+    //
+    // Antes se creaba UN conflicto por "varios addons traen scripts", CRITICAL y
+    // no descartable, con todos los addons dentro: la pantalla pedía elegir cuál
+    // gana (Simple Gravestones vs Simple Economy) y esa elección no existe.
+    //
+    // El motor NO sobrescribe scripts. `ScriptRouterEngine` enruta el árbol de
+    // cada addon a `scripts/modules/<addon_id>/` y genera un `scripts/main.js`
+    // que carga TODOS, con las dependencias `@minecraft/*` armonizadas a la
+    // versión más alta y su propio entry declarado. Elegir un ganador ahí
+    // significaría tirar los scripts de otro addon: el router ya resuelve el
+    // caso y los conserva.
+    //
+    // Por eso ahora es un conflicto MERGE auto-resuelto (informativo): el
+    // usuario no elige, y la tarjeta muestra la unión donde antes mostraba la
+    // disyuntiva. El detalle explica qué hará la fusión con cada addon.
     private fun detectScriptConflicts(active: List<Addon>): List<Conflict> {
         val withScripts = active.filter { it.hasScripts }
         if (withScripts.size < 2) return emptyList()
@@ -195,19 +212,25 @@ object ConflictEngine {
             Conflict(
                 id = UUID.randomUUID().toString(),
                 type = ConflictType.SCRIPT_CONFLICT,
-                severity = ConflictSeverity.CRITICAL,
-                title = "Conflicto de Scripts",
-                description = "Múltiples addons tienen scripts de comportamiento. " +
-                    "Los scripts pueden interferir entre sí causando crashes o " +
-                    "comportamiento impredecible en el juego.",
+                severity = ConflictSeverity.MEDIUM,
+                title = "Scripts: se fusionan todos (no hay que elegir)",
+                description = "Los ${withScripts.size} addons traen scripts y la fusión " +
+                    "los CONSERVA a los ${withScripts.size}. No se sobrescribe ninguno: " +
+                    "no tienes que elegir un ganador.",
                 technicalDetail = "Addons con scripts: " +
                     withScripts.joinToString(", ") { it.name } +
-                    ". Los scripts de Bedrock se ejecutan en el mismo contexto " +
-                    "y pueden sobrescribirse mutuamente.",
+                    ". ScriptRouterEngine aísla el código de cada addon en " +
+                    "scripts/modules/<addon_id>/ para que sus imports relativos " +
+                    "sigan resolviéndose, y genera un scripts/main.js que carga " +
+                    "todos los entry points. Las dependencias @minecraft/* se " +
+                    "armonizan a la versión más alta declarada y el manifest se " +
+                    "actualiza sin duplicados. Elige solo si de verdad quieres " +
+                    "descartar alguno de los addons.",
                 affectedAddonIds = withScripts.map { it.id },
                 affectedFile = "scripts/",
-                resolution = ConflictResolution.UNRESOLVED,
-                canBeDismissed = false
+                resolution = ConflictResolution.MERGE,
+                isAutoResolved = true,
+                canBeDismissed = true
             )
         )
     }

@@ -92,14 +92,31 @@ object MergeReferenceValidator {
      * @param rpDir Resource Pack combinado (puede ser null)
      * @param sourceDirs Directorios de origen de los addons (para índice unificado)
      */
-    fun validate(bpDir: File?, rpDir: File?, sourceDirs: List<File> = emptyList()): Report {
+    fun validate(
+        bpDir: File?,
+        rpDir: File?,
+        sourceDirs: List<File> = emptyList(),
+        /**
+         * ⭐ TICKET-CORE-013 — Índice ya construido por el orquestador.
+         *
+         * El grafo de dependencias (`DependencyDAG`) y este validador recorrían y
+         * parseaban los mismos ficheros por separado; con los dos, más el de la
+         * Fase 3D, el índice se construía TRES veces por exportación. Cuando el
+         * orquestador ya tiene uno lo pasa aquí y se evita la segunda pasada.
+         *
+         * Es seguro porque lo único que este validador consume es
+         * `mergedAnimationIds`, que depende EXCLUSIVAMENTE del pack fusionado y
+         * no de las fuentes.
+         */
+        unifiedIndex: GeometryAnimRCIndex.IndexResult? = null
+    ): Report {
         // Índice unificado para animaciones y render controllers (evita re-escanear)
-        val unifiedIndex = GeometryAnimRCIndex.build(sourceDirs, rpDir)
+        val indice = unifiedIndex ?: GeometryAnimRCIndex.build(sourceDirs, rpDir)
         
         val particleIds = collectParticleIdentifiers(rpDir)
         // Usar IDs del pack fusionado (mergedAnimationIds/mergedRenderControllerIds)
         // en lugar de sourceDirs, porque el test valida el pack YA fusionado
-        val animationIds = unifiedIndex.mergedAnimationIds
+        val animationIds = indice.mergedAnimationIds
         val materialIds = collectMaterialIdentifiers(rpDir)
         val registeredComponents = collectRegisteredComponents(bpDir)
 

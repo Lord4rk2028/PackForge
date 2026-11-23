@@ -26,6 +26,54 @@ object ManifestGenerator {
     //   5. UUIDs nuevos (header + modules)
     //   6. fallback: si el BP fusionado tiene scripts/ pero se perdió el
     //      módulo script, agregarlo manualmente.
+    //   7. ⭐ TICKET-CORE-005: las dependencias POR UUID que citaban los
+    //      manifests originales se REMAPEAN a los UUID nuevos; si se
+    //      conservan los viejos, Bedrock no resuelve la dependencia y no
+    //      inicializa el pack (los scripts del addon nunca corren).
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * ⭐ TICKET-CORE-005 — Mapa de REMAPEO de UUIDs `original → nuevo`.
+     *
+     * Al fusionar, cada pack recibe UUIDs nuevos (header y módulos). Pero las
+     * `dependencies` copiadas de los manifests ORIGINALES siguen citando los
+     * UUIDs VIEJOS, que ya no existen en el .mcaddon. Bedrock marca entonces
+     * esas dependencias como no resueltas y **no inicializa el pack**: los
+     * bloques aparecen pero su script nunca corre, la tumba nunca se genera y
+     * el HUD no se ancla.
+     *
+     * Esta clase registra `viejo → nuevo` para que [buildMergedBpManifest] y
+     * [buildMergedRpManifest] reescriban las dependencias por UUID antes de
+     * devolver el manifest. Las dependencias de scripting del motor NO
+     * se tocan: son del motor, no del pack.
+     */
+    class UuidRemap {
+        /** `uuid original (lowercase) → uuid nuevo` */
+        private val headerMappings = LinkedHashMap<String, String>()
+
+        fun remember(old: String?, new: String?) {
+            val o = old?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return
+            val n = new?.trim()?.takeIf { it.isNotEmpty() } ?: return
+            if (o != n.lowercase()) headerMappings[o] = n
+        }
+
+        fun resolve(old: String): String? = headerMappings[old.trim().lowercase()]
+
+        /** ¿Se remapeó este UUID? (los viejos ya no existen en el pack) */
+        fun isStale(uuid: String): Boolean =
+            headerMappings.containsKey(uuid.trim().lowercase())
+
+        fun size(): Int = headerMappings.size
+    }
+    //
+    // El manifest final DEBE conservar:
+    //   1. max min_engine_version de los addons (nunca [1,0,0])
+    //   2. módulos script (type "script", language javascript)
+    //   3. dependencias @minecraft/* (server, server-ui, vanilla…)
+    //   4. la vinculación BP↔RP con el nuevo UUID del RP fusionado
+    //   5. UUIDs nuevos (header + modules)
+    //   6. fallback: si el BP fusionado tiene scripts/ pero se perdió el
+    //      módulo script, agregarlo manualmente.
     // ══════════════════════════════════════════════════════════════════
 
     /**
@@ -46,9 +94,20 @@ object ManifestGenerator {
         hasScriptsFolder: Boolean,
         packAuthor: String = "",
         packVersion: String = "1.0.0",
-        packDescription: String = ""
+        packDescription: String = "",
+        /** ⭐ TICKET-CORE-005: UUIDs nuevos de cada BP fusionado, para remapear dependencias. */
+        remap: UuidRemap? = null,
+        /**
+         * ⭐ TICKET-CORE-005: UUID de header que DEBE llevar el BP fusionado.
+         *
+         * El orquestador tiene que conocerlo antes de construir el RP, para que
+         * el RP apunte al BP real y no a un UUID que este generador se inventa.
+         * Si se deja null (llamadas antiguas) se genera uno aleatorio.
+         */
+        forcedBpHeaderUuid: String? = null
     ): JSONObject {
-        val newBpHeaderUuid = UUID.randomUUID().toString()
+        val newBpHeaderUuid = forcedBpHeaderUuid?.takeIf { it.isNotBlank() }
+            ?: UUID.randomUUID().toString()
         val modules = JSONArray()
         val dependencies = JSONArray()
         val seenDeps = mutableSetOf<String>()
@@ -136,6 +195,19 @@ object ManifestGenerator {
                             continue
                         }
 
+                        // ⭐ TICKET-CORE-005 — Dependencia por UUID hacia un BP ORIGINAL:
+                        // ese pack ya NO existe con su uuid viejo en el fusionado (el
+                        // header se regeneró), así que la dependencia quedaría colgando
+                        // y Bedrock NO inicializa el pack. Se reescribe al nuevo.
+                        //
+                        // Caso real medido: `simple-gravestone_RP` declara depender del
+                        // `simple-gravestone_BP` (`349fc900-…`). Como la fusión une RP y
+                        // BP en un solo paquete, esa dependencia circular se RESUELVE
+                        // quitándola: el RP ya viaja junto a su BP.
+                        if (uuid.isNotEmpty() && remap != null && remap.isStale(uuid)) {
+                            continue
+                        }
+
                         // Conservar toda dependencia; duplicados → mayor versión.
                         // IMPORTANTE: los módulos de scripting de Bedrock se declaran con
                         // "module_name" (p.ej. {"module_name":"@minecraft/server"}), NO con
@@ -183,6 +255,7 @@ object ManifestGenerator {
             Log.d(MANIFEST_TAG, "Fallback: módulo script agregado (carpeta scripts/ detectada)")
         }
 
+        val subpacks = collectSubpacks(originalBpManifests)
         val manifest = JSONObject().apply {
             put("format_version", 2)
             put("header", JSONObject().apply {
@@ -205,6 +278,10 @@ object ManifestGenerator {
         // REGLA 7: propagar capacidades/experimentos al header fusionado
         if (capabilities.isNotEmpty()) {
             manifest.getJSONObject("header").put("capabilities", JSONArray(capabilities.toList()))
+        }
+        // SUBPACKS: sin esta entrada Bedrock ignora las carpetas de variantes.
+        if (subpacks.length() > 0) {
+            manifest.getJSONObject("header").put("subpacks", subpacks)
         }
         // B2 (auditoría CORE): NO inyectar capabilities a ciegas. ANTES se
         // agregaba `dynamic_light` a todo pack con scripts/, incluso si ningún
@@ -297,7 +374,9 @@ object ManifestGenerator {
         newBpHeaderUuid: String? = null,
         packAuthor: String = "",
         packVersion: String = "1.0.0",
-        packDescription: String = ""
+        packDescription: String = "",
+        /** ⭐ TICKET-CORE-005: UUIDs viejos de los BPs ya fusionados (no re-añadir). */
+        remap: UuidRemap? = null
     ): JSONObject {
         val newRpHeaderUuid = UUID.randomUUID().toString()
         val modules = JSONArray()
@@ -317,23 +396,12 @@ object ManifestGenerator {
             try {
                 val json = JSONObject(file.readText(Charsets.UTF_8))
 
-                json.optJSONObject("header")
-                    ?.optJSONArray("min_engine_version")
-                    ?.let { mev ->
-                        val v = (0 until mev.length()).mapNotNull { idx ->
-                            mev.optInt(idx, -1).takeIf { it >= 0 }
-                        }
-                        if (v.isNotEmpty() && compareVersion(v, minEngine) > 0) {
-                            minEngine = v
-                        }
-                    }
+                minEngineOf(json)?.let { v ->
+                    if (compareVersion(v, minEngine) > 0) minEngine = v
+                }
 
                 // REGLA 7: conservar flags de experimentación/capacidades del header
-                json.optJSONObject("header")?.optJSONArray("capabilities")?.let { caps ->
-                    for (i in 0 until caps.length()) {
-                        caps.optString(i).takeIf { it.isNotBlank() }?.let { capabilities.add(it) }
-                    }
-                }
+                capabilities.addAll(capabilitiesOf(json))
 
                 // Conservar módulos adicionales que no sean resources puros (ej. client_data)
                 json.optJSONArray("modules")?.let { mods ->
@@ -353,6 +421,16 @@ object ManifestGenerator {
                 json.optJSONArray("dependencies")?.let { deps ->
                     for (i in 0 until deps.length()) {
                         val dep = deps.optJSONObject(i) ?: continue
+                        // ⭐ TICKET-CORE-005 — Un RP que dependía de su BP por uuid
+                        // viejo (simple-gravestone_RP → 349fc900-…, que es
+                        // simple-gravestone_BP) ya no lo encontrará: el BP fusionado
+                        // tiene otro header.uuid. Esa dependencia se descarta y el
+                        // vínculo real lo pone el BP→RP de abajo (el .mcaddon activa
+                        // ambos juntos, sin dependencia circular).
+                        val depUuid = dep.optString("uuid", "").lowercase()
+                        if (depUuid.isNotEmpty() && remap != null && remap.isStale(depUuid)) {
+                            continue
+                        }
                         val depKey = dependencyKey(dep)
                         if (depKey.isEmpty()) continue
                         if (seenDeps.add(depKey)) {
@@ -376,6 +454,7 @@ object ManifestGenerator {
             })
         }
 
+        val subpacks = collectSubpacks(originalRpManifests)
         val manifest = JSONObject().apply {
             put("format_version", 2)
             put("header", JSONObject().apply {
@@ -398,6 +477,10 @@ object ManifestGenerator {
         // REGLA 7: propagar capacidades/experimentos al header fusionado
         if (capabilities.isNotEmpty()) {
             manifest.getJSONObject("header").put("capabilities", JSONArray(capabilities.toList()))
+        }
+        // SUBPACKS: sin esta entrada Bedrock ignora las carpetas de variantes.
+        if (subpacks.length() > 0) {
+            manifest.getJSONObject("header").put("subpacks", subpacks)
         }
 
         // LOG OBLIGATORIO: manifiesto del RP completo
@@ -423,7 +506,7 @@ object ManifestGenerator {
      * Se conserva (deprecado) solo como referencia histórica; NO usar.
      */
     @Deprecated(
-        message = "Código muerto con versiones hardcodeadas de @minecraft/*. " +
+        message = "Código muerto con versiones hardcodeadas de los módulos del motor. " +
             "Usar buildMergedBpManifest, que preserva y maximiza las versiones originales.",
         level = DeprecationLevel.WARNING
     )
@@ -514,6 +597,190 @@ object ManifestGenerator {
      * GENERADOR EXACTO DEL MANIFEST DEL RP
      * ═══════════════════════════════════════════
      */
+    /**
+     * 3.6 — Aplica al manifiesto RP fusionado lo que debe NEGOCIARSE con los
+     * manifiestos originales:
+     *
+     *  · `min_engine_version` = máximo declarado (con el suelo histórico
+     *    `1.21.0` que ya usaban BP y RP). El RP se generaba con un `1.21.0`
+     *    FIJO: si un addon exigía 1.22 el pack se instalaba y no cargaba.
+     *  · `capabilities` = unión de las declaradas (p. ej. `pbr`, `raytraced`).
+     *    El RP las perdía todas porque `generateRpManifest` parte de cero.
+     *  · `subpacks` (3.5) con las carpetas ya desambiguadas.
+     *
+     * No se toca `pack_scope`: el modpack se instala como recurso global y
+     * heredar `world` de un addon lo haría depender de un mundo concreto.
+     */
+    data class RpHeaderSettings(
+        val minEngineVersion: List<Int>,
+        val capabilities: List<String>,
+        val subpacks: Int
+    )
+
+    fun applyOriginalRpSettings(
+        target: JSONObject,
+        originalManifests: List<File>
+    ): RpHeaderSettings {
+        val header = target.optJSONObject("header")
+            ?: return RpHeaderSettings(emptyList(), emptyList(), 0)
+
+        var minEngine = listOf(1, 21, 0)
+        val capabilities = linkedSetOf<String>()
+
+        for (file in originalManifests) {
+            val json = try {
+                JSONObject(file.readText(Charsets.UTF_8))
+            } catch (e: Exception) {
+                PackForgeLog.w(MANIFEST_TAG, "min_engine/capabilities: ${file.name}: ${e.message}")
+                continue
+            }
+            minEngineOf(json)?.let { v ->
+                if (compareVersion(v, minEngine) > 0) minEngine = v
+            }
+            capabilities.addAll(capabilitiesOf(json))
+        }
+
+        header.put("min_engine_version", JSONArray(minEngine))
+
+        if (capabilities.isNotEmpty()) {
+            val combinadas = linkedSetOf<String>()
+            header.optJSONArray("capabilities")?.let { actuales ->
+                for (i in 0 until actuales.length()) {
+                    actuales.optString(i).takeIf { it.isNotBlank() }?.let(combinadas::add)
+                }
+            }
+            combinadas.addAll(capabilities)
+            header.put("capabilities", JSONArray(combinadas.toList()))
+        }
+
+        val subpacks = applySubpacksToManifest(target, originalManifests)
+        return RpHeaderSettings(minEngine, capabilities.toList(), subpacks)
+    }
+
+    /** `header.min_engine_version` como lista, o `null` si no es interpretable. */
+    private fun minEngineOf(json: JSONObject): List<Int>? {
+        val mev = json.optJSONObject("header")?.optJSONArray("min_engine_version") ?: return null
+        val v = (0 until mev.length()).mapNotNull { i -> mev.optInt(i, -1).takeIf { it >= 0 } }
+        return v.takeIf { it.isNotEmpty() }
+    }
+
+    /** `header.capabilities` no vacías, en orden de declaración. */
+    private fun capabilitiesOf(json: JSONObject): List<String> {
+        val caps = json.optJSONObject("header")?.optJSONArray("capabilities") ?: return emptyList()
+        return (0 until caps.length()).mapNotNull {
+            caps.optString(it).takeIf { s -> s.isNotBlank() }
+        }
+    }
+
+    /** Una dependencia por UUID que no resuelve dentro del `.mcaddon`. */
+    data class ExternalDependency(
+        val uuid: String,
+        val version: String,
+        val declaredBy: String
+    )
+
+    /**
+     * 3.10 — Bedrock **no inicializa** un pack cuyas `dependencies` por UUID no
+     * están instaladas: el `.mcaddon` entero queda muerto (ni datos ni scripts)
+     * y el reporte no decía por qué. Un addon que dependía de otro pack que el
+     * usuario no incluyó en la fusión bastaba para provocarlo.
+     *
+     * Se eliminan las dependencias por UUID que no pertenecen a los packs
+     * fusionados. Las de `module_name` (`@minecraft/...`) se conservan siempre:
+     * esas las resuelve el motor, no otro pack.
+     *
+     * @param allowedUuids UUID de header de los packs que SÍ van en el `.mcaddon`.
+     * @return dependencias eliminadas, para que el reporte las muestre.
+     */
+    fun dropExternalUuidDependencies(
+        manifest: JSONObject,
+        allowedUuids: Set<String>,
+        declaredBy: String = "modpack"
+    ): List<ExternalDependency> {
+        val deps = manifest.optJSONArray("dependencies") ?: return emptyList()
+        val permitidos = allowedUuids.map { it.trim().lowercase() }.toSet()
+        val conservadas = JSONArray()
+        val eliminadas = mutableListOf<ExternalDependency>()
+
+        for (i in 0 until deps.length()) {
+            val dep = deps.optJSONObject(i) ?: continue
+            val uuid = dep.optString("uuid", "").trim()
+            if (uuid.isEmpty() || uuid.lowercase() in permitidos) {
+                conservadas.put(dep)
+                continue
+            }
+            eliminadas += ExternalDependency(
+                uuid = uuid,
+                version = versionText(dep.opt("version")),
+                declaredBy = declaredBy
+            )
+        }
+
+        if (eliminadas.isNotEmpty()) manifest.put("dependencies", conservadas)
+        return eliminadas
+    }
+
+    /** Versión legible de una dependencia (array o cadena). */
+    private fun versionText(raw: Any?): String = when (raw) {
+        is JSONArray -> (0 until raw.length()).joinToString(".") { raw.optString(it) }
+        null -> ""
+        else -> raw.toString()
+    }
+
+    /**
+     * SUBPACKS (3.5) — Recolecta `header.subpacks` de los manifiestos originales
+     * conservando el orden de fusión, con la carpeta ya desambiguada por
+     * [SubpackRegistry]. Sin `plan` previo devuelve las carpetas originales, así
+     * que las llamadas directas al generador (tests) no pierden las variantes.
+     */
+    private fun collectSubpacks(manifiestos: List<File>): JSONArray {
+        val salida = JSONArray()
+        val vistos = mutableSetOf<String>()
+        for (file in manifiestos) {
+            val json = try {
+                JSONObject(file.readText(Charsets.UTF_8))
+            } catch (e: Exception) {
+                PackForgeLog.w(MANIFEST_TAG, "Subpacks: no se pudo leer ${file.name}: ${e.message}")
+                continue
+            }
+            val arr = json.optJSONObject("header")?.optJSONArray("subpacks") ?: continue
+            for (i in 0 until arr.length()) {
+                val sp = arr.optJSONObject(i) ?: continue
+                val original = sp.optString("folder_name", "").trim()
+                if (original.isEmpty()) continue
+                val final = SubpackRegistry.finalFolderFor(file, original)
+                val copia = JSONObject(sp.toString())
+                copia.put("folder_name", final)
+                if (vistos.add(final.lowercase())) salida.put(copia)
+            }
+        }
+        return salida
+    }
+
+    /**
+     * Añade al manifiesto las variantes por nivel de memoria de los packs
+     * originales (variantes HD/SD). Devuelve cuántas se conservaron; 0 significa
+     * que ninguno de los addons usaba `subpacks`.
+     */
+    fun applySubpacksToManifest(target: JSONObject, originalManifests: List<File>): Int {
+        val header = target.optJSONObject("header") ?: return 0
+        val subpacks = collectSubpacks(originalManifests)
+        if (subpacks.length() == 0) return 0
+        val existentes = header.optJSONArray("subpacks")
+        if (existentes == null) {
+            header.put("subpacks", subpacks)
+        } else {
+            val carpetas = (0 until existentes.length())
+                .mapNotNull { existentes.optJSONObject(it)?.optString("folder_name", "") }
+                .toMutableSet()
+            for (i in 0 until subpacks.length()) {
+                val sp = subpacks.getJSONObject(i)
+                if (carpetas.add(sp.getString("folder_name"))) existentes.put(sp)
+            }
+        }
+        return subpacks.length()
+    }
+
     fun generateRpManifest(
         packName: String,
         packDescription: String = "",
@@ -630,7 +897,14 @@ object ManifestGenerator {
         is JSONArray -> JSONArray(raw.toString())
         is Number -> JSONArray(listOf(raw.toInt()))
         is String -> {
-            val parts = raw.trim().split(".").mapNotNull { it.trim().toIntOrNull() }
+            val texto = raw.trim()
+            // 3.7 — Un sufijo de preestreno (`1.12.0-beta`) SELECCIONA la API
+            // beta del módulo. Convertirlo a `[1,12,0]` lo pediría como estable
+            // (y `"1.12.0-beta".split(".")` producía además `[1,12]`, un array
+            // de DOS elementos que no es una versión válida). Se conserva el
+            // string tal cual: el llamador solo normaliza lo que devuelve no-null.
+            if (texto.contains('-')) return null
+            val parts = texto.split(".").mapNotNull { it.trim().toIntOrNull() }
             if (parts.isEmpty()) null else JSONArray(parts)
         }
         else -> null

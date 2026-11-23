@@ -1103,6 +1103,11 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun dismissImportProgress() {
+        _isImporting.value = false
+        _importProgress.value = OperationProgress.Idle
+    }
+
     fun importModpackFromFile(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -1187,12 +1192,54 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
 
                 val modpackId = json.optString("id").ifBlank { UUID.randomUUID().toString() }
                 val modpackName = json.optString("name").ifBlank { fileName.substringBeforeLast(".") }
-                val author = json.optString("author", "PackForge")
-                val version = json.optString("version", "1.0.0")
+                val author = json.optString("author").ifBlank { "PackForge" }
+                val version = json.optString("version").ifBlank { "1.0.0" }
                 val description = json.optString("description", "")
-                val addonCount = json.optInt("addonCount", 1)
-                val addonNamesJson = json.optJSONArray("addonNames")?.toString() ?: "[]"
-                val mcVersion = json.optString("mcVersion", "1.21.0")
+                val mcVersion = json.optString("mcVersion").ifBlank { "1.21.0" }
+
+                // Extraer o reconstruir los addons para que el modpack no quede con 0 addons
+                val rawAddonsJson = json.optString("addonsJson", "")
+                val rawAddonsArr = json.optJSONArray("addons")
+                val addonNamesArr = json.optJSONArray("addonNames")
+
+                val constructedAddons = mutableListOf<Addon>()
+
+                if (rawAddonsJson.isNotBlank() && rawAddonsJson != "[]") {
+                    try {
+                        val parsed = Gson().fromJson(rawAddonsJson, Array<Addon>::class.java).toList().withSafeLists()
+                        if (parsed.isNotEmpty()) {
+                            constructedAddons.addAll(parsed)
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (constructedAddons.isEmpty() && rawAddonsArr != null && rawAddonsArr.length() > 0) {
+                    try {
+                        val parsed = Gson().fromJson(rawAddonsArr.toString(), Array<Addon>::class.java).toList().withSafeLists()
+                        if (parsed.isNotEmpty()) {
+                            constructedAddons.addAll(parsed)
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (constructedAddons.isEmpty() && addonNamesArr != null && addonNamesArr.length() > 0) {
+                    for (i in 0 until addonNamesArr.length()) {
+                        val name = addonNamesArr.optString(i, "Addon ${i + 1}").ifBlank { "Addon ${i + 1}" }
+                        constructedAddons.add(
+                            Addon(
+                                id = UUID.randomUUID().toString(),
+                                name = name,
+                                fileName = "$name.mcpack",
+                                type = AddonType.BEHAVIOR_AND_RESOURCE,
+                                version = version,
+                                sizeBytes = 0L,
+                                enabled = true,
+                                priority = i,
+                                author = author
+                            )
+                        )
+                    }
+                }
 
                 // 4. Copiar el archivo .mcaddon a almacenamiento interno permanente
                 val exportsDir = File(app.filesDir, "modpack_exports")
@@ -1203,6 +1250,39 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                         ins.copyTo(outs)
                     }
                 }
+
+                // Escanear paquetes internos en el .zip si no había metadata detallada de addons
+                if (constructedAddons.isEmpty() || constructedAddons.all { it.name.startsWith("Addon ") }) {
+                    val innerPacks = extractInnerPacksFromZip(destMcaddon, author, version)
+                    if (innerPacks.isNotEmpty()) {
+                        constructedAddons.clear()
+                        constructedAddons.addAll(innerPacks)
+                    }
+                }
+
+                if (constructedAddons.isEmpty()) {
+                    val count = json.optInt("addonCount", 1).coerceAtLeast(1)
+                    for (i in 0 until count) {
+                        val name = "Addon ${i + 1}"
+                        constructedAddons.add(
+                            Addon(
+                                id = UUID.randomUUID().toString(),
+                                name = name,
+                                fileName = "$name.mcpack",
+                                type = AddonType.BEHAVIOR_AND_RESOURCE,
+                                version = version,
+                                sizeBytes = 0L,
+                                enabled = true,
+                                priority = i,
+                                author = author
+                            )
+                        )
+                    }
+                }
+
+                val finalAddonsJson = Gson().toJson(constructedAddons)
+                val finalAddonNamesJson = Gson().toJson(constructedAddons.map { it.name })
+                val finalAddonCount = constructedAddons.size
 
                 // 5. Persistir icono de portada si se extrajo
                 var coverPath: String? = null
@@ -1215,11 +1295,34 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                     coverPath = permIcon.absolutePath
                 }
 
+                if (coverPath == null && destMcaddon.exists()) {
+                    runCatching {
+                        ZipInputStream(BufferedInputStream(destMcaddon.inputStream())).use { zis ->
+                            var entry = zis.nextEntry
+                            while (entry != null) {
+                                val entryName = entry.name.trimStart('/', '\\')
+                                if (entryName.endsWith("pack_icon.png", ignoreCase = true)) {
+                                    val iconDir = File(app.filesDir, "modpack_icons").apply { if (!exists()) mkdirs() }
+                                    val permIcon = File(iconDir, "${modpackId}_cover.png")
+                                    permIcon.outputStream().use { outs -> zis.copyTo(outs) }
+                                    if (permIcon.exists() && permIcon.length() > 0) {
+                                        coverPath = permIcon.absolutePath
+                                        break
+                                    }
+                                }
+                                zis.closeEntry()
+                                entry = zis.nextEntry
+                            }
+                        }
+                    }
+                }
+
+                _importProgress.value = OperationProgress.Loading("Guardando en la biblioteca...", 0.85f)
+
                 // 6. Guardar en la base de datos de Modpacks (SavedModpackDao)
                 PackForgeLog.d("PackForge_Debug", "Intentando guardar modpack: $modpackName (ID: $modpackId)")
                 try {
                     val db = database ?: PackForgeDatabase.getInstance(app)
-                    // db nunca es null aquí porque getInstance siempre devuelve una instancia válida
                     PackForgeLog.d("PackForge_Debug", "Instancia de BD obtenida correctamente")
                     
                     val saved = SavedModpack(
@@ -1229,24 +1332,26 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
                         version = version,
                         mcVersion = mcVersion,
                         description = description,
-                        addonNames = addonNamesJson,
-                        addonCount = addonCount,
+                        addonNames = finalAddonNamesJson,
+                        addonCount = finalAddonCount,
                         filePath = destMcaddon.absolutePath,
                         fileName = destMcaddon.name,
                         createdAt = System.currentTimeMillis(),
                         coverUriString = coverPath,
                         tags = "",
-                        addonsJson = "[]"
+                        addonsJson = finalAddonsJson
                     )
                     PackForgeLog.d("PackForge_Debug", "Ejecutando insert en DAO...")
                     db.savedModpackDao().insert(saved)
                     PackForgeLog.d("PackForge_Debug", "Insert completado exitosamente.")
 
+                    _importProgress.value = OperationProgress.Success("¡$modpackName importado a la biblioteca exitosamente!")
                     _events.emit(PackForgeEvent.ShowSnackbar("Modpack '$modpackName' añadido a la biblioteca"))
                 } catch (dbException: Exception) {
                     PackForgeLog.e("PackForge_Debug", "ERROR CRÍTICO AL GUARDAR EN BD: ${dbException.message}", dbException)
+                    _importProgress.value = OperationProgress.Error("Error guardando en BD: ${dbException.message}")
                     _events.emit(PackForgeEvent.ShowSnackbar("Error FATAL al guardar en BD: ${dbException.message}", true))
-                    throw dbException // Relanzar para que el catch externo también lo registre
+                    throw dbException
                 }
                 _isImporting.value = false
                 _importProgress.value = OperationProgress.Idle
@@ -2030,6 +2135,52 @@ class PackForgeViewModel(application: Application) : AndroidViewModel(applicatio
             val type = object : com.google.gson.reflect.TypeToken<List<Addon>>() {}.type
             Gson().fromJson<List<Addon>>(json, type) ?: emptyList()
         }.getOrDefault(emptyList()).withSafeLists()
+    }
+
+    private fun extractInnerPacksFromZip(zipFile: File, defaultAuthor: String, defaultVersion: String): List<Addon> {
+        val addons = mutableListOf<Addon>()
+        try {
+            ZipInputStream(BufferedInputStream(zipFile.inputStream())).use { zis ->
+                var entry = zis.nextEntry
+                var idx = 0
+                while (entry != null) {
+                    val entryName = entry.name.trimStart('/', '\\')
+                    if (entryName.endsWith("manifest.json", ignoreCase = true)) {
+                        val text = zis.bufferedReader(Charsets.UTF_8).readText()
+                        runCatching {
+                            val json = JSONObject(text)
+                            val header = json.optJSONObject("header")
+                            if (header != null) {
+                                val pName = header.optString("name").ifBlank { null }
+                                val pVerArr = header.optJSONArray("version")
+                                val pVer = if (pVerArr != null && pVerArr.length() >= 3) {
+                                    "${pVerArr.optInt(0)}.${pVerArr.optInt(1)}.${pVerArr.optInt(2)}"
+                                } else defaultVersion
+                                val uuid = header.optString("uuid", UUID.randomUUID().toString())
+                                if (!pName.isNullOrBlank() && addons.none { it.name == pName }) {
+                                    addons.add(
+                                        Addon(
+                                            id = uuid,
+                                            name = pName,
+                                            fileName = "$pName.mcpack",
+                                            type = AddonType.BEHAVIOR_AND_RESOURCE,
+                                            version = pVer,
+                                            sizeBytes = 0L,
+                                            enabled = true,
+                                            priority = idx++,
+                                            author = defaultAuthor
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                }
+            }
+        } catch (_: Exception) {}
+        return addons
     }
 
     override fun onCleared() {

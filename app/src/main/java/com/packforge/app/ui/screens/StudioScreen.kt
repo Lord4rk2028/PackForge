@@ -78,6 +78,7 @@ import com.packforge.app.ui.components.AddonSite
 import com.packforge.app.ui.components.BlockLetterWord
 import com.packforge.app.ui.components.CoverColorExtractor
 import com.packforge.app.ui.components.ModpackParsingCache
+import com.packforge.app.ui.components.ModpackImportDialog
 import com.packforge.app.data.PackForgeDatabase
 import com.packforge.app.domain.engine.AddonParser
 import com.packforge.app.ui.theme.ExpressiveElevation
@@ -183,6 +184,14 @@ fun StudioScreen(
             webView = persistentWebView
         )
         return
+    }
+
+    // ═══ DIÁLOGO DE IMPORTACIÓN DE MODPACK A LA BIBLIOTECA ═══
+    if (importProgress !is OperationProgress.Idle) {
+        ModpackImportDialog(
+            progress = importProgress,
+            onDismiss = { viewModel.dismissImportProgress() }
+        )
     }
 
     if (showThemeSettings) {

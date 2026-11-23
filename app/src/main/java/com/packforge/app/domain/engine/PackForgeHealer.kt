@@ -185,6 +185,15 @@ object PackForgeHealer {
                 //    geometry.arrow, geometry.item_sprite…): rompe TODO el juego.
                 if (VanillaAssets.isVanillaGeometry(geometryId)) continue
 
+                // 3) ⭐ TICKET-CORE-004 — Vanilla por ENTIDAD (catálogo incompleto).
+                //
+                // Un modelo que SOLO aporta una entidad vanilla (`minecraft:…`) lo
+                // resuelve el juego: fabricar un placeholder no lo repara, lo
+                // SUSTITUYE por una caja 8x8x8. Con el catálogo corto, variantes como
+                // `geometry.armadillo.baby` pasaban el filtro y el healer enterraba
+                // 73 modelos vanilla reales bajo placeholders.
+                if (isVanillaEntityGeometry(modelRef, geometryId, unifiedAddonIndex)) continue
+
                 val fileName = "$geometryId.json"
                 var copied = false
 
@@ -781,6 +790,37 @@ object PackForgeHealer {
      * `__ID__` se sustituye por el identificador (p.ej. `geometry.carryblock`).
      */
     private val PLACEHOLDER_GEOMETRY_JSON = """{"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"__ID__","texture_width":16,"texture_height":16,"visible_bounds_width":2.0,"visible_bounds_height":2.0,"visible_bounds_offset":[0.0,1.0,0.0]},"bones":[{"name":"root","pivot":[0.0,0.0,0.0],"cubes":[{"origin":[-4.0,0.0,-4.0],"size":[8.0,8.0,8.0],"uv":[0.0,0.0]}]}]}]}"""
+
+    /**
+     * ⭐ TICKET-CORE-004 — ¿La geometría [geometryId] la aporta el JUEGO?
+     *
+     * Se pregunta por la ENTIDAD, no por el id: `modelRef` es el archivo que la
+     * referencia (p.ej. `entity/armadillo.entity.json`). Si ese archivo declara
+     * `"identifier": "minecraft:armadillo"`, es un override vanilla y sus
+     * geometrías son del juego salvo que algún addon las defina.
+     *
+     * Motivo (medido fusionando los 3 addons reales de Downloads): el catálogo
+     * solo cubría una parte de las variantes vanilla y el healer fabricaba 73
+     * placeholders de caja 8x8x8 ENCIMA de modelos del juego, sustituyéndolos.
+     * La entidad es la fuente de verdad: no caduca al actualizar el catálogo.
+     */
+    private fun isVanillaEntityGeometry(
+        modelRef: String,
+        geometryId: String,
+        unifiedIndex: Map<String, File>
+    ): Boolean = try {
+        val refName = modelRef.replace('\\', '/').substringAfterLast('/')
+        val entityFile = findFileInAddons(refName, unifiedIndex)
+        val identifier = entityFile?.let { f ->
+            JSONObject(f.readText(Charsets.UTF_8))
+                .optJSONObject("minecraft:client_entity")
+                ?.optJSONObject("description")
+                ?.optString("identifier")
+        }.orEmpty()
+        identifier.startsWith("minecraft:")
+    } catch (_: Exception) {
+        false
+    }
 
     /** Escribe la geometría placeholder si aún no existe. Devuelve si se creó. */
     private fun writePlaceholderGeometry(identifier: String, destDir: File): Boolean = try {

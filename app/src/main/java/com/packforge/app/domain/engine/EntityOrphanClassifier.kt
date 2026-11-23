@@ -69,6 +69,19 @@ internal object EntityOrphanClassifier {
     private val IGNORED_DIRS = setOf(".shadow", "_packforge", ".bak", ".git")
 
     /**
+     * ⭐ TICKET-CORE-004 — aguja de búsqueda: el identificador tal cual.
+     *
+     * Se probó a exigir comillas alrededor (`"minecraft:bee"`), pero el
+     * contrato del escáner es más amplio: también localiza el id pegado a otro
+     * texto (lo fija `Fase5HuerfanasOrigenTest`, "se detecta aunque caiga entre
+     * dos bloques"), y un script puede construirlo por concatenación. La
+     * exclusión de falsos positivos vive en el LLAMADOR, que es quien decide
+     * qué entidades son vanillas y por tanto no necesitan definición en el BP
+     * (`PackForgeValidator`, ver TICKET-CORE-004 en `entity`).
+     */
+    private fun agujaDe(id: String): ByteArray = id.toByteArray(Charsets.UTF_8)
+
+    /**
      * Resuelve VARIAS entidades en **una sola pasada** por el BP.
      *
      * Abrir el árbol una vez por candidata multiplica por N el coste de E/S, y
@@ -86,7 +99,7 @@ internal object EntityOrphanClassifier {
 
         val pendientes = LinkedHashMap<String, ByteArray>()
         for (id in identifiers) {
-            if (id.isNotBlank()) pendientes[id] = id.toByteArray(Charsets.UTF_8)
+            if (id.isNotBlank()) pendientes[id] = agujaDe(id)
         }
         if (pendientes.isEmpty()) return emptyMap()
 

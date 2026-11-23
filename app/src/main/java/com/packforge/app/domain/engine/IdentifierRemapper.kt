@@ -9,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.regex.Pattern
@@ -82,7 +83,13 @@ object IdentifierRemapper {
         "minecraft:music_definition",
         "minecraft:music",
         "minecraft:sounds",
-        "minecraft:particle"
+        "minecraft:particle",
+        // 3.8 — familias que declaran identifier y no estaban: dos addons con
+        // `cameras/`/`dimensions/`/`item_catalog/` del mismo id duplicaban la
+        // definición (Bedrock descarta una en silencio).
+        "minecraft:camera_preset",
+        "minecraft:dimension",
+        "minecraft:item_catalog"
     )
 
     /**
@@ -294,10 +301,13 @@ object IdentifierRemapper {
             val json = JSONObject(preview ?: file.readText(StandardCharsets.UTF_8))
             for (key in json.keys()) {
                 if (key in DECLARING_KEYS) {
-                    val id = json.getJSONObject(key)
-                        .optJSONObject("description")
+                    val nodo = json.getJSONObject(key)
+                    // `minecraft:camera_preset` declara el id en la RAIZ, no en
+                    // `description`: sin el respaldo sus colisiones no se veian.
+                    val id = nodo.optJSONObject("description")
                         ?.optString("identifier")
                         ?.takeIf { it.isNotBlank() }
+                        ?: nodo.optString("identifier").takeIf { it.isNotBlank() }
                     if (id != null) return id
                 }
             }
@@ -334,7 +344,7 @@ object IdentifierRemapper {
             if (ext !in setOf("json", "lang", "mcfunction", "txt") + SCRIPT_EXTENSIONS) continue
             try {
                 when (ext) {
-                    "json" -> rewriteIdentifiersInJson(file, oldId, newId)
+                    "json" -> rewriteIdentifiersInJson(dir, file, oldId, newId)
                     "lang" -> rewriteIdentifiersInLang(file, oldId, newId)
                     else -> rewriteIdentifiersWithWordBoundary(file, oldIdRegex, newId)
                 }
@@ -348,15 +358,45 @@ object IdentifierRemapper {
     }
 
     /** Barrido profundo: sustituye TODO valor string igual al id viejo en el JSON completo.
-     *  Delegado al rewriter compartido (política trim-aware única del pipeline). */
-    private fun rewriteIdentifiersInJson(file: File, oldId: String, newId: String) {
+     *  Delegado al rewriter compartido (política trim-aware única del pipeline).
+     *
+     *  Además reescribe el id cuando aparece como CLAVE en los catálogos que
+     *  Bedrock indexa por identificador (`blocks.json`, `texture_data`,
+     *  `entity_sounds.entities`). Sin esto, renombrar un bloque dejaba su entrada
+     *  de `blocks.json` con el id viejo y el bloque renombrado perdía su mapeo de
+     *  textura en el juego (bloque “?”).
+     */
+    private fun rewriteIdentifiersInJson(root: File, file: File, oldId: String, newId: String) {
         val text = file.readText(StandardCharsets.UTF_8)
         // Fast-path: si el id no aparece como texto, no parsear nada.
         if (!text.contains(oldId)) return
         val json = JSONObject(text)
-        if (JsonValueRewriter.replaceValues(json, mapOf(oldId to newId))) {
+        val renames = mapOf(oldId to newId)
+        var changed = JsonValueRewriter.replaceValues(json, renames)
+
+        val relPath = file.relativeTo(root).path.replace('\\', '/')
+        val catalogos = catalogPathsFor(relPath)
+        if (catalogos.isNotEmpty()) {
+            changed = JsonValueRewriter.replaceKeys(json, renames, catalogos::contains) || changed
+        }
+        if (changed) {
             file.writeText(json.toString(4), StandardCharsets.UTF_8)
         }
+    }
+
+    /**
+     * Rutas (dentro del objeto) cuyas claves SON identificadores, por archivo.
+     *
+     * Lista blanca deliberada: fuera de estos catálogos una clave es un nombre
+     * de componente, un hueso o un evento, y renombrarla rompería el archivo.
+     */
+    private fun catalogPathsFor(relativePath: String): Set<String> = when {
+        relativePath.equals("blocks.json", ignoreCase = true) -> setOf("")
+        relativePath.equals("textures/terrain_texture.json", ignoreCase = true) ||
+            relativePath.equals("textures/item_texture.json", ignoreCase = true) -> setOf("texture_data")
+        // `sounds.json` usa el id de entidad como clave de `entity_sounds.entities`.
+        relativePath.equals("sounds.json", ignoreCase = true) -> setOf("entity_sounds/entities")
+        else -> emptySet()
     }
 
     /** Reemplaza en .lang con límite de palabra para claves y valores */
@@ -440,9 +480,28 @@ object IdentifierRemapper {
         return if (ts != null) "sep_$ts" else dir.absolutePath
     }
 
-    /** Token estable por addon (hex corto de su clave). */
+    /**
+     * Token `_pf<hex6>` ESTABLE entre exportaciones del mismo addon.
+     *
+     * Antes salía de `ownerKey.hashCode()`, y esa clave solía ser la ruta
+     * extraída (`extracted_<epochMs>_…`) o un índice de importación: el token
+     * cambiaba en cada exportación y los identificadores renombrados que ya
+     * viven en los mundos (`pf:xxxx_stone`) dejaban de resolverse al
+     * reinstalar. Ahora se deriva de la SEMILLA estable del addon (UUID de sus
+     * manifiestos, ver [AddonOwnerRegistry.stableSeed]) con SHA-256, igual que
+     * el resto de tokens `_pf` del motor.
+     */
     private fun tokenFor(ownerKey: String): String {
-        return ownerKey.hashCode().toUInt().toString(16).padStart(6, '0').substring(0, 6)
+        val semilla = AddonOwnerRegistry.seedOf(ownerKey) ?: ownerKey
+        return try {
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest(semilla.toByteArray(StandardCharsets.UTF_8))
+            val sb = StringBuilder(6)
+            for (i in 0 until 3) sb.append("%02x".format(digest[i]))
+            sb.toString()
+        } catch (_: Exception) {
+            semilla.hashCode().toUInt().toString(16).padStart(6, '0').substring(0, 6)
+        }
     }
 
     private fun shortOwner(ownerKey: String): String {

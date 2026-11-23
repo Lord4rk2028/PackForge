@@ -24,6 +24,16 @@ object AddonExtractor {
     /** Tamaño total máximo acumulado de la extracción (2 GB / 2000 MB). */
     private const val MAX_TOTAL_SIZE = 2000L * 1024 * 1024
 
+    /**
+     * Tope de entradas que se pueden descartar por no ser escribibles antes de
+     * abortar (TICKET-CORE-014).
+     *
+     * Una entrada rara es un addon mal empaquetado y merece perdón; decenas son
+     * un destino roto (sin espacio, cuota, volumen desmontado) y devolver un
+     * pack incompleto como si fuera bueno sería peor que fallar.
+     */
+    private const val MAX_ENTRADAS_OMITIDAS = 50
+
     val CRITICAL_PATTERNS = listOf(
         "manifest.json", "terrain_texture.json", "item_texture.json",
         "blocks.json", "sounds.json"
@@ -106,6 +116,9 @@ object AddonExtractor {
      * @param maxEntries Límite de entradas del ZIP (inyectable para tests rápidos).
      * @param maxEntrySize Límite de bytes por archivo extraído.
      * @param maxTotalSize Límite de bytes totales acumulados en la extracción.
+     * @param onEntrySkipped Se invoca si una entrada concreta no se pudo escribir
+     *   (nombre saneado, motivo). Permite que el orquestador lo lleve al reporte
+     *   sin que el extractor dependa de la capa de informe.
      * @return Ruta de la carpeta extraída, o null si hubo error
      */
     fun extractAddon(
@@ -113,7 +126,8 @@ object AddonExtractor {
         destinationPath: String,
         maxEntries: Int = MAX_ZIP_ENTRIES,
         maxEntrySize: Long = MAX_ENTRY_SIZE,
-        maxTotalSize: Long = MAX_TOTAL_SIZE
+        maxTotalSize: Long = MAX_TOTAL_SIZE,
+        onEntrySkipped: ((entrada: String, motivo: String) -> Unit)? = null
     ): String? {
         try {
             val sourceFile = File(sourcePath)
@@ -131,6 +145,7 @@ object AddonExtractor {
             val buffer = ByteArray(65536)
             var entryCount = 0
             var totalWritten = 0L
+            var descartadas = 0
 
             FileInputStream(sourceFile).use { fis ->
                 ZipInputStream(fis.buffered()).use { zis ->
@@ -143,7 +158,7 @@ object AddonExtractor {
                         }
 
                         // 2) VALIDACIÓN ZIP SLIP en TODAS las entradas (archivos y carpetas).
-                        if (!isSecurePath(destDir, entry.name)) {
+                        if (!isSecurePath(entry.name)) {
                             throw SecurityException("Zip Slip detected: ${entry.name}")
                         }
 
@@ -155,34 +170,80 @@ object AddonExtractor {
                                     throw IllegalStateException("Archivo demasiado grande en ZIP: ${entry.name} (${entry.size} bytes)")
                                 }
 
-                                val newFile = File(destDir, entry.name)
+                                // ⭐ TICKET-CORE-014 — El nombre se sanea ANTES de
+                                // tocar el disco, y la comprobación de seguridad se
+                                // repite sobre el resultado: `sanitizeEntryName`
+                                // normaliza `\` a `/`, así que un nombre que antes no
+                                // era una ruta ahora podría serlo (o contener `..`).
+                                val nombreSeguro = sanitizeEntryName(entry.name)
+                                if (!isSecurePath(nombreSeguro)) {
+                                    throw SecurityException("Zip Slip detected: ${entry.name}")
+                                }
+
+                                val newFile = File(destDir, nombreSeguro)
                                 newFile.parentFile?.mkdirs()
 
                                 // Descompresión normal (con byte-accounting para los límites).
                                 var fileWritten = 0L
-                                FileOutputStream(newFile).use { fos ->
-                                    var read = zis.read(buffer)
-                                    while (read != -1) {
-                                        fos.write(buffer, 0, read)
-                                        fileWritten += read
-                                        totalWritten += read
+                                try {
+                                    FileOutputStream(newFile).use { fos ->
+                                        var read = zis.read(buffer)
+                                        while (read != -1) {
+                                            fos.write(buffer, 0, read)
+                                            fileWritten += read
+                                            totalWritten += read
 
-                                        // 4) Límite real por archivo (cubre entradas con size = -1).
-                                        if (fileWritten > maxEntrySize) {
-                                            throw IllegalStateException("Archivo demasiado grande al descomprimir: ${entry.name}")
+                                            // 4) Límite real por archivo (cubre entradas con size = -1).
+                                            if (fileWritten > maxEntrySize) {
+                                                throw IllegalStateException("Archivo demasiado grande al descomprimir: ${entry.name}")
+                                            }
+                                            // 5) Límite total acumulado (200 MB por defecto).
+                                            if (totalWritten > maxTotalSize) {
+                                                throw IllegalStateException("Tamaño total de extracción supera el límite (${maxTotalSize / (1024 * 1024)} MB)")
+                                            }
+                                            read = zis.read(buffer)
                                         }
-                                        // 5) Límite total acumulado (200 MB por defecto).
-                                        if (totalWritten > maxTotalSize) {
-                                            throw IllegalStateException("Tamaño total de extracción supera el límite (${maxTotalSize / (1024 * 1024)} MB)")
-                                        }
-                                        read = zis.read(buffer)
                                     }
+                                } catch (e: IOException) {
+                                    // ⭐ TICKET-CORE-014 — Una entrada que el sistema de
+                                    // archivos no puede escribir NO puede abortar el addon:
+                                    // se descarta esa entrada (borrando la parte que haya
+                                    // quedado) y se sigue con las demás.
+                                    //
+                                    // Los límites de tamaño son `IllegalStateException` a
+                                    // propósito y NO se capturan aquí: si se disparan, la
+                                    // extracción debe abortar (posible ZIP bomb).
+                                    runCatching { newFile.delete() }
+                                    // Sanear libera una entrada por nombre inválido; si aun
+                                    // así falla, es E/S del dispositivo (disco lleno, cuota,
+                                    // fichero bloqueado). Se cuenta aparte para no confundir
+                                    // «nombre raro» con «no queda espacio».
+                                    descartadas++
+                                    val motivo = e.message ?: e.javaClass.simpleName
+                                    PackForgeLog.w(TAG, "⚠️ Entrada omitida '${entry.name}': $motivo")
+                                    onEntrySkipped?.invoke(nombreSeguro, motivo)
+                                    // Muchos fallos seguidos ya no es un archivo raro: es un
+                                    // destino roto. Seguir solo produce un pack incompleto
+                                    // que finge estar bien.
+                                    if (descartadas > MAX_ENTRADAS_OMITIDAS) {
+                                        throw IOException(
+                                            "Demasiadas entradas no escribibles ($descartadas); " +
+                                                "último fallo: $motivo", e
+                                        )
+                                    }
+                                }
+                                if (nombreSeguro != entry.name) {
+                                    PackForgeLog.w(
+                                        TAG,
+                                        "Nombre de entrada saneado: '${entry.name}' → '$nombreSeguro' " +
+                                            "(caracteres no admitidos por el sistema de archivos)"
+                                    )
                                 }
                                 logFile { "Extraído: ${entry.name} ($fileWritten bytes)" }
                             }
                         } else {
                             // Entrada de directorio: también debe estar dentro de la zona segura.
-                            File(destDir, entry.name).mkdirs()
+                            runCatching { File(destDir, sanitizeEntryName(entry.name)).mkdirs() }
                             logFile { "Directorio: ${entry.name}" }
                         }
                         entry = zis.nextEntry
@@ -225,20 +286,126 @@ object AddonExtractor {
     }
 
     /**
-     * Valida que una entrada del ZIP no escape del directorio de destino
-     * (vulnerabilidad "Zip Slip"). Compara rutas CANONICALES para neutralizar
-     * "../", rutas absolutas y separadores alternativos ("..\\evil").
+     * ⭐ TICKET-CORE-014 — Nombres de entrada que el sistema de archivos rechaza.
      *
-     * @return true si la entrada desemboca ESTRICTAMENTE dentro de destDir.
+     * Caso real que motivó esto: `Desse-UI` trae una entrada llamada
+     * **`"Note".txt`** (con las comillas dobles dentro del nombre). Windows y
+     * Android sobre FAT/exFAT no admiten comillas en un nombre de archivo, así
+     * que `FileOutputStream` lanzaba `FileNotFoundException: ... \"Note\".txt
+     * (El nombre de archivo, el nombre de directorio o la sintaxis de la
+     * etiqueta del volumen no son correctos)`.
+     *
+     * El `catch` de esa excepción estaba FUERA del bucle de entradas, así que
+     * —al no ser `SecurityException` ni `IllegalStateException`— caía en el
+     * `catch (Exception)` genérico, devolvía `null` y **abortaba la extracción
+     * del addon completo**: 11 MB de texturas y shaders quedaban sin importar
+     * por una nota de texto.
      */
-    private fun isSecurePath(destDir: File, entryName: String): Boolean {
-        return try {
-            val destCanonical = destDir.canonicalPath
-            val targetCanonical = File(destDir, entryName).canonicalPath
-            targetCanonical.startsWith(destCanonical + File.separator)
-        } catch (e: IOException) {
-            false
+    private val CARACTERES_ILEGALES = charArrayOf('"', '*', ':', '<', '>', '?', '|')
+
+    /**
+     * Nombres reservados del SO (Windows y algunos drivers Android). Un archivo
+     * llamado exactamente `con` o `nul` no se puede crear con ese nombre, ni
+     * siquiera con extensión en algunos casos.
+     */
+    private val NOMBRES_RESERVADOS = setOf(
+        "con", "prn", "aux", "nul",
+        "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+        "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"
+    )
+
+    /**
+     * Convierte un nombre de entrada ZIP en uno que el sistema de archivos del
+     * dispositivo pueda crear de verdad.
+     *
+     * Se aplica **por segmento**, así que la jerarquía de carpetas se conserva:
+     * `RP_PackForge/"Note".txt` → `RP_PackForge/_Note_.txt`.
+     *
+     * Qué NO hace (deliberadamente):
+     * - No decide seguridad: eso es [isSecurePath], y se vuelve a comprobar
+     *   sobre el nombre ya saneado porque normalizar `\\` a `/` puede convertir
+     *   un nombre inocente en una ruta con `..`.
+     * - No recorta el nombre a un tamaño arbitrario: truncar por longitud
+     *   colisionaría dos archivos distintos y perdería contenido en silencio.
+     */
+    fun sanitizeEntryName(entryName: String): String {
+        // Los ZIP antiguos usan `\` como separador. Se normaliza ANTES de
+        // separar, o `carpeta\archivo.png` quedaría como un único nombre legal
+        // con una barra invertida dentro.
+        val normalizado = entryName.replace('\\', '/')
+        return normalizado.split('/').joinToString("/") { sanearSegmento(it) }
+    }
+
+    private fun sanearSegmento(segmento: String): String {
+        if (segmento.isEmpty() || segmento == "." || segmento == "..") return segmento
+
+        val limpio = buildString(segmento.length) {
+            for (c in segmento) {
+                append(
+                    when {
+                        c in CARACTERES_ILEGALES -> '_'
+                        // Controles (0x00-0x1F) y DEL: ninguna API de archivos los
+                        // acepta, y en Android rompen `open()` con un mensaje opaco.
+                        c.code < 0x20 || c.code == 0x7F -> '_'
+                        else -> c
+                    }
+                )
+            }
         }
+
+        // Windows no admite nombres terminados en punto ni en espacio: el
+        // sistema los recorta en silencio y luego el archivo no aparece.
+        val recortado = limpio.trimEnd('.', ' ')
+        if (recortado.isEmpty()) return "_"
+
+        // `CON`, `nul.txt`, `COM1.json`… siguen siendo dispositivos reservados
+        // aunque lleven extensión: se comprueba solo la parte anterior al punto.
+        val base = recortado.substringBefore('.').lowercase()
+        return if (base in NOMBRES_RESERVADOS) "_$recortado" else recortado
+    }
+
+    /**
+     * Valida que una entrada del ZIP no escape del directorio de destino
+     * (vulnerabilidad "Zip Slip").
+     *
+     * ⭐ TICKET-CORE-014 — La comprobación es **léxica a propósito**, no
+     * `canonicalPath`.
+     *
+     * Antes se resolvían rutas canónicas y se comparaba el prefijo. Eso tiene
+     * dos problemas, y el segundo es grave:
+     *
+     * 1. En Windows, `getCanonicalPath()` valida el nombre contra la API de
+     *    archivos, así que **lanza IOException para nombres legales dentro del
+     *    destino** como `b*c.json` o `d?e.json` (caracteres que Windows reserva
+     *    para comodines). Esa rama devolvía `false` → "inseguro".
+     * 2. Un simple `*` en el nombre de una entrada se reportaba entonces como
+     *    **«Zip Slip detected»** y abortaba la extracción del addon entero: un
+     *    ataque de seguridad anunciado donde solo había un nombre de archivo
+     *    feo. Un falso positivo así no se nota como bug de robustez, se nota
+     *    como un addon que "no se puede importar".
+     *
+     * El escape de directorio es una propiedad **del texto**, no del sistema de
+     * archivos, así que se decide sin tocar el disco: si algún segmento es `..`,
+     * si la ruta es absoluta, si trae unidad de disco (`C:`) o un carácter de
+     * control, se rechaza; cualquier otra cosa es un nombre raro y se sanea en
+     * [sanitizeEntryName]. Es determinista y da igual en qué SO corra el test.
+     */
+    private fun isSecurePath(entryName: String): Boolean {
+        val normalizado = entryName.replace('\\', '/')
+        if (normalizado.isEmpty()) return false
+
+        // Absoluta: "/etc/x", "//servidor/x".
+        if (normalizado.startsWith("/")) return false
+        // Unidad de disco o flujo alternativo ("C:/x", "C:x").
+        if (normalizado.length >= 2 && normalizado[1] == ':') return false
+        // Caracteres de control: en una API nativa podrían truncar el nombre y
+        // colarse como una ruta distinta de la validada aquí.
+        if (normalizado.any { it.code < 0x20 || it.code == 0x7F }) return false
+        // `..` como segmento propio escapa del destino. Comparar el SEGMENTO
+        // completo importa: "..evil.png" es un nombre de archivo legítimo.
+        if (normalizado.split('/').any { it == ".." }) return false
+
+        return true
     }
 
     /**

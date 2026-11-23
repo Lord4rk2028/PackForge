@@ -39,21 +39,20 @@ object MergePipelineGuard {
         "mergeAnimations",
         "mergeSoundsJson",
         "mergeSoundDefinitions",
-        "mergeParticles",
         "mergeEntityDefinitions",
         "mergeEntityTextures",
         "mergeAttachables",
         "mergeBiomesClient",
         "mergeFontGlyphMaps",
         "mergeTexturesList",
-        "mergeFeatureRules",
         "mergeUi",
         // Behavior Pack
         "mergePlayerEntity",
-        "mergeEntityDefinitionsBP",
+        "mergeDeclarativeFamilies",
+        "mergeTradingTables",
         "mergeLootTables",
         "mergeRecipes",
-        "mergeSpawnRules"
+        "mergeTickJson"
     )
 
     private val invoked: MutableSet<String> =

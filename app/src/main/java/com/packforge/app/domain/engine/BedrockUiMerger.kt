@@ -84,11 +84,21 @@ object BedrockUiMerger {
         if (uiDefsCount > 0) mergedFiles.add("ui/_ui_defs.json")
 
         // 2. Fusionar ui/_global_variables.json
-        val globalVarsCount = mergeGlobalVariables(uiDirsWithAddon, targetUiDir, issues)
+        val globalVars = mergeGlobalVariables(uiDirsWithAddon, targetUiDir, issues)
+        val globalVarsCount = globalVars.count
         if (globalVarsCount > 0) mergedFiles.add("ui/_global_variables.json")
 
         // 3. Fusionar pantallas y archivos individuales (ej. hud_screen.json, etc.)
-        mergeScreenFiles(uiDirsWithAddon, targetUiDir, mergedFiles, modifiedScreens, issues)
+        //    Las variables renombradas en el paso 2 se reescriben SOLO en el UI
+        //    del addon al que pertenecen (3.9).
+        mergeScreenFiles(
+            uiDirsWithAddon,
+            targetUiDir,
+            mergedFiles,
+            modifiedScreens,
+            issues,
+            globalVars.renames
+        )
 
         PackForgeLog.d(
             TAG,
@@ -158,55 +168,163 @@ object BedrockUiMerger {
 
     // ── 2. Fusión de _global_variables.json ──────────────────────────────────
 
+    /** Resultado de fusionar `_global_variables.json` (3.9). */
+    private data class GlobalVariablesResult(
+        val count: Int = 0,
+        /** ruta absoluta de la raíz del RP -> (variable original -> variable nueva) */
+        val renames: Map<String, Map<String, String>> = emptyMap()
+    )
+
     private fun mergeGlobalVariables(
         uiDirs: List<Pair<File, File>>,
         targetUiDir: File,
         issues: MutableList<String>
-    ): Int {
-        val mergedVars = JSONObject()
-        val owners = mutableMapOf<String, String>()
+    ): GlobalVariablesResult {
+        // 3.9 - Antes, cuando dos addons declaraban la MISMA variable con
+        // valores distintos, el primero ganaba y la pantalla del segundo se
+        // quedaba con un valor que no era el suyo. Se reportaba, pero no se
+        // arreglaba.
+        //
+        // Ahora la variable del perdedor se publica con sufijo `_pf<hash6>` y
+        // sus referencias (`"$var"`) se reescriben UNICAMENTE en los archivos
+        // UI de ese addon: las dos pantallas conservan su valor original.
+        // El token sale de la semilla estable del addon (3.11), no de la ruta.
+        data class Declarante(val rpRoot: File, val etiqueta: String, val valor: Any?)
+
+        val declarantes = LinkedHashMap<String, MutableList<Declarante>>()
 
         uiDirs.forEach { (rpRoot, uiDir) ->
             val varFile = File(uiDir, "_global_variables.json")
-            if (varFile.isFile) {
-                try {
-                    val json = parseLenient(varFile.readText(StandardCharsets.UTF_8))
-                    json?.keys()?.forEach { key ->
-                        val cleanKey = key.trim()
-                        val value = json.get(key)
-                        if (!mergedVars.has(cleanKey)) {
-                            mergedVars.put(cleanKey, value)
-                            owners[cleanKey] = rpRoot.name
-                        } else {
-                            val existingVal = mergedVars.get(cleanKey)
-                            if (existingVal.toString() != value.toString()) {
-                                val prevOwner = owners[cleanKey] ?: "otro addon"
-                                val warn = "Colisión en variable global UI '$cleanKey': valor de '$prevOwner' preservado, valor de '${rpRoot.name}' omitido."
-                                issues.add(warn)
-                                ConflictRegistry.logConflict(
-                                    severity = ConflictSeverity.LOW,
-                                    type = "UI_GLOBAL_VARIABLE_COLLISION",
-                                    file = "ui/_global_variables.json",
-                                    addon1 = prevOwner,
-                                    addon2 = rpRoot.name,
-                                    description = warn
-                                )
-                            }
-                        }
+            if (!varFile.isFile) return@forEach
+            try {
+                val json = parseLenient(varFile.readText(StandardCharsets.UTF_8))
+                json?.keys()?.forEach { key ->
+                    val cleanKey = key.trim()
+                    if (cleanKey.isEmpty()) return@forEach
+                    declarantes.getOrPut(cleanKey) { mutableListOf() }
+                        .add(Declarante(rpRoot, etiquetaDe(rpRoot), json.get(key)))
+                }
+            } catch (e: Exception) {
+                val msg = "Error parseando _global_variables.json de ${rpRoot.name}: ${e.message}"
+                PackForgeLog.w(TAG, msg)
+                issues.add(msg)
+            }
+        }
+
+        val mergedVars = JSONObject()
+        val renames = LinkedHashMap<String, MutableMap<String, String>>()
+
+        declarantes.forEach { (key, lista) ->
+            val ganador = lista.first()
+            mergedVars.put(key, ganador.valor)
+
+            if (lista.size > 1 &&
+                lista.drop(1).any { !JsonDeepMerger.equivalentlyEqual(ganador.valor, it.valor) }
+            ) {
+                lista.drop(1).forEach { perdedor ->
+                    val token = token6(
+                        AddonOwnerRegistry.stableSeed(listOf(perdedor.rpRoot), perdedor.etiqueta)
+                    )
+                    var renombrada = "${key}_pf$token"
+                    var intento = 1
+                    while (mergedVars.has(renombrada)) {
+                        intento++
+                        renombrada = "${key}_pf${token}$intento"
                     }
-                } catch (e: Exception) {
-                    val msg = "Error parseando _global_variables.json de ${rpRoot.name}: ${e.message}"
-                    PackForgeLog.w(TAG, msg)
-                    issues.add(msg)
+                    mergedVars.put(renombrada, perdedor.valor)
+                    renames.getOrPut(perdedor.rpRoot.absolutePath) { mutableMapOf() }[key] = renombrada
+
+                    val warn = "Variable global de UI '$key' con valores distintos en " +
+                        "'${ganador.etiqueta}' y '${perdedor.etiqueta}': se conserva la de " +
+                        "'${ganador.etiqueta}' como '$key' y la de '${perdedor.etiqueta}' pasa a " +
+                        "'$renombrada' (sus referencias en su propio UI se reescriben)."
+                    issues.add(warn)
+                    ConflictRegistry.logConflict(
+                        severity = ConflictSeverity.LOW,
+                        type = "UI_GLOBAL_VARIABLE_RENAMED",
+                        file = "ui/_global_variables.json",
+                        addon1 = ganador.etiqueta,
+                        addon2 = perdedor.etiqueta,
+                        description = warn
+                    )
                 }
             }
         }
 
-        if (mergedVars.length() == 0) return 0
+        if (mergedVars.length() == 0) return GlobalVariablesResult()
 
         val outputFile = File(targetUiDir, "_global_variables.json")
         writeJson(outputFile, mergedVars)
-        return mergedVars.length()
+        return GlobalVariablesResult(
+            count = mergedVars.length(),
+            renames = renames
+        )
+    }
+
+    /** Nombre real del addon (no `rp`) para los reportes. */
+    private fun etiquetaDe(rpRoot: File): String =
+        AddonOwnerRegistry.ownerOf(rpRoot)
+            ?.let { AddonOwnerRegistry.labelOf(it) }
+            ?: rpRoot.name
+
+    /** Token estable `_pf<hex6>` a partir de una semilla. */
+    private fun token6(semilla: String): String = try {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(semilla.toByteArray(StandardCharsets.UTF_8))
+        val sb = StringBuilder(6)
+        for (i in 0 until 3) sb.append("%02x".format(digest[i]))
+        sb.toString()
+    } catch (_: Exception) {
+        semilla.hashCode().toUInt().toString(16).padStart(6, '0').take(6)
+    }
+
+    /**
+     * Reescribe `$variable` por `$variable_pf<hash>` en TODOS los valores string
+     * del arbol (las claves no se tocan: un `$x` como clave es una variable
+     * local del control, no una referencia a la global).
+     */
+    private fun rewriteGlobalVariableReferences(
+        json: JSONObject,
+        renames: Map<String, String>
+    ) {
+        if (renames.isEmpty()) return
+        val patrones = renames.map { (viejo, nuevo) ->
+            Regex(Regex.escape(viejo) + "(?![A-Za-z0-9_])") to nuevo
+        }
+
+        fun renombrar(texto: String): String {
+            var resultado = texto
+            // Reemplazo por lambda: el texto nuevo contiene `$` y `Regex.replace`
+            // lo interpretaria como referencia a grupo (Illegal group reference).
+            for ((patron, reemplazo) in patrones) {
+                resultado = patron.replace(resultado) { reemplazo }
+            }
+            return resultado
+        }
+
+        fun recorrer(nodo: Any?) {
+            when (nodo) {
+                is JSONObject -> nodo.keys().asSequence().toList().forEach { clave ->
+                    val texto: String? = nodo.opt(clave) as? String
+                    if (texto != null) {
+                        val renombrado = renombrar(texto)
+                        if (renombrado != texto) nodo.put(clave, renombrado)
+                    } else {
+                        recorrer(nodo.opt(clave))
+                    }
+                }
+                is JSONArray -> for (i in 0 until nodo.length()) {
+                    val texto: String? = nodo.opt(i) as? String
+                    if (texto != null) {
+                        val renombrado = renombrar(texto)
+                        if (renombrado != texto) nodo.put(i, renombrado)
+                    } else {
+                        recorrer(nodo.opt(i))
+                    }
+                }
+            }
+        }
+        recorrer(json)
     }
 
     // ── 3. Fusión de pantallas de UI (hud_screen.json, etc.) ────────────────
@@ -216,16 +334,18 @@ object BedrockUiMerger {
         targetUiDir: File,
         mergedFiles: MutableList<String>,
         modifiedScreens: MutableList<String>,
-        issues: MutableList<String>
+        issues: MutableList<String>,
+        renames: Map<String, Map<String, String>> = emptyMap()
     ) {
-        // Mapear filename -> lista de (addonName, File)
-        val filesByName = LinkedHashMap<String, MutableList<Pair<String, File>>>()
+        // Mapear filename -> lista de (rpRoot, File). La ruta de la raiz hace
+        // falta para saber que variables globales se renombraron en ESTE addon.
+        val filesByName = LinkedHashMap<String, MutableList<Pair<File, File>>>()
 
         uiDirs.forEach { (rpRoot, uiDir) ->
             uiDir.listFiles()?.filter { it.isFile && it.name.endsWith(".json", true) }?.forEach { f ->
                 val nameLower = f.name.lowercase(Locale.ROOT)
                 if (nameLower != "_ui_defs.json" && nameLower != "_global_variables.json") {
-                    filesByName.getOrPut(f.name) { mutableListOf() }.add(rpRoot.name to f)
+                    filesByName.getOrPut(f.name) { mutableListOf() }.add(rpRoot to f)
                 }
             }
         }
@@ -234,23 +354,46 @@ object BedrockUiMerger {
             val targetFile = File(targetUiDir, fileName)
 
             if (sources.size == 1) {
-                // Solo un addon aporta este archivo: copia directa
-                val (_, sourceFile) = sources.first()
+                // Solo un addon aporta este archivo: copia directa (con reescritura
+                // de variables globales renombradas, si las hay).
+                val (rpRoot, sourceFile) = sources.first()
+                val mapa = renames[rpRoot.absolutePath].orEmpty()
                 try {
-                    sourceFile.copyTo(targetFile, overwrite = true)
+                    if (mapa.isEmpty()) {
+                        sourceFile.copyTo(targetFile, overwrite = true)
+                    } else {
+                        val json = parseLenient(sourceFile.readText(StandardCharsets.UTF_8))
+                        if (json == null) {
+                            sourceFile.copyTo(targetFile, overwrite = true)
+                        } else {
+                            rewriteGlobalVariableReferences(json, mapa)
+                            writeJson(targetFile, json)
+                        }
+                    }
                     mergedFiles.add("ui/$fileName")
                 } catch (e: Exception) {
                     issues.add("Error copiando ui/$fileName: ${e.message}")
                 }
             } else {
-                // 2 o más addons aportan este archivo: FUSIÓN SEMÁNTICA
-                PackForgeLog.d(TAG, "Fusionando semánticamente ui/$fileName de ${sources.size} addons: ${sources.map { it.first }}")
+                // 2 o mas addons aportan este archivo: FUSION SEMANTICA
+                PackForgeLog.d(
+                    TAG,
+                    "Fusionando semanticamente ui/$fileName de ${sources.size} addons: " +
+                        sources.map { etiquetaDe(it.first) }
+                )
                 var mergedJson: JSONObject? = null
-                val winnerAddon = sources.first().first
+                val winnerAddon = etiquetaDe(sources.first().first)
 
-                for ((addonName, sourceFile) in sources) {
+                for ((rpRoot, sourceFile) in sources) {
+                    val addonName = etiquetaDe(rpRoot)
                     val rawText = try { sourceFile.readText(StandardCharsets.UTF_8) } catch (_: Exception) { "" }
                     val currentJson = parseLenient(rawText) ?: continue
+                    // 3.9: cada addon llega con SUS referencias (`$var` propias
+                    // ya renombradas) antes de fusionarse con las de los demas.
+                    rewriteGlobalVariableReferences(
+                        currentJson,
+                        renames[rpRoot.absolutePath].orEmpty()
+                    )
 
                     if (mergedJson == null) {
                         mergedJson = currentJson
@@ -274,7 +417,7 @@ object BedrockUiMerger {
                         type = "UI_SCREEN_MERGED",
                         file = "ui/$fileName",
                         addon1 = winnerAddon,
-                        addon2 = sources.drop(1).joinToString { it.first },
+                        addon2 = sources.drop(1).joinToString { etiquetaDe(it.first) },
                         description = "Pantalla ui/$fileName fusionada semánticamente entre ${sources.size} addons."
                     )
                 }

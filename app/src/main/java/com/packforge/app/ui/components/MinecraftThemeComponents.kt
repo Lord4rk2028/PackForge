@@ -11,8 +11,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -51,6 +53,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.packforge.app.domain.model.Addon
 import com.packforge.app.domain.model.AddonType
+import com.packforge.app.domain.model.OperationProgress
 import com.packforge.app.ui.theme.LocalMotionLevel
 import com.packforge.app.ui.theme.MotionLevel
 import com.packforge.app.ui.theme.bouncySpringOf
@@ -318,6 +321,198 @@ private fun DragBars(modifier: Modifier = Modifier, active: Boolean = false) {
 }
 
 /**
+ * Diálogo animado de progreso e información al importar modpacks a la biblioteca.
+ *
+ * Muestra:
+ *  - En estado `Loading`: barra de progreso, mensaje animado y círculo de carga.
+ *  - En estado `Success`: símbolo grande de checkmark verde con el mensaje
+ *    "(Nombre del Modpack) importado a la biblioteca exitosamente".
+ *  - En estado `Error`: mensaje de error con opción de cerrar.
+ */
+@Composable
+fun ModpackImportDialog(
+    progress: OperationProgress,
+    modpackName: String? = null,
+    onDismiss: () -> Unit
+) {
+    if (progress is OperationProgress.Idle) return
+
+    val haptics = rememberExpressiveHaptics()
+
+    Dialog(
+        onDismissRequest = {
+            if (progress !is OperationProgress.Loading) onDismiss()
+        },
+        properties = DialogProperties(
+            dismissOnBackPress = progress !is OperationProgress.Loading,
+            dismissOnClickOutside = progress !is OperationProgress.Loading,
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .padding(20.dp),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp,
+            shadowElevation = 16.dp,
+            border = BorderStroke(
+                1.dp,
+                when (progress) {
+                    is OperationProgress.Success -> MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                    is OperationProgress.Error -> MaterialTheme.colorScheme.error.copy(alpha = 0.6f)
+                    else -> MaterialTheme.colorScheme.outlineVariant
+                }
+            )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                when (progress) {
+                    is OperationProgress.Loading -> {
+                        Box(
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                progress = { progress.progress ?: 0f },
+                                modifier = Modifier.size(48.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                                strokeWidth = 4.dp
+                            )
+                        }
+
+                        Text(
+                            text = "Importando Modpack",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        Text(
+                            text = progress.message.ifBlank { "Procesando archivos..." },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        LinearProgressIndicator(
+                            progress = { progress.progress ?: 0f },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                        )
+                    }
+
+                    is OperationProgress.Success -> {
+                        Box(
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.CheckCircle,
+                                contentDescription = "Importación completada",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(56.dp)
+                            )
+                        }
+
+                        Text(
+                            text = "¡Importación Completada!",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        val displayName = modpackName?.ifBlank { null }
+                            ?: progress.message.substringBefore(" añadido").substringBefore(" importado").substringAfter("Modpack '").removeSuffix("'")
+
+                        Text(
+                            text = "$displayName importado a la biblioteca exitosamente",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Button(
+                            onClick = {
+                                haptics.medium()
+                                onDismiss()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text("Aceptar", fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    is OperationProgress.Error -> {
+                        Box(
+                            modifier = Modifier
+                                .size(72.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.errorContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "Error",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(48.dp)
+                            )
+                        }
+
+                        Text(
+                            text = "Error al Importar",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+
+                        Text(
+                            text = progress.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text("Cerrar")
+                        }
+                    }
+
+                    else -> {}
+                }
+            }
+        }
+    }
+}
+
+/**
  * Menú contextual que aparece al tocar la 9.ª casilla cuando la mesa tiene más
  * de 9 ítems.
  *
@@ -393,15 +588,16 @@ private fun CraftingOverflowModal(
                         key = { _, item -> displayItemKey(item) }
                     ) { index, item ->
                         ReorderableRow(
+                            modifier = Modifier.animateItem(),
                             item = item,
                             index = index,
                             total = displayItems.size,
                             rowHeight = rowHeight,
                             rowHeightPx = rowHeightPx,
-                            onMove = { direction ->
-                                if (index + direction in displayItems.indices) {
+                            onMove = { fromIndex, direction ->
+                                if (fromIndex + direction in displayItems.indices) {
                                     haptics.light()
-                                    onMove(index, direction)
+                                    onMove(fromIndex, direction)
                                 }
                             }
                         )
@@ -420,36 +616,69 @@ private fun displayItemKey(item: AddonDisplayItem): String = when (item) {
 /**
  * Fila del menú de orden.
  *
- * Arrastre: `detectDragGesturesAfterLongPress` sobre las rayitas. Cada vez que
- * el desplazamiento supera media fila se mueve un puesto y se reinicia el
- * acumulador, así el reordenamiento se siente continuo.
+ * Arrastre: `detectDragGesturesAfterLongPress` sobre las rayitas. Con animaciones
+ * fluidas de escala, elevación y deslizamiento (offset) que responden
+ * instantáneamente al toque.
  */
 @Composable
 private fun ReorderableRow(
+    modifier: Modifier = Modifier,
     item: AddonDisplayItem,
     index: Int,
     total: Int,
     rowHeight: androidx.compose.ui.unit.Dp,
     rowHeightPx: Float,
-    onMove: (direction: Int) -> Unit
+    onMove: (fromIndex: Int, direction: Int) -> Unit
 ) {
     var dragAccum by remember { mutableStateOf(0f) }
     var isDragging by remember { mutableStateOf(false) }
 
+    val currentOnMove by rememberUpdatedState(onMove)
+    val currentIndex by rememberUpdatedState(index)
+    val currentTotal by rememberUpdatedState(total)
+
+    var dynamicIndex by remember { mutableStateOf(index) }
+    LaunchedEffect(index) {
+        if (!isDragging) {
+            dynamicIndex = index
+        }
+    }
+
+    val animatedScale by animateFloatAsState(
+        targetValue = if (isDragging) 1.04f else 1.0f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dragScale"
+    )
+    val animatedOffsetY by animateFloatAsState(
+        targetValue = if (isDragging) dragAccum else 0f,
+        animationSpec = if (isDragging) snap() else spring(stiffness = Spring.StiffnessMediumLow),
+        label = "dragOffsetY"
+    )
+    val animatedElevation by animateDpAsState(
+        targetValue = if (isDragging) 8.dp else 1.dp,
+        label = "dragElevation"
+    )
+
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(rowHeight)
             .graphicsLayer {
-                translationY = if (isDragging) dragAccum * 0.35f else 0f
-                alpha = if (isDragging) 0.85f else 1f
+                translationY = animatedOffsetY
+                scaleX = animatedScale
+                scaleY = animatedScale
+                shadowElevation = animatedElevation.toPx()
             },
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
+        shadowElevation = animatedElevation,
         color = if (isDragging) {
-            MaterialTheme.colorScheme.secondaryContainer
+            MaterialTheme.colorScheme.primaryContainer
         } else {
             MaterialTheme.colorScheme.surfaceContainerLow
-        }
+        },
+        border = if (isDragging) {
+            BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+        } else null
     ) {
         Row(
             modifier = Modifier
@@ -467,17 +696,20 @@ private fun ReorderableRow(
                             onDragStart = {
                                 isDragging = true
                                 dragAccum = 0f
+                                dynamicIndex = currentIndex
                             },
                             onDrag = { change, dragAmount ->
                                 change.consume()
                                 dragAccum += dragAmount.y
-                                val threshold = rowHeightPx * 0.55f
-                                if (dragAccum <= -threshold) {
-                                    onMove(-1)
-                                    dragAccum = 0f
-                                } else if (dragAccum >= threshold) {
-                                    onMove(1)
-                                    dragAccum = 0f
+                                val threshold = rowHeightPx * 0.45f
+                                if (dragAccum <= -threshold && dynamicIndex > 0) {
+                                    currentOnMove(dynamicIndex, -1)
+                                    dynamicIndex -= 1
+                                    dragAccum += rowHeightPx * 0.5f
+                                } else if (dragAccum >= threshold && dynamicIndex < currentTotal - 1) {
+                                    currentOnMove(dynamicIndex, 1)
+                                    dynamicIndex += 1
+                                    dragAccum -= rowHeightPx * 0.5f
                                 }
                             },
                             onDragEnd = {
@@ -534,7 +766,7 @@ private fun ReorderableRow(
 
             // Alternativa accesible al arrastre (y útil en pantallas pequeñas).
             IconButton(
-                onClick = { onMove(-1) },
+                onClick = { currentOnMove(currentIndex, -1) },
                 enabled = index > 0,
                 modifier = Modifier.size(36.dp)
             ) {
@@ -545,7 +777,7 @@ private fun ReorderableRow(
                 )
             }
             IconButton(
-                onClick = { onMove(1) },
+                onClick = { currentOnMove(currentIndex, 1) },
                 enabled = index < total - 1,
                 modifier = Modifier.size(36.dp)
             ) {

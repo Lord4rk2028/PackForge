@@ -920,7 +920,17 @@ object PackForgeValidator {
                 // falsos (ver `VANILLA_GEOMETRY_PREFIXES`). La evidencia de si
                 // una entidad "existe en el juego" está en el propio pack, no
                 // en una tabla que caduca.
-                if (bpEntityIds.isNotEmpty() && ident != null && ident !in bpEntityIds) {
+                //
+                // ⭐ TICKET-CORE-004 — NO se aplica a entidades VANILLA.
+                // Just-Health-Indicator sobrescribe 101 `minecraft:*` solo para
+                // pintar su HUD de vida; el `minecraft:entity` de un mob vanilla
+                // lo aporta el JUEGO, no el pack, así que exigirlo dentro del
+                // pack marcaba a `cow`, `goat`, `mooshroom`, `sheep` y `bee` como
+                // "incompletas" (4 HIGH + notas falsas). El contador de
+                // entidades incompletas sólo mira defectos del pack.
+                if (bpEntityIds.isNotEmpty() && ident != null &&
+                    ident !in bpEntityIds && !ident.startsWith("minecraft:")
+                ) {
                     val cita = citadas[ident]
                     if (cita == null) {
                         warnings.add(

@@ -43,6 +43,45 @@ class ManifestGeneratorTest {
     }
 
     @Test
+    fun applyOriginalRpSettings_negotiatesMinEngineAndCapabilities() {
+        // 3.6: el RP se generaba con min_engine_version FIJO (1.21.0) y sin
+        // capabilities, así que un addon que exigía 1.22 se instalaba y no
+        // cargaba, y los flags del autor (pbr/raytraced) se perdían.
+        val viejo = tempManifest(manifestJson(mev = arrayOf(1, 16, 0), capabilities = listOf("pbr")))
+        val nuevo = tempManifest(manifestJson(mev = arrayOf(1, 22, 10), capabilities = listOf("raytraced")))
+
+        val destino = ManifestGenerator.generateRpManifest("Fusionado")
+        val ajustes = ManifestGenerator.applyOriginalRpSettings(destino, listOf(viejo, nuevo))
+
+        val header = destino.getJSONObject("header")
+        val mev = header.getJSONArray("min_engine_version")
+        assertEquals(listOf(1, 22, 10), (0 until mev.length()).map { mev.getInt(it) })
+        assertEquals(listOf(1, 22, 10), ajustes.minEngineVersion)
+
+        val caps = header.getJSONArray("capabilities")
+        assertEquals(
+            "Se unen las capabilities de todos los addons",
+            listOf("pbr", "raytraced"),
+            (0 until caps.length()).map { caps.getString(it) }
+        )
+        assertEquals(listOf("pbr", "raytraced"), ajustes.capabilities)
+    }
+
+    @Test
+    fun applyOriginalRpSettings_neverLowersTheHistoricalFloor() {
+        // Ningún addon exige más de 1.21.0: se conserva el suelo histórico que
+        // ya usaban el BP y el RP (subirlo no convierte contenido, bajarlo
+        // dejaría fuera APIs que el fusor usa).
+        val antiguo = tempManifest(manifestJson(mev = arrayOf(1, 16, 0)))
+        val destino = ManifestGenerator.generateRpManifest("Fusionado")
+
+        ManifestGenerator.applyOriginalRpSettings(destino, listOf(antiguo))
+
+        val mev = destino.getJSONObject("header").getJSONArray("min_engine_version")
+        assertEquals(listOf(1, 21, 0), (0 until mev.length()).map { mev.getInt(it) })
+    }
+
+    @Test
     fun buildMergedBpManifest_minEngineVersionMax() {
         val low = tempManifest(manifestJson(mev = arrayOf(1, 20, 0)))
         val high = tempManifest(manifestJson(mev = arrayOf(1, 21, 80)))
@@ -192,5 +231,75 @@ class ManifestGeneratorTest {
         // BOM es EF BB BF — no debe empezar así
         val hasBom = bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()
         assertFalse("manifest no debe tener BOM", hasBom)
+    }
+
+    /**
+     * 3.10 — Bedrock no carga un pack con dependencias por UUID ausentes: las
+     * externas se eliminan (reportadas) y las del pack fusionado y los módulos
+     * `@minecraft/...` se conservan.
+     */
+    @Test
+    fun dropExternalUuidDependencies_removesOnlyUnknownPacks() {
+        val rpUuid = "00000000-0000-0000-0000-0000000000aa"
+        val manifest = JSONObject(
+            """
+            {
+              "format_version": 2,
+              "header": { "name": "x", "uuid": "$rpUuid", "version": [1,0,0] },
+              "dependencies": [
+                { "uuid": "11111111-1111-1111-1111-111111111111", "version": [1,0,0] },
+                { "uuid": "$rpUuid", "version": [1,0,0] },
+                { "module_name": "@minecraft/server", "version": "2.0.0" }
+              ]
+            }
+            """.trimIndent()
+        )
+
+        val eliminadas = ManifestGenerator.dropExternalUuidDependencies(
+            manifest,
+            allowedUuids = setOf(rpUuid),
+            declaredBy = "BP"
+        )
+
+        assertEquals(1, eliminadas.size)
+        assertEquals("11111111-1111-1111-1111-111111111111", eliminadas.first().uuid)
+        assertEquals("1.0.0", eliminadas.first().version)
+        assertEquals("BP", eliminadas.first().declaredBy)
+
+        val deps = manifest.getJSONArray("dependencies")
+        assertEquals("Quedan la del RP y el módulo de scripting", 2, deps.length())
+        val nombres = (0 until deps.length()).map { deps.getJSONObject(it) }
+        assertTrue(nombres.any { it.optString("uuid") == rpUuid })
+        assertTrue(nombres.any { it.optString("module_name") == "@minecraft/server" })
+    }
+
+    /**
+     * 3.7 — `1.12.0-beta` selecciona la API beta del módulo: no se puede
+     * convertir en `[1,12,0]` (ni en el `[1,12]` de dos elementos que producía
+     * el parser anterior).
+     */
+    @Test
+    fun betaDependencyVersionIsKeptAsString() {
+        val beta = JSONObject().apply {
+            put("module_name", "@minecraft/server")
+            put("version", "1.12.0-beta")
+        }
+        val origen = tempManifest(manifestJson(dependencies = listOf(beta)))
+
+        val out = ManifestGenerator.buildMergedBpManifest(
+            originalBpManifests = listOf(origen),
+            originalRpHeaderUuids = emptySet(),
+            newRpHeaderUuid = null,
+            packName = "Beta",
+            hasScriptsFolder = true
+        )
+
+        val deps = out.getJSONArray("dependencies")
+        val dep = (0 until deps.length())
+            .map { deps.getJSONObject(it) }
+            .first { it.optString("module_name") == "@minecraft/server" }
+        val version = dep.get("version")
+        assertTrue("La versión beta debe seguir siendo texto: $version", version is String)
+        assertEquals("1.12.0-beta", version)
     }
 }

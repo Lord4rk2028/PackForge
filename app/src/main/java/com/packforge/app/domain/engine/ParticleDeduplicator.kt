@@ -48,14 +48,27 @@ object ParticleDeduplicator {
         val roots = addonRoots.filter { it.isDirectory }
         if (roots.size < 2) return Result(0, emptyList())
 
+        // ⭐ TICKET-CORE-014 — El token de cada addon debe ser ESTABLE entre
+        // exportaciones del mismo addon PERO ÚNICO dentro de esta fusión. El
+        // hash del contenido es estable, pero dos addons con contenido idéntico
+        // (dos copias del mismo zip) colisionarían. Se desambigua por el ORDEN
+        // de la lista, que es estable para el mismo conjunto de addons: así un
+        // addon dado recibe siempre el mismo token cuando la fusión no cambia.
+        val tokensPorRoot = linkedMapOf<File, String>()
+        val vistos = mutableMapOf<String, Int>()
+        roots.forEach { root ->
+            val base = tokenEstableDe(root)
+            val n = vistos.getOrDefault(base, 0) + 1
+            vistos[base] = n
+            tokensPorRoot[root] = if (n == 1) base else "${base}${n.toString(16)}"
+        }
+
         val firstOwner = mutableMapOf<String, String>()
         val touched = linkedSetOf<File>()
         var renames = 0
 
         roots.forEach { root ->
-            val token = Integer.toHexString(root.absolutePath.hashCode())
-                .takeLast(4)
-                .padStart(4, '0')
+            val token = tokensPorRoot[root]!!
 
             particleDefinitionFiles(root).forEach { file ->
                 val json = try {
@@ -95,6 +108,43 @@ object ParticleDeduplicator {
             PackForgeLog.d(TAG, "✅ $renames partícula(s) duplicada(s) desambiguada(s) en el origen")
         }
         return Result(renames, touched.toList())
+    }
+
+    /**
+     * ⭐ TICKET-CORE-014 — Token ESTABLE por addon.
+     *
+     * El sufijo `_pf<token>` de una partícula duplicada debe ser único dentro de
+     * la fusión PERO estable entre exportaciones del mismo addon: si el jugador
+     * re-exporta y reinstala, los mundos que ya usan `custom_dust_pfXXXX` deben
+     * seguir funcionando.
+     *
+     * La versión anterior usaba `root.absolutePath.hashCode()`, que cambia con
+     * cada exportación porque el directorio extraído se llama
+     * `extracted_<epochMs>_<…>`. Dos exportaciones del MISMO addon producían
+     * dos tokens distintos → el contenido "cambiaba de nombre" a los ojos del
+     * mundo.
+     *
+     * Ahora el token se deriva del **contenido** del propio directorio RP: como
+     * la extracción es determinista en bytes, el resumen SHA-256 del contenido
+     * de sus partículas es el mismo entre exportaciones. Se usa el MÍNIMO de
+     * hash: en un addon sin partículas devuelve un valor fijo (nunca habrá
+     * colisión que lo use); en uno con partículas, hash + `renames` garantizan
+     * unicidad aun si dos addons coinciden en los primeros 4 hex.
+     */
+    private fun tokenEstableDe(root: File): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        particleDefinitionFiles(root).forEach { file ->
+            try {
+                digest.update(file.readBytes())
+            } catch (_: Exception) {
+                // Un archivo ilegible no contribuye al resumen; el resto sí.
+            }
+        }
+        val hex = digest.digest()
+        val builder = StringBuilder(hex.size * 2)
+        for (b in hex) builder.append("%02x".format(b))
+        val crudo = builder.toString()
+        return if (crudo.all { it == '0' }) "0000" else crudo.take(4)
     }
 
     /** Archivos de definición de partículas dentro de la raíz de un addon. */

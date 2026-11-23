@@ -239,5 +239,87 @@ class BedrockUiMergerTest {
         assertEquals("valor con // no es comentario", parsed.getString("key"))
         assertEquals(123, parsed.getInt("another"))
     }
-}
 
+    /**
+     * 3.9 — Dos addons que declaran la MISMA variable global con valores
+     * distintos: el perdedor conserva su valor bajo `$var_pf<hash>` y sus
+     * referencias se reescriben SOLO en su propio UI. Antes solo se reportaba y
+     * la pantalla del perdedor se quedaba con el valor ajeno.
+     */
+    @Test
+    fun collidingGlobalVariableIsRenamedForTheLoserAndItsScreensRewritten() {
+        val root1 = tempDir("rp1")
+        val ui1 = File(root1, "ui").apply { mkdirs() }
+        File(ui1, "_global_variables.json").writeText(
+            """{"${'$'}hud_alpha": 0.8}"""
+        )
+        File(ui1, "hud_screen.json").writeText(
+            """
+            {
+              "namespace": "hud",
+              "mana": { "type": "label", "color": "${'$'}hud_alpha" }
+            }
+            """.trimIndent()
+        )
+
+        val root2 = tempDir("rp2")
+        val ui2 = File(root2, "ui").apply { mkdirs() }
+        File(ui2, "_global_variables.json").writeText(
+            """{"${'$'}hud_alpha": 1.0}"""
+        )
+        File(ui2, "hud_screen.json").writeText(
+            """
+            {
+              "namespace": "hud",
+              "stamina": { "type": "label", "color": "${'$'}hud_alpha" },
+              "otra": { "type": "label", "color": "${'$'}hud_alpha_extra" }
+            }
+            """.trimIndent()
+        )
+        // Referencia en un archivo exclusivo del segundo addon (copia directa).
+        File(ui2, "spell_book.json").writeText(
+            """{"namespace": "spells", "root": {"color": "${'$'}hud_alpha"}}"""
+        )
+
+        val mergedRp = tempDir("merged_rp")
+        BedrockUiMerger.mergeUi(listOf(root1, root2), mergedRp)
+
+        val vars = JSONObject(File(mergedRp, "ui/_global_variables.json").readText())
+        assertEquals("El ganador conserva su valor", 0.8, vars.getDouble("${'$'}hud_alpha"), 0.001)
+        val renombrada = vars.keys().asSequence().firstOrNull {
+            it.startsWith("${'$'}hud_alpha_pf")
+        }
+        assertNotNull("El perdedor debe conservar su valor bajo un nombre propio", renombrada)
+        assertEquals(1.0, vars.getDouble(renombrada!!), 0.001)
+
+        val hud = JSONObject(File(mergedRp, "ui/hud_screen.json").readText())
+        assertEquals(
+            "El UI del ganador no se reescribe",
+            "${'$'}hud_alpha",
+            hud.getJSONObject("mana").getString("color")
+        )
+        assertEquals(
+            "El UI del perdedor apunta a SU variable",
+            renombrada,
+            hud.getJSONObject("stamina").getString("color")
+        )
+        assertEquals(
+            "Un nombre que empieza igual no se toca",
+            "${'$'}hud_alpha_extra",
+            hud.getJSONObject("otra").getString("color")
+        )
+
+        val spell = JSONObject(File(mergedRp, "ui/spell_book.json").readText())
+        assertEquals(
+            "La copia directa también se reescribe",
+            renombrada,
+            spell.getJSONObject("root").getString("color")
+        )
+        assertTrue(
+            "El renombrado debe reportarse",
+            ConflictRegistry.conflicts.value.any {
+                it.conflictType == "UI_GLOBAL_VARIABLE_RENAMED"
+            }
+        )
+    }
+}

@@ -169,7 +169,16 @@ object EntityDependencyResolver {
         if (!mergedRpDir.isDirectory) return emptyList()
 
         // ÍNDICE UNIFICADO: una sola pasada para geometrías, animaciones, RCs
+        // TICKET-CORE-009: se mide porque en el móvil esta fase tardó 1020 s y
+        // hay que distinguir «construir el índice» de «el bucle de entidades».
+        val __tIndice = System.currentTimeMillis()
         val unifiedIndex = GeometryAnimRCIndex.build(rpDirs, mergedRpDir)
+        println(
+            "PF-PERF | Fase 3D: indice en ${System.currentTimeMillis() - __tIndice} ms " +
+                "(${unifiedIndex.geometryById.size} geometrias, " +
+                "${unifiedIndex.animationById.size} animaciones, " +
+                "${unifiedIndex.renderControllerById.size} render controllers)"
+        )
         val geoIndex = unifiedIndex.geometryById
         val animIndex = unifiedIndex.animationById
         val rcIndex = unifiedIndex.renderControllerById
@@ -246,6 +255,19 @@ val entityRoot = File(mergedRpDir, "entity")
                     // que el texto y el JSON de cada entidad solo existen en
                     // memoria mientras dura su turno (máx. LIMITE a la vez).
                     permisosEntidad.acquire()
+                    // ⭐ DIAGNÓSTICO DE RENDIMIENTO (TICKET-CORE-009)
+                    //
+                    // En el móvil del usuario esta fase tardó 1020 s con solo 16
+                    // entidades y 281 referencias, mientras que en el JVM de
+                    // escritorio tarda ~3 s. No es el índice (`GeometryAnimRCIndex`
+                    // se reutiliza en la validación y allí tarda 2 s en el mismo
+                    // teléfono), así que el coste está en el bucle por entidad y
+                    // no se puede localizar sin medir en el dispositivo.
+                    //
+                    // Se imprime SOLO la entidad que supere el umbral: así el
+                    // registro de una fusión real nombra al culpable sin inundar
+                    // el log con las 16 (o 400) líneas normales.
+                    val __tEntidad = System.currentTimeMillis()
                     try {
                         val json = readPackJson(file.readText(StandardCharsets.UTF_8)) ?: return@async
                         val desc = json.optJSONObject("minecraft:client_entity")?.optJSONObject("description")
@@ -422,9 +444,23 @@ val entityRoot = File(mergedRpDir, "entity")
                             }
                             val candidates = rcIndex[rcId].orEmpty()
                             if (candidates.isEmpty()) {
-                                // Igual que las animaciones: se neutraliza, no se reporta
-                                // como pérdida de la fusión.
-                                rcsColgantes.add(rcId)
+                                // ⭐ TICKET-CORE-008 — SIN CATÁLOGO, NO BORRAR.
+                                //
+                                // Un render controller que no está en ningún addon
+                                // puede ser VANILLA y no estar en las listas
+                                // heurísticas (p. ej. `controller.render.armadillo.v2`,
+                                // que solo figura en el catálogo de 2.223 ids). Si el
+                                // catálogo no está disponible no se puede distinguir
+                                // «colgante» de «vanilla que no conozco», y borrarlo
+                                // deja al mob SIN render controller: no se dibuja y
+                                // aparece invisible.
+                                //
+                                // Ante la duda se conserva la referencia: el juego la
+                                // resuelve si es suya, y si no, la ignora — mucho menos
+                                // dañino que un mob invisible.
+                                if (VanillaAssets.isCatalogReady) {
+                                    rcsColgantes.add(rcId)
+                                }
                             } else {
                                 recoverById(candidates.first(), mergedRpDir, merged, rcId)
                                 fixedRc++
@@ -464,6 +500,13 @@ val entityRoot = File(mergedRpDir, "entity")
                         // ⭐ MEMORIA: se libera SIEMPRE (el try puede salir por
                         // return@async cuando el JSON no es una client_entity).
                         permisosEntidad.release()
+                        // TICKET-CORE-009: solo la entidad patológica se reporta.
+                        val __msEntidad = System.currentTimeMillis() - __tEntidad
+                        if (__msEntidad > 1500) {
+                            println(
+                                "PF-PERF | ENTIDAD LENTA: ${file.name} -> ${__msEntidad} ms"
+                            )
+                        }
                         // Latido: cada 25 entidades (y en la primera y la última)
                         // para que el log diga si la fase avanza y por dónde va.
                         val n = completadas.incrementAndGet()

@@ -22,8 +22,9 @@ class DiagnosticoMergeGeometryArchivosTest {
 
     @Test
     fun `cuantos archivos de models entity escribe mergeGeometryFiles`() {
-        val src = File(System.getenv("USERPROFILE"), "Downloads/core-craft_v1.2.8.mcaddon")
-        assumeTrue("Falta el addon real", src.isFile)
+        val srcFound = TestFixtures.addon("core-craft_v1.2.8.mcaddon")
+        assumeTrue(TestFixtures.describe("core-craft_v1.2.8.mcaddon"), srcFound != null)
+        val src = srcFound!!
 
         val work = Files.createTempDirectory("pf_diag_mergegeo_").toFile()
         try {

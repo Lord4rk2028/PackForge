@@ -345,6 +345,34 @@ object JsonDeepMerger {
         //
         // Regla: strings y objetos/arrays se unen por igualdad (son identidades);
         // los números se conservan SIEMPRE (son posiciones o medidas).
+        // ⭐ TICKET-CORE-006 — VECTORES GEOMÉTRICOS: nunca se concatenan.
+        //
+        // Un `position`/`rotation`/`scale` de animación de Bedrock es SIEMPRE un
+        // vector de 3 componentes `[x, y, z]`. Concatenar dos vectores de 3 da
+        // uno de 6, y el motor descarta el bloque entero: el hueso se queda en
+        // su pivote original.
+        //
+        // Medido con Just-Health-Indicator + SimpleEconomy: `hpi_root.position`
+        // salía `[0, "(variable.hpi_y ?? 0.0)", 0, 0, 0]` (5), así que el HUD no
+        // subía a y=14.4 y `hpi_heart`/`hpi_c1..c3`, aún sin desplazamiento,
+        // quedaban TODOS apilados en `[0,0,0]` (el corazón y los números
+        // encima unos de otros, a la altura de las patas).
+        //
+        // Si ambos lados son vectores válidos de 3, el valor es único y gana la
+        // prioridad; no hay nada que "unir" porque no son identidades.
+        val bothAre3dVectors = array1.length() == 3 && array2.length() == 3
+        if (bothAre3dVectors) {
+            val winnerIdx = priorityWinnerIndex.get() ?: Int.MAX_VALUE
+            val sourceHasLowerPriority =
+                (prioritySourceIndex.get() ?: Int.MAX_VALUE) > winnerIdx &&
+                    winnerIdx != Int.MAX_VALUE
+            return if (sourceHasLowerPriority) {
+                cleanJsonArray(array1)
+            } else {
+                cleanJsonArray(array2)
+            }
+        }
+
         val result = JSONArray()
         val seenIdentities = LinkedHashSet<String>()
         for (i in 0 until array1.length()) {
@@ -363,6 +391,18 @@ object JsonDeepMerger {
         }
         return result
     }
+
+    /**
+     * Igualdad ESTRUCTURAL entre dos valores JSON (el orden de claves no cuenta).
+     *
+     * Se usa para distinguir “el segundo addon redefine lo mismo” (no hay
+     * conflicto) de “el segundo addon redefine otra cosa y se pierde” (sí lo
+     * hay) en los catálogos que resuelven colisiones por clave
+     * (`terrain_texture`, `item_texture`, `blocks.json`). Comparar con
+     * `toString()` daría falsos conflictos porque el orden de claves de
+     * `JSONObject` no es estable.
+     */
+    fun equivalentlyEqual(a: Any?, b: Any?): Boolean = canonicalOf(a) == canonicalOf(b)
 
     /** Clave de igualdad estructural para deduplicar arrays fusionados. */
     private fun canonicalOf(value: Any?): String = when (value) {

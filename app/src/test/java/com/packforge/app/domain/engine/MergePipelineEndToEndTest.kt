@@ -4,6 +4,7 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -41,9 +42,9 @@ class MergePipelineEndToEndTest {
         "modules":[{"type":"data","uuid":"$uuid-m","version":[1,0,0]}]}
     """.trimIndent()
 
-    private fun rpManifest(uuid: String, name: String) = """
+    private fun rpManifest(uuid: String, name: String, subpacks: String = "") = """
         {"format_version":2,"header":{"name":"$name RP","description":"rp","uuid":"$uuid",
-        "version":[1,0,0],"min_engine_version":[1,20,0]},
+        "version":[1,0,0],"min_engine_version":[1,20,0]${if (subpacks.isNotBlank()) ",\"subpacks\":$subpacks" else ""}},
         "modules":[{"type":"resources","uuid":"$uuid-m","version":[1,0,0]}]}
     """.trimIndent()
 
@@ -58,7 +59,8 @@ class MergePipelineEndToEndTest {
         uuid: String,
         name: String,
         bpFiles: Map<String, String> = emptyMap(),
-        rpFiles: Map<String, String> = emptyMap()
+        rpFiles: Map<String, String> = emptyMap(),
+        rpSubpacks: String = ""
     ): File {
         val file = File(tempDir("pf_e2e_"), fileName)
         ZipOutputStream(file.outputStream()).use { zip ->
@@ -69,7 +71,7 @@ class MergePipelineEndToEndTest {
             }
             put("bp/manifest.json", bpManifest(uuid, name))
             bpFiles.forEach { (rel, content) -> put("bp/$rel", content) }
-            put("rp/manifest.json", rpManifest("$uuid-rp", name))
+            put("rp/manifest.json", rpManifest("$uuid-rp", name, rpSubpacks))
             rpFiles.forEach { (rel, content) -> put("rp/$rel", content) }
         }
         return file
@@ -387,5 +389,278 @@ class MergePipelineEndToEndTest {
                 nestedBytes.toString(Charsets.UTF_8)
             )
         }
+    }
+
+    /**
+     * TICKET-CORE-015 (keys): al renombrar el bloque de un addon perdedor hay
+     * que renombrar también su CLAVE en `blocks.json` y en `texture_data`. Si
+     * solo se reescriben valores, el bloque renombrado se queda sin mapeo de
+     * textura y el juego lo muestra como “?”.
+     */
+    @Test
+    fun renamedBlockKeepsItsCatalogEntries() = runBlocking {
+        val work = tempDir("pf_work3_")
+
+        fun blockPack(name: String, uuid: String, textura: String): File = addon(
+            fileName = "$name.mcaddon",
+            uuid = uuid,
+            name = name,
+            bpFiles = mapOf(
+                "blocks/stone.json" to
+                    """{"format_version":"1.20.10","minecraft:block":{"description":{"identifier":"tools:stone"},"components":{"minecraft:material_instances":{"*":{"texture":"$textura"}}}}}"""
+            ),
+            rpFiles = mapOf(
+                "blocks.json" to
+                    """{"format_version":[1,1,0],"tools:stone":{"textures":"$textura","sound":"stone"}}""",
+                "textures/terrain_texture.json" to
+                    """{"resource_pack_name":"x","texture_name":"atlas.terrain","texture_data":{"$textura":{"textures":"textures/blocks/$textura"}}}""",
+                "textures/blocks/$textura.png" to "PNG-$textura"
+            )
+        )
+
+        val result = PackForgeOrchestrator.mergeAddons(
+            addonPaths = listOf(
+                blockPack("BlockA", "aaaa1111-1111-1111-1111-111111111111", "stone_a").absolutePath,
+                blockPack("BlockB", "bbbb2222-2222-2222-2222-222222222222", "stone_b").absolutePath
+            ),
+            outputDir = work.absolutePath,
+            addonNames = listOf("BlockA", "BlockB"),
+            customName = "E2E_Blocks",
+            addonIds = listOf("block_a", "block_b")
+        )
+
+        assertTrue("La fusión debe terminar bien: ${result.errorMessage}", result.success)
+
+        ZipFile(File(result.outputPath!!)).use { zip ->
+            val blocks = JSONObject(entryText(zip, "blocks.json")!!)
+            assertTrue(
+                "El bloque ganador conserva su clave: $blocks",
+                blocks.has("tools:stone")
+            )
+            val claveRenombrada = blocks.keys().asSequence()
+                .firstOrNull { it.startsWith("pf:") && it.endsWith("stone") }
+            assertNotNull(
+                "El bloque del perdedor debe conservar su entrada en blocks.json con la clave renombrada: $blocks",
+                claveRenombrada
+            )
+            assertEquals(
+                "La entrada renombrada debe apuntar a su propia textura y no a la del ganador",
+                "stone_b",
+                blocks.getJSONObject(claveRenombrada!!).getString("textures")
+            )
+
+            val atlas = JSONObject(entryText(zip, "textures/terrain_texture.json")!!)
+                .getJSONObject("texture_data")
+            assertTrue("La textura del ganador debe estar", atlas.has("stone_a"))
+            assertTrue("La textura del perdedor debe estar", atlas.has("stone_b"))
+        }
+    }
+
+    /**
+     * 3.5: los `subpacks` deben sobrevivir al manifiesto fusionado (antes se
+     * descartaban y el juego ignoraba las carpetas) y las carpetas de dos
+     * addons no pueden mezclarse.
+     */
+    @Test
+    fun subpacksFromTwoAddonsSurviveWithDistinctFolders() = runBlocking {
+        val work = tempDir("pf_work_subpack_")
+        val subpacks =
+            """[{"folder_name":"subpack_1","name":"Baja","memory_tier":0}]"""
+
+        val a = addon(
+            fileName = "sub_a.mcaddon",
+            uuid = "aaaa3333-3333-3333-3333-333333333333",
+            name = "SubA",
+            rpFiles = mapOf("subpack_1/textures/blocks/only_a.png" to "PNG-SUB-A"),
+            rpSubpacks = subpacks
+        )
+        val b = addon(
+            fileName = "sub_b.mcaddon",
+            uuid = "bbbb4444-4444-4444-4444-444444444444",
+            name = "SubB",
+            rpFiles = mapOf("subpack_1/textures/blocks/only_b.png" to "PNG-SUB-B"),
+            rpSubpacks = subpacks
+        )
+
+        val result = PackForgeOrchestrator.mergeAddons(
+            addonPaths = listOf(a.absolutePath, b.absolutePath),
+            outputDir = work.absolutePath,
+            addonNames = listOf("SubA", "SubB"),
+            customName = "E2E_Subpacks",
+            addonIds = listOf("sub_a", "sub_b")
+        )
+
+        assertTrue("La fusión debe terminar bien: ${result.errorMessage}", result.success)
+
+        ZipFile(File(result.outputPath!!)).use { zip ->
+            val names = entryNames(zip)
+            val rpManifestPath = names.first {
+                it.endsWith("manifest.json") && it.lowercase().contains("rp_")
+            }
+            val header = JSONObject(entryText(zip, rpManifestPath)!!).getJSONObject("header")
+            val subs = header.optJSONArray("subpacks")
+            assertNotNull("El manifiesto fusionado debe conservar 'subpacks'", subs)
+            assertEquals("Deben llegar las dos variantes", 2, subs!!.length())
+
+            val folders = (0 until subs.length()).map {
+                subs.getJSONObject(it).getString("folder_name")
+            }
+            assertEquals(
+                "Las carpetas de subpack no pueden colisionar: $folders",
+                2,
+                folders.distinct().size
+            )
+            assertEquals("La primera conserva el nombre original", "subpack_1", folders[0])
+            assertTrue(
+                "El contenido del primero debe estar en su carpeta: $names",
+                names.any { it.endsWith("subpack_1/textures/blocks/only_a.png") }
+            )
+            assertTrue(
+                "El contenido del segundo debe estar en la carpeta renombrada: $names",
+                names.any { it.endsWith("${folders[1]}/textures/blocks/only_b.png") }
+            )
+        }
+    }
+
+    /**
+     * 3.11 — El token `pf:<hex>` de un identificador renombrado debe ser el
+     * MISMO en dos exportaciones de los mismos addons. Antes salía de
+     * `ownerKey.hashCode()` y, en un addon de un solo tipo, la clave caía a la
+     * ruta extraída (`extracted_<epochMs>_…`): el id cambiaba en cada
+     * exportación y lo guardado en un mundo dejaba de resolverse al reinstalar.
+     */
+    @Test
+    fun renamedIdentifierTokensAreStableAcrossExports() = runBlocking {
+        fun bpOnly(name: String, uuid: String, id: String): File {
+            val file = File(tempDir("pf_stable_src_"), "$name.mcaddon")
+            ZipOutputStream(file.outputStream()).use { zip ->
+                fun put(path: String, content: String) {
+                    zip.putNextEntry(ZipEntry(path))
+                    zip.write(content.toByteArray())
+                    zip.closeEntry()
+                }
+                put(
+                    "manifest.json",
+                    """{"format_version":2,"header":{"name":"$name","description":"bp","uuid":"$uuid","version":[1,0,0],"min_engine_version":[1,20,0]},"modules":[{"type":"data","uuid":"$uuid-m","version":[1,0,0]}]}"""
+                )
+                put(
+                    "entities/thing.json",
+                    """{"format_version":"1.16.0","minecraft:entity":{"description":{"identifier":"$id"},"components":{}}}"""
+                )
+            }
+            return file
+        }
+
+        suspend fun exportar(): String {
+            val work = tempDir("pf_stable_out_")
+            val a = bpOnly("StableA", "cccc1111-1111-1111-1111-111111111111", "tools:thing")
+            val b = bpOnly("StableB", "dddd2222-2222-2222-2222-222222222222", "tools:thing")
+            val result = PackForgeOrchestrator.mergeAddons(
+                addonPaths = listOf(a.absolutePath, b.absolutePath),
+                outputDir = work.absolutePath,
+                addonNames = listOf("StableA", "StableB"),
+                customName = "E2E_Stable",
+                addonIds = listOf("stable_a", "stable_b")
+            )
+            assertTrue("La fusión debe terminar bien: ${result.errorMessage}", result.success)
+
+            ZipFile(File(result.outputPath!!)).use { zip ->
+                val ids = entryNames(zip)
+                    .filter { it.contains("/entities/") && it.endsWith(".json") }
+                    .mapNotNull { nombre ->
+                        val texto = entryText(zip, nombre) ?: return@mapNotNull null
+                        runCatching {
+                            JSONObject(texto).optJSONObject("minecraft:entity")
+                                ?.optJSONObject("description")
+                                ?.optString("identifier")
+                        }.getOrNull()
+                    }
+                val renombrado = ids.firstOrNull { it.startsWith("pf:") }
+                assertNotNull("El perdedor debe recibir un id pf:: $ids", renombrado)
+                return renombrado!!
+            }
+        }
+
+        val primera = exportar()
+        val segunda = exportar()
+
+        assertEquals(
+            "El token de desambiguación no puede cambiar entre exportaciones",
+            primera,
+            segunda
+        )
+    }
+
+    /**
+     * 3.10 — Un addon que depende de OTRO pack por UUID que no va en el
+     * `.mcaddon` hacía que Bedrock no cargara NADA. El motor elimina esa
+     * dependencia y lo reporta.
+     */
+    @Test
+    fun externalDependencyIsDroppedSoThePackLoads() = runBlocking {
+        val work = tempDir("pf_work_deps_")
+        val exclusivo = "0e9e9e9e-0000-0000-0000-000000000001"
+
+        val addonFile = File(tempDir("pf_deps_src_"), "deps.mcaddon")
+        ZipOutputStream(addonFile.outputStream()).use { zip ->
+            fun put(path: String, content: String) {
+                zip.putNextEntry(ZipEntry(path))
+                zip.write(content.toByteArray())
+                zip.closeEntry()
+            }
+            put(
+                "manifest.json",
+                """
+                {"format_version":2,"header":{"name":"Deps","description":"bp",
+                "uuid":"0e9e9e9e-0000-0000-0000-0000000000aa","version":[1,0,0],
+                "min_engine_version":[1,20,0]},
+                "modules":[{"type":"data","uuid":"0e9e9e9e-0000-0000-0000-0000000000bb","version":[1,0,0]}],
+                "dependencies":[{"uuid":"$exclusivo","version":[1,0,0]},
+                {"module_name":"@minecraft/server","version":"1.16.0"}]}
+                """.trimIndent()
+            )
+            put(
+                "entities/thing.json",
+                """{"format_version":"1.16.0","minecraft:entity":{"description":{"identifier":"tools:thing"},"components":{}}}"""
+            )
+        }
+
+        val result = PackForgeOrchestrator.mergeAddons(
+            addonPaths = listOf(addonFile.absolutePath),
+            outputDir = work.absolutePath,
+            addonNames = listOf("Deps"),
+            customName = "E2E_Deps",
+            addonIds = listOf("deps")
+        )
+
+        assertTrue("La fusión debe terminar bien: ${result.errorMessage}", result.success)
+
+        ZipFile(File(result.outputPath!!)).use { zip ->
+            val names = entryNames(zip)
+            val bpManifestPath = names.first {
+                it.endsWith("manifest.json") && it.lowercase().contains("bp_")
+            }
+            val deps = JSONObject(entryText(zip, bpManifestPath)!!).optJSONArray("dependencies")
+            val uuids = (0 until (deps?.length() ?: 0))
+                .mapNotNull { deps!!.optJSONObject(it)?.optString("uuid") }
+                .map { it.lowercase() }
+            assertFalse(
+                "La dependencia externa no puede quedar colgando: $uuids",
+                uuids.contains(exclusivo.lowercase())
+            )
+            assertTrue(
+                "El módulo de scripting debe conservarse",
+                (0 until (deps?.length() ?: 0))
+                    .any { deps!!.optJSONObject(it)?.optString("module_name") == "@minecraft/server" }
+            )
+        }
+
+        assertTrue(
+            "La dependencia eliminada debe llegar al reporte",
+            ConflictRegistry.conflicts.value.any {
+                it.conflictType == "EXTERNAL_DEPENDENCY_DROPPED" &&
+                    it.description.contains(exclusivo)
+            }
+        )
     }
 }

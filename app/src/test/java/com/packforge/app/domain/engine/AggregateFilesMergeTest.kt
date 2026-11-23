@@ -107,6 +107,107 @@ class AggregateFilesMergeTest {
         )
     }
 
+    // ── Catálogos por clave: perder una textura ya no es silencioso ──────
+
+    @Test
+    fun terrainTextureCollisionIsReported() {
+        val first = pack(
+            "rp_a",
+            mapOf(
+                "textures/terrain_texture.json" to
+                    """{"texture_data":{"custom:block":{"textures":"textures/blocks/a"}}}"""
+            )
+        )
+        val second = pack(
+            "rp_b",
+            mapOf(
+                "textures/terrain_texture.json" to
+                    """{"texture_data":{"custom:block":{"textures":"textures/blocks/b"}}}"""
+            )
+        )
+        val dest = tempDir()
+
+        BedrockCriticalFilesMerger.mergeTerrainTexture(listOf(first, second), dest)
+
+        val data = JSONObject(File(dest, "textures/terrain_texture.json").readText())
+            .getJSONObject("texture_data")
+        assertEquals(
+            "Se conserva el primero (comportamiento previo)",
+            "textures/blocks/a",
+            data.getJSONObject("custom:block").getString("textures")
+        )
+        val conflicto = ConflictRegistry.conflicts.value
+            .firstOrNull { it.conflictType == "TEXTURE_OVERWRITE" && it.filePath.endsWith("terrain_texture.json") }
+        assertTrue("La textura perdida debe reportarse", conflicto != null)
+        assertEquals(
+            "Una clave custom es MEDIUM (textura equivocada en el juego)",
+            com.packforge.app.domain.model.ConflictSeverity.MEDIUM,
+            conflicto!!.severity
+        )
+        assertEquals("rp_a", conflicto.sourceAddon)
+        assertEquals("rp_b", conflicto.targetAddon)
+    }
+
+    @Test
+    fun identicalTextureEntryIsNotReported() {
+        val body = """{"texture_data":{"custom:block":{"textures":"textures/blocks/a"}}}"""
+        val first = pack("rp_a", mapOf("textures/terrain_texture.json" to body))
+        val second = pack("rp_b", mapOf("textures/terrain_texture.json" to body))
+        val dest = tempDir()
+
+        BedrockCriticalFilesMerger.mergeTerrainTexture(listOf(first, second), dest)
+
+        assertFalse(
+            "El mismo mapeo no es conflicto (regla 8)",
+            ConflictRegistry.conflicts.value.any { it.conflictType == "TEXTURE_OVERWRITE" }
+        )
+    }
+
+    @Test
+    fun vanillaTextureOverrideIsReportedAsNotice() {
+        val first = pack(
+            "rp_a",
+            mapOf("textures/item_texture.json" to """{"texture_data":{"stick":{"textures":"textures/items/a"}}}""")
+        )
+        val second = pack(
+            "rp_b",
+            mapOf("textures/item_texture.json" to """{"texture_data":{"stick":{"textures":"textures/items/b"}}}""")
+        )
+        val dest = tempDir()
+
+        BedrockCriticalFilesMerger.mergeItemTexture(listOf(first, second), dest)
+
+        val conflicto = ConflictRegistry.conflicts.value
+            .firstOrNull { it.conflictType == "TEXTURE_OVERWRITE" }
+        assertTrue("El override de textura vanilla debe verse", conflicto != null)
+        assertEquals(
+            "Un override vanilla es aviso, no bloqueo",
+            com.packforge.app.domain.model.ConflictSeverity.LOW,
+            conflicto!!.severity
+        )
+    }
+
+    @Test
+    fun blocksJsonCollisionIsReported() {
+        val first = pack(
+            "rp_a",
+            mapOf("blocks.json" to """{"format_version":[1,1,0],"custom:block":{"textures":"a"}}""")
+        )
+        val second = pack(
+            "rp_b",
+            mapOf("blocks.json" to """{"format_version":[1,1,0],"custom:block":{"textures":"b"}}""")
+        )
+        val dest = tempDir()
+
+        BedrockCriticalFilesMerger.mergeBlocksJson(listOf(first, second), dest)
+
+        val conflicto = ConflictRegistry.conflicts.value
+            .firstOrNull { it.conflictType == "BLOCK_RENDER_OVERWRITE" }
+        assertTrue("El mapeo de bloque perdido debe reportarse", conflicto != null)
+        assertEquals("blocks.json", conflicto!!.filePath)
+        assertTrue(conflicto.description.contains("custom:block"))
+    }
+
     // ── font/*.json ──────────────────────────────────────────────────────
 
     @Test
@@ -167,6 +268,56 @@ class AggregateFilesMergeTest {
         assertEquals(0, BedrockCriticalFilesMerger.mergeTexturesList(listOf(empty), dest))
         assertFalse(File(dest, "biomes_client.json").exists())
         assertFalse(File(dest, "textures/textures_list.json").exists())
+    }
+
+    // ── Geometría: duplicado con contenido distinto ──────────────────────
+
+    @Test
+    fun duplicatedGeometryWithDifferentMeshIsReported() {
+        fun geo(hueso: String) =
+            """{"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.mob"},"bones":[{"name":"$hueso"}]}]}"""
+
+        val first = pack("rp_a", mapOf("models/entity/mob.geo.json" to geo("hueso_a")))
+        val second = pack("rp_b", mapOf("models/entity/mob.geo.json" to geo("hueso_b")))
+        val dest = tempDir()
+
+        BedrockCriticalFilesMerger.mergeGeometryFiles(listOf(first, second), dest)
+
+        val geoArr = JSONObject(File(dest, "models/entity/mob.geo.json").readText())
+            .getJSONArray("minecraft:geometry")
+        assertEquals("Se conserva una sola definición", 1, geoArr.length())
+        assertEquals(
+            "Se mantiene la primera malla (el resolver aliasa la otra si hace falta)",
+            "hueso_a",
+            geoArr.getJSONObject(0).getJSONArray("bones").getJSONObject(0).getString("name")
+        )
+
+        val conflicto = ConflictRegistry.conflicts.value
+            .firstOrNull { it.conflictType == "GEOMETRY_IDENTIFIER_COLLISION" }
+        assertTrue("La malla perdida debe reportarse, no solo ir a logcat", conflicto != null)
+        assertEquals("rp_a", conflicto!!.sourceAddon)
+        assertEquals("rp_b", conflicto.targetAddon)
+        assertEquals(
+            "models/entity/mob.geo.json",
+            conflicto.filePath.replace('\\', '/')
+        )
+        assertTrue(conflicto.description.contains("geometry.mob"))
+    }
+
+    @Test
+    fun identicalGeometryIsNotReported() {
+        val geo =
+            """{"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.mob"},"bones":[{"name":"hueso"}]}]}"""
+        val first = pack("rp_a", mapOf("models/entity/mob.geo.json" to geo))
+        val second = pack("rp_b", mapOf("models/entity/mob.geo.json" to geo))
+        val dest = tempDir()
+
+        BedrockCriticalFilesMerger.mergeGeometryFiles(listOf(first, second), dest)
+
+        assertFalse(
+            "La misma malla repetida no es conflicto (regla 8)",
+            ConflictRegistry.conflicts.value.any { it.conflictType == "GEOMETRY_IDENTIFIER_COLLISION" }
+        )
     }
 
     // ── GUARD ────────────────────────────────────────────────────────────

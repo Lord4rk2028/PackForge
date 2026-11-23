@@ -185,7 +185,10 @@ object PackForgeOrchestrator {
                             // fusionado y el análisis posterior la reportaba como
                             // "cifrado por sustitución" aunque nunca llegara al pack.
                             if (key.split('/').any { it.startsWith(".") }) continue
-                            val targetRel = renames[key] ?: key
+                            // SUBPACKS: si la carpeta de la variante se renombró
+                            // (dos addons usaban el mismo folder_name), el archivo
+                            // se copia dentro de la carpeta nueva.
+                            val targetRel = renames[key] ?: SubpackRegistry.renameFor(sourceFile, key)
                             val targetFile = File(targetDir, targetRel)
 
                             targetFile.parentFile?.mkdirs()
@@ -244,7 +247,17 @@ object PackForgeOrchestrator {
             val sourceFile = File(sourcePath)
             if (!sourceFile.isDirectory) continue
             for (file in DirIndexCache.index(sourceFile).allFiles) {
-                val rel = file.relativeTo(sourceFile).path.replace('\\', '/')
+                val relOriginal = file.relativeTo(sourceFile).path.replace('\\', '/')
+                // ⭐ Los archivos de scripts/ se omiten del renombrado genérico _pf1
+                // porque son manejados exclusivamente por ScriptRouterEngine.
+                if (relOriginal.startsWith("scripts/")) {
+                    continue
+                }
+                // SUBPACKS: la colisión se evalúa sobre la ruta FINAL. Si dos
+                // addons usan el mismo folder_name, la segunda carpeta se
+                // renombra ANTES de copiar; sin esto se aliasarían archivos que
+                // en el pack final viven en carpetas distintas.
+                val rel = SubpackRegistry.renameFor(sourceFile, relOriginal)
                 if (occupied.add(rel)) continue // ruta libre: no hay colisión
 
                 var seq = seqByPath.getOrPut(rel) { 0 } + 1
@@ -266,7 +279,10 @@ object PackForgeOrchestrator {
                 // JSON de ESTE addon. Sin este registro, hasGlobalMutations() era
                 // false, la reescritura se saltaba y las referencias quedaban rotas
                 // al colisionar dos addons en la misma ruta.
-                resourceRegistry.registerSourceMutation(sourceFile, rel, mutatedRel)
+                //
+                // La CLAVE es la ruta ORIGINAL (lo que busca el copiador); el
+                // VALOR ya incluye la carpeta de subpack renombrada.
+                resourceRegistry.registerSourceMutation(sourceFile, relOriginal, mutatedRel)
             }
         }
         // El plan no copia nada: la caché del destino quedó obsoleta.
@@ -316,6 +332,11 @@ object PackForgeOrchestrator {
 
         // ⭐ OPTIMIZACIÓN: Recolección de métricas de tiempo por fase
         val phaseTimings = mutableMapOf<String, Double>()
+        // ⭐ TICKET-CORE-013: tiempo de CADA fusión crítica de la Fase 3.
+        // Concurrente porque las 22 fusiones corren en paralelo bajo el semáforo.
+        // Sin esto el reporte solo decía «Fase 3: 16,08 s» para dos addons RP
+        // (59,7 % de la exportación) sin revelar cuál de las 22 se lo llevaba.
+        val mergeTimings = java.util.concurrent.ConcurrentHashMap<String, Double>()
         fun markPhase(name: String) {
             phaseTimings[name] = (System.currentTimeMillis() - tInicio) / 1000.0
         }
@@ -339,6 +360,7 @@ object PackForgeOrchestrator {
         JsonDeepMerger.clearConflicts()
         ConflictRegistry.clear()
         FolderAliasRegistry.clear()
+        SubpackRegistry.clear()
         DirIndexCache.clear()
         FusionReportBuilder.clear()
         resourceRegistry.clearGlobalMutations()
@@ -435,11 +457,17 @@ object PackForgeOrchestrator {
                         // equivocado: la aportación del addon se perdía en silencio.
                         val root = AddonExtractor.resolvePackRoot(File(extractedDir), "data")
                         bpDirs.add(root.absolutePath)
+                        // 3.11: registra el addon con semilla estable (UUID del
+                        // manifiesto) incluso cuando es BP puro; sin esto la clave
+                        // caía a la ruta extraída (con epoch) y los tokens
+                        // `pf:<hex>` cambiaban en cada exportación.
+                        registrarPropietario(listOf(root), etiquetaDeAddon(extractedDir), "addon_$idx")
                         logFile { "  -> Agregado a lista de BPs (raíz real: ${root.name})" }
                     }
                     is AddonExtractor.AddonClassification.RESOURCE_PACK -> {
                         val root = AddonExtractor.resolvePackRoot(File(extractedDir), "resources")
                         rpDirs.add(root.absolutePath)
+                        registrarPropietario(listOf(root), etiquetaDeAddon(extractedDir), "addon_$idx")
                         logFile { "  -> Agregado a lista de RPs (raíz real: ${root.name})" }
                     }
                     is AddonExtractor.AddonClassification.BOTH -> {
@@ -467,21 +495,23 @@ object PackForgeOrchestrator {
 
                         // Mismo propietario para BP y RP de ESTE addon.
                         val owner = "both_$idx"
-                        val etiqueta = File(extractedDir).name
+                        val etiqueta = etiquetaDeAddon(extractedDir)
                         bpSubs.forEach { sub ->
                             if (sub.exists()) {
-                                AddonOwnerRegistry.register(sub, owner, etiqueta)
                                 bpDirs.add(sub.absolutePath)
                                 PackForgeLog.d("PackForge_Debug", "  -> BP en su raíz real: ${sub.absolutePath}")
                             }
                         }
                         rpSubs.forEach { sub ->
                             if (sub.exists()) {
-                                AddonOwnerRegistry.register(sub, owner, etiqueta)
                                 rpDirs.add(sub.absolutePath)
                                 PackForgeLog.d("PackForge_Debug", "  -> RP en su raíz real: ${sub.absolutePath}")
                             }
                         }
+                        // Semilla estable a partir de los manifiestos de AMBAS
+                        // raíces: BP y RP del mismo `.mcaddon` agrupan igual y el
+                        // token no depende de la ruta extraída.
+                        registrarPropietario(bpSubs + rpSubs, etiqueta, owner)
                     }
                     is AddonExtractor.AddonClassification.MULTI -> {
                         // 📦 Addon con packs anidados (.mcpack/.zip): clasificar y fusionar cada uno.
@@ -493,11 +523,21 @@ object PackForgeOrchestrator {
                                 is AddonExtractor.AddonClassification.BEHAVIOR_PACK -> {
                                     val root = AddonExtractor.resolvePackRoot(packDir, "data")
                                     bpDirs.add(root.absolutePath)
+                                    registrarPropietario(
+                                        listOf(root),
+                                        etiquetaDeAddon(packDir.absolutePath),
+                                        "addon_${idx}_${packDir.name}"
+                                    )
                                     PackForgeLog.d("PackForge_Debug", "  -> Pack anidado BP: ${root.name}")
                                 }
                                 is AddonExtractor.AddonClassification.RESOURCE_PACK -> {
                                     val root = AddonExtractor.resolvePackRoot(packDir, "resources")
                                     rpDirs.add(root.absolutePath)
+                                    registrarPropietario(
+                                        listOf(root),
+                                        etiquetaDeAddon(packDir.absolutePath),
+                                        "addon_${idx}_${packDir.name}"
+                                    )
                                     PackForgeLog.d("PackForge_Debug", "  -> Pack anidado RP: ${root.name}")
                                 }
                                 is AddonExtractor.AddonClassification.BOTH -> {
@@ -511,18 +551,17 @@ object PackForgeOrchestrator {
                                     val etiqueta = packDir.name
                                     bpSubs.forEach { s ->
                                         if (s.exists()) {
-                                            AddonOwnerRegistry.register(s, owner, etiqueta)
                                             bpDirs.add(s.absolutePath)
                                             PackForgeLog.d("PackForge_Debug", "  -> Pack anidado BOTH -> BP en su raíz: ${s.absolutePath}")
                                         }
                                     }
                                     rpSubs.forEach { s ->
                                         if (s.exists()) {
-                                            AddonOwnerRegistry.register(s, owner, etiqueta)
                                             rpDirs.add(s.absolutePath)
                                             PackForgeLog.d("PackForge_Debug", "  -> Pack anidado BOTH -> RP en su raíz: ${s.absolutePath}")
                                         }
                                     }
+                                    registrarPropietario(bpSubs + rpSubs, etiqueta, owner)
                                 }
                                 else -> PackForgeLog.w("PackForge_Debug", "⚠️ Pack anidado ignorado: ${packDir.name}")
                             }
@@ -550,6 +589,13 @@ object PackForgeOrchestrator {
                                     added = true
                                     PackForgeLog.d("PackForge_Debug", "  -> Rescatado como RP por manifest: $parentPath")
                                 }
+                                if (isBp || isRp) {
+                                    registrarPropietario(
+                                        listOf(File(parentPath)),
+                                        etiquetaDeAddon(extractedDir),
+                                        "addon_$idx"
+                                    )
+                                }
                             }
                         }
 
@@ -572,12 +618,14 @@ object PackForgeOrchestrator {
                                 val root = AddonExtractor.resolvePackRoot(File(extractedDir), "data")
                                 bpDirs.add(root.absolutePath)
                                 added = true
+                                registrarPropietario(listOf(root), etiquetaDeAddon(extractedDir), "addon_$idx")
                                 PackForgeLog.d("PackForge_Debug", "  -> Rescatado como BP por archivos: ${root.absolutePath}")
                             }
                             if (hasRpContent) {
                                 val root = AddonExtractor.resolvePackRoot(File(extractedDir), "resources")
                                 rpDirs.add(root.absolutePath)
                                 added = true
+                                registrarPropietario(listOf(root), etiquetaDeAddon(extractedDir), "addon_$idx")
                                 PackForgeLog.d("PackForge_Debug", "  -> Rescatado como RP por archivos: ${root.absolutePath}")
                             }
 
@@ -703,6 +751,17 @@ object PackForgeOrchestrator {
             val mergedRpDir = File(tempDir, "merged_rp")
             
             // ══ FASE 1A: PLAN DE MUTACIONES DE RECURSOS ══
+            // SUBPACKS: decidir los nombres de carpeta ANTES de planificar
+            // colisiones y de copiar. Bedrock carga las variantes por la carpeta
+            // declarada en el manifiesto; dos addons con el mismo folder_name
+            // necesitan carpetas distintas o sus contenidos se mezclan.
+            try {
+                SubpackRegistry.plan(bpDirs.map { File(it) })
+                SubpackRegistry.plan(rpDirs.map { File(it) })
+            } catch (e: Exception) {
+                PackForgeLog.w(TAG, "Planificación de subpacks falló (no bloqueante): ${e.message}")
+            }
+
             // Detecta colisiones de ruta SIN copiar, asociando cada renombrado a
             // su addon de origen. Debe ir antes de la copia y de la reescritura.
             planSourceMutations(bpDirs, mergedBpDir, resourceRegistry)
@@ -786,7 +845,13 @@ object PackForgeOrchestrator {
                         "mergePlayerEntity" to { merger.mergePlayerEntity(bpDirFiles, mergedBpDir) },
                         "mergeLootTables" to { merger.mergeLootTables(bpDirFiles, mergedBpDir) },
                         "mergeRecipes" to { merger.mergeRecipes(bpDirFiles, mergedBpDir) },
-                        "mergeTickJson" to { merger.mergeTickJson(bpDirFiles, mergedBpDir) }
+                        "mergeTickJson" to { merger.mergeTickJson(bpDirFiles, mergedBpDir) },
+                        // 3.8 — familias declarativas que se copiaban por ruta:
+                        // item_catalog/, cameras/, dimensions/ y feature_rules/.
+                        "mergeDeclarativeFamilies" to {
+                            merger.mergeDeclarativeFamilies(bpDirFiles, mergedBpDir)
+                        },
+                        "mergeTradingTables" to { merger.mergeTradingTables(bpDirFiles, mergedBpDir) }
                     )
 
                     val totalMerges = rpMerges.size + bpMerges.size + 1
@@ -821,6 +886,7 @@ object PackForgeOrchestrator {
                         // multiplicaban el consumo y en el móvil acababan en swap.
                         val resultado = permisosMerge.withPermit { bloque() }
                         val ms = System.currentTimeMillis() - t0
+                        mergeTimings[nombre] = ms / 1000.0
                         val n = completadas.incrementAndGet()
                         println("PF-MERGE | ✅ $nombre (${"%.1f".format(ms / 1000.0)}s) $n/$totalMerges")
                         reporteLock.withLock {
@@ -889,6 +955,8 @@ object PackForgeOrchestrator {
                 val tMateriales = System.currentTimeMillis()
                 println("PF-MERGE | ▶️ mergeMaterialInstances")
                 merger.mergeMaterialInstances(bpDirFiles, rpDirFiles, mergedBpDir, mergedRpDir)
+                mergeTimings["mergeMaterialInstances"] =
+                    (System.currentTimeMillis() - tMateriales) / 1000.0
                 println(
                     "PF-MERGE | ✅ mergeMaterialInstances " +
                         "(${"%.1f".format((System.currentTimeMillis() - tMateriales) / 1000.0)}s)"
@@ -1024,7 +1092,7 @@ object PackForgeOrchestrator {
             progressCallback?.onProgress("Generando manifiestos...", 80)
             markPhase("Generación de manifiestos (80%)")
             coroutineContext.ensureActive()
-            val (bpUuid, rpUuid) = generateLinkedManifests(
+            val manifiestos = generateLinkedManifests(
                 bpDirs = bpDirs,
                 rpDirs = rpDirs,
                 mergedBpDir = mergedBpDir,
@@ -1035,18 +1103,68 @@ object PackForgeOrchestrator {
                 customDescription = customDescription
             )
             
+            val bpUuid = manifiestos.bpHeaderUuid
+            val rpUuid = manifiestos.rpHeaderUuid
             PackForgeLog.d(TAG, "UUIDs generados - BP: $bpUuid, RP: $rpUuid")
+            if (manifiestos.rpMinEngineVersion.isNotEmpty() &&
+                manifiestos.rpMinEngineVersion != listOf(1, 21, 0)
+            ) {
+                val texto = manifiestos.rpMinEngineVersion.joinToString(".")
+                dependencyNotes = dependencyNotes + buildList {
+                    add("📦 El modpack exige Minecraft Bedrock $texto o superior " +
+                        "(min_engine_version máximo declarado por los addons).")
+                    if (manifiestos.rpCapabilities.isNotEmpty()) {
+                        add("   • capabilities conservadas: ${manifiestos.rpCapabilities.joinToString()}")
+                    }
+                }
+            } else if (manifiestos.rpCapabilities.isNotEmpty()) {
+                dependencyNotes = dependencyNotes + buildList {
+                    add("🧪 capabilities del RP conservadas: ${manifiestos.rpCapabilities.joinToString()}")
+                }
+            }
+            if (manifiestos.externalDependenciesDropped.isNotEmpty()) {
+                dependencyNotes = dependencyNotes + buildList {
+                    add(
+                        "🔗 Dependencias externas eliminadas para que el pack cargue " +
+                            "(${manifiestos.externalDependenciesDropped.size}):"
+                    )
+                    manifiestos.externalDependenciesDropped.take(10).forEach { add("   • $it") }
+                    if (manifiestos.externalDependenciesDropped.size > 10) {
+                        add("   • … y ${manifiestos.externalDependenciesDropped.size - 10} más")
+                    }
+                }
+            }
 
-            // f2) ANÁLISIS DE COLISIONES DE SCRIPTS (no bloqueante)
-            progressCallback?.onProgress("Analizando scripts...", 82)
-            markPhase("Análisis de scripts (82%)")
+            // f2) ANÁLISIS Y ENRUTAMIENTO DE SCRIPTS (no bloqueante)
+            progressCallback?.onProgress("Procesando y enrutando scripts...", 82)
+            markPhase("Análisis y enrutamiento de scripts (82%)")
+            
+            if (bpDirs.isNotEmpty()) {
+                try {
+                    val routeResult = ScriptRouterEngine.routeAndBuildBootstrapper(
+                        bpDirs = bpDirs.map { File(it) },
+                        mergedBpDir = mergedBpDir
+                    )
+                    if (routeResult.routedCount > 0) {
+                        PackForgeLog.d(TAG, "🔀 Router de scripts: ${routeResult.routedCount} módulo(s) enrutado(s)")
+                        dependencyNotes = dependencyNotes + buildList {
+                            add("🔀 ${routeResult.routedCount} módulo(s) de script enrutado(s) a 'scripts/main.js'.")
+                        }
+                    }
+                } catch (e: Exception) {
+                    // ⚠️ ANTES esta excepción se tragaba ("no bloqueante") y el
+                    // resultado era un .mcaddon SIN scripts: los bloques aparecían
+                    // en el juego pero su lógica no corría (sin tumba, sin UI).
+                    // Es una pérdida de comportamiento: se detiene la exportación.
+                    throw IllegalStateException(
+                        "No se pudieron enrutar los scripts de los Behavior Packs: ${e.message}",
+                        e
+                    )
+                }
+            }
+
             val scriptFindings = ScriptCollisionAnalyzer.analyze(File(mergedBpDir, "scripts"))
             scriptFindings.forEach {
-                // Estos avisos YA se publican en la sección "3. SCRIPTS" del
-                // reporte como información de coordinación. Registrarlos además
-                // como conflicto los duplicaba y engordaba el contador de
-                // conflictos con algo que no es un problema: varios addons
-                // escuchando el mismo evento es normal y esperado.
                 PackForgeLog.w(TAG, it)
             }
 
@@ -1200,8 +1318,26 @@ object PackForgeOrchestrator {
             // compatibilidad (más abajo) pueda reutilizar este mismo informe sin
             // volver a recorrer el pack entero.
             var referenceReport: MergeReferenceValidator.Report? = null
+            // ⭐ TICKET-CORE-013 — UN índice para este paso y para el grafo de
+            // dependencias del reporte (antes, uno cada uno).
+            //
+            // Se construye AQUÍ y no en la Fase 3D a propósito: el healer repair
+            // ha copiado ficheros al RP fusionado desde entonces, así que un
+            // índice de la 3D estaría obsoleto para este punto. Con esto el
+            // índice pasa de construirse 3 veces a 2 (3D y aquí), que es el
+            // mínimo real porque entre medias el pack cambia.
+            //
+            // `runCatching` porque un fallo del índice no debe abortar la
+            // exportación: esta parte ya iba protegida por el try de abajo.
+            val indiceReferencias = runCatching {
+                GeometryAnimRCIndex.build(rpDirs.map { File(it) }, mergedRpDir)
+            }.getOrNull()
             try {
-                val report = MergeReferenceValidator.validate(mergedBpDir, mergedRpDir)
+                val report = MergeReferenceValidator.validate(
+                    mergedBpDir,
+                    mergedRpDir,
+                    unifiedIndex = indiceReferencias
+                )
                 referenceReport = report
                 MergeReferenceValidator.publish(report)
                 if (report.isClean) {
@@ -1235,6 +1371,23 @@ object PackForgeOrchestrator {
                  PackForgeLog.d("PackForge_Export", "   RP file: ${file.name} (${file.length()} bytes)")
              }
 
+            // ⭐ TICKET-CORE-011 — Traducir los bloques incompatibles ANTES de
+            // empaquetar. Probado en el juego con `PF Legacy Schema Test`: un
+            // bloque con `format_version: 1.20.50` y `minecraft:destroy_time`
+            // NO se carga, mientras que su gemelo con `destructible_by_mining`
+            // sí. Es la única reescritura de esquema justificada con datos.
+            //
+            // Va aquí (y no al generar el reporte) porque el reporte se escribe
+            // DESPUÉS de crear el .mcaddon: repararlo allí dejaba el informe
+            // diciendo «traducido» con el paquete aún roto.
+            val bloquesReparados = runCatching {
+                SchemaNormalizer.normalizeBlockFiles(File(mergedBpDir, "blocks"))
+            }.getOrElse { emptyList() }
+            if (bloquesReparados.isNotEmpty()) {
+                DirIndexCache.invalidate(mergedBpDir)
+                PackForgeLog.d(TAG, "🔧 ${bloquesReparados.size} componente(s) de bloque traducidos")
+            }
+
             // h) EMPAQUETAR
             progressCallback?.onProgress("Empaquetando modpack...", 93)
             markPhase("Empaquetado .mcaddon (93%)")
@@ -1256,6 +1409,21 @@ object PackForgeOrchestrator {
 
             // Generar metadata de PackForge.ID para identificación exclusiva de modpacks
             val modpackId = java.util.UUID.randomUUID().toString()
+            val addonsMetaArr = org.json.JSONArray()
+            addonNames.forEachIndexed { idx, name ->
+                addonsMetaArr.put(org.json.JSONObject().apply {
+                    put("id", java.util.UUID.randomUUID().toString())
+                    put("name", name)
+                    put("fileName", "$name.mcpack")
+                    put("type", "BEHAVIOR_AND_RESOURCE")
+                    put("version", customVersion)
+                    put("sizeBytes", 0L)
+                    put("enabled", true)
+                    put("priority", idx)
+                    put("author", customAuthor)
+                })
+            }
+
             val idJson = org.json.JSONObject().apply {
                 put("signature", "PACKFORGE_MODPACK")
                 put("id", modpackId)
@@ -1266,6 +1434,7 @@ object PackForgeOrchestrator {
                 put("addonCount", addonPaths.size)
                 put("exportedAt", System.currentTimeMillis())
                 put("addonNames", org.json.JSONArray(addonNames))
+                put("addons", addonsMetaArr)
             }.toString()
 
             createMcAddon(
@@ -1297,18 +1466,32 @@ object PackForgeOrchestrator {
             // ══ VALIDACIÓN POST-FUSIÓN + REPORTE LEGIBLE ══
             progressCallback?.onProgress("Generando reporte de fusión...", 96)
             markPhase("Generación de reporte (96%)")
-            val syntaxErrors = MergeReportGenerator.validateJsonSyntax(mergedBpDir) +
-                MergeReportGenerator.validateJsonSyntax(mergedRpDir)
-
-        // TICKET-CORE-003 Parte 4: auditoria de integridad (texto plano y claves cifradas).
-  // No bloquea la exportacion: se registra y se muestra en el reporte.
-   val integrityFindings = try {
-        MergeReportGenerator.auditJsonIntegrity(mergedBpDir) +
-             MergeReportGenerator.auditJsonIntegrity(mergedRpDir)
-   } catch (e: Exception) {
-            PackForgeLog.w("PackForge_Export", "Auditoria de integridad no bloqueante: ${e.message}")
-          emptyList()
-        }
+            // ⭐ TICKET-CORE-013 — UNA pasada de diagnóstico por pack.
+            //
+            // Antes se llamaba cuatro veces: `validateJsonSyntax` y
+            // `auditJsonIntegrity` sobre el BP y sobre el RP, y cada una leía y
+            // parseaba por su cuenta TODOS los .json del directorio (la de
+            // integridad, hasta cinco veces por archivo). Ahora cada pack se
+            // analiza una vez y de ese análisis salen las dos comprobaciones.
+            val auditBp = runCatching { MergeReportGenerator.auditPack(mergedBpDir) }
+            val auditRp = runCatching { MergeReportGenerator.auditPack(mergedRpDir) }
+            // No bloquea la exportación, pero un fallo del diagnóstico NO puede
+            // desaparecer: antes el de integridad solo se logueaba.
+            val falloAuditoria = auditBp.exceptionOrNull() ?: auditRp.exceptionOrNull()
+            if (falloAuditoria != null) {
+                PackForgeLog.w("PackForge_Export", "Auditoría del pack no bloqueante: ${falloAuditoria.message}")
+                dependencyNotes = dependencyNotes + buildList {
+                    add(
+                        "⚠️ La auditoría de sintaxis/integridad del pack no se pudo completar " +
+                            "(${falloAuditoria.message ?: "error desconocido"}): " +
+                            "este informe NO incluye ese diagnóstico."
+                    )
+                }
+            }
+            val syntaxErrors = listOf(auditBp, auditRp)
+                .flatMap { it.getOrNull()?.syntaxErrors.orEmpty() }
+            val integrityFindings = listOf(auditBp, auditRp)
+                .flatMap { it.getOrNull()?.integrityFindings.orEmpty() }
         integrityFindings.forEach { finding ->
         ConflictRegistry.logConflict(
         severity = when (finding.severity) {
@@ -1358,6 +1541,107 @@ object PackForgeOrchestrator {
                 mergedAddons.add("$name (tipo: $type, ${sizeKB} KB, id: $id)")
             }
 
+// ⭐ TICKET-CORE-012 — Grafo de dependencias con ATRIBUCIÓN (solo lectura).
+            //
+            // Aporta lo que ningún validador daba: DE QUIÉN es el eslabón roto.
+            // A propósito NO registra conflictos nuevos: los eslabones rotos ya
+            // los reportan MergeReferenceValidator (referencias) y
+            // EntityDependencyResolver (MISSING_DEPENDENCY). Duplicarlos aquí
+            // recrearía el problema de «validadores con criterios divergentes»
+            // que avisa AGENTS.md §6. Este grafo solo informa y atribuye.
+            runCatching {
+                val fuentes = buildList {
+                    bpDirs.forEach { DependencyDAG.Source(File(it).name, File(it), true).let(::add) }
+                    rpDirs.forEach { DependencyDAG.Source(File(it).name, File(it), false).let(::add) }
+                }
+                val grafo = DependencyDAG.build(fuentes, indiceReferencias)
+                dependencyNotes = dependencyNotes + grafo.resumen()
+            }.onFailure {
+                PackForgeLog.w(TAG, "Grafo de dependencias falló: ${it.message}")
+            }
+
+            // ⭐ TICKET-CORE-010 — Reparto de esquemas por addon (SOLO LECTURA).
+            //
+            // Sustituye al «transpilador» que reescribía componentes y
+            // `format_version`: Bedrock elige el esquema según el `format_version`
+            // de cada archivo y los antiguos siguen siendo válidos, así que
+            // informar es lo único que se puede hacer con garantías. Con esto el
+            // reporte dice qué addon mezcla esquemas y cuáles traen componentes de
+            // bloque del esquema antiguo (los únicos traducibles).
+            runCatching {
+                // ⭐ TICKET-CORE-011 — Reparar los bloques incompatibles ANTES de
+                // diagnosticar. Probado en el juego con `PF Legacy Schema Test`:
+                // La reparación ya se aplicó ANTES de empaquetar (ver TICKET-CORE-011
+            // junto a la fase de empaquetado); aquí solo se informa.
+                if (bloquesReparados.isNotEmpty()) {
+                    val ficheros = bloquesReparados
+                        .filter { !it.startsWith("⚠") }
+                        .map { it.substringBefore(':') }
+                        .distinct()
+                    dependencyNotes = dependencyNotes + buildList {
+                        add(
+                            "🔧 ${ficheros.size} bloque(s) traducidos al esquema moderno " +
+                                "(${bloquesReparados.size} componente(s))"
+                        )
+                        bloquesReparados.take(10).forEach { add("   • $it") }
+                        if (bloquesReparados.size > 10) {
+                            add("   • … y ${bloquesReparados.size - 10} más")
+                        }
+                    }
+                }
+
+                val vistos = mutableSetOf<String>()
+                val spreads = (bpDirs + rpDirs)
+                    .map { File(it) }
+                    .filter { it.isDirectory }
+                    .mapNotNull { SchemaNormalizer.summarizeSchemaSpread(it) }
+                    .filter { vistos.add(it.addonName) }
+
+                if (spreads.isNotEmpty()) {
+                    dependencyNotes = dependencyNotes + buildList {
+                        add("📐 Esquemas de contenido por addon:")
+                        spreads.take(10).forEach { add("   • " + it.describe()) }
+                        if (spreads.size > 10) add("   • … y ${spreads.size - 10} addon(es) más")
+                    }
+                }
+
+                // ⭐ La única combinación de esquema que SÍ rompe contenido: un
+                // bloque que declara el esquema moderno (>= 1.19.80) y usa
+                // componentes con nombre antiguo. Verificado en el juego: ese
+                // bloque no se carga. Si la traducción se aplicó, el conflicto
+                // baja a MEDIUM (resuelto en el modpack); si no, sigue HIGH.
+                val reparado = bloquesReparados.any { !it.startsWith("⚠") }
+                spreads.filter { it.hasInconsistentBlocks }.forEach { s ->
+                    ConflictRegistry.logConflict(
+                        severity = if (reparado) {
+                            com.packforge.app.domain.model.ConflictSeverity.MEDIUM
+                        } else {
+                            com.packforge.app.domain.model.ConflictSeverity.HIGH
+                        },
+                        type = "LEGACY_BLOCK_SCHEMA",
+                        file = s.inconsistentBlocks.first(),
+                        addon1 = s.addonName,
+                        addon2 = "-",
+                        description = if (reparado) {
+                            "Bloque(s) de '${s.addonName}' con format_version moderno y componentes " +
+                                "del esquema antiguo (${s.legacyBlockComponents.joinToString()}): " +
+                                "SE TRADUJERON al esquema moderno en el modpack " +
+                                "(destructible_by_mining, destructible_by_explosion, light_dampening). " +
+                                "Verificado en el juego: sin la traducción el bloque no se carga. " +
+                                "Afecta a: ${s.inconsistentBlocks.joinToString()}"
+                        } else {
+                            "Bloque(s) de '${s.addonName}' con format_version moderno y componentes " +
+                                "del esquema antiguo (${s.legacyBlockComponents.joinToString()}): " +
+                                "el juego no los cargará porque el esquema declarado no define esos " +
+                                "nombres, y no se pudo traducir. Afecta a: " +
+                                s.inconsistentBlocks.joinToString()
+                        }
+                    )
+                }
+            }.onFailure {
+                PackForgeLog.w(TAG, "No se pudo resumir el esquema de los addons: ${it.message}")
+            }
+
 val reportLines = MergeReportGenerator.build(
                 MergeReportGenerator.Inputs(
                     idRenames = idRenames,
@@ -1378,7 +1662,14 @@ val reportLines = MergeReportGenerator.build(
                     totalJsonsMerged = totalJsonsMerged,
                     elapsedSeconds = (System.currentTimeMillis() - tInicio) / 1000.0,
                     phaseTimings = phaseTimings,
-                    mergedAddons = mergedAddons
+                    criticalMergeTimings = mergeTimings.entries
+                        .sortedWith(
+                            compareByDescending<Map.Entry<String, Double>> { it.value }
+                                .thenBy { it.key }
+                        )
+                        .map { it.key to it.value },
+                    mergedAddons = mergedAddons,
+                    conflicts = ConflictRegistry.conflicts.value
                 )
             )
             val reportFile = File(outputDir, "fusion_report.txt")
@@ -1766,8 +2057,35 @@ val reportLines = MergeReportGenerator.build(
                         continue
                     }
 
-                    // ⭐ PASO 1: Excluir "scripts/" de la copia genérica (se fusionan aparte) ⭐
-                    if (relativePath.startsWith("scripts/")) {
+                    // ⭐ PASO 1: Excluir scripts/ de la copia genérica (los enruta
+                    // ScriptRouterEngine a scripts/modules/<addon_id>/).
+                    //
+                    // OJO: la comprobación tiene que contemplar la carpeta ANIDADA.
+                    // `sourceFile` es la raíz extraída del .mcaddon, así que un
+                    // addon con `EconomyBP/scripts/main.js` produce la ruta
+                    // `EconomyBP/scripts/main.js`, que NO empieza por "scripts/".
+                    // Esos archivos se copiaban PLANOS a merged_bp/scripts/ y dos
+                    // addons con `scripts/index.js` se pisaban entre sí. El pack
+                    // real acabó con el `index.js` de Gravestone y los `.js` de
+                    // SimpleEconomy mezclados en la misma carpeta, y el
+                    // bootstrapper del router podía ser sobrescrito por el
+                    // `main.js` de un addon según el orden de copia.
+                    val enScripts = relativePath.startsWith("scripts/") ||
+                        relativePath.contains("/scripts/")
+                    if (enScripts) {
+                        continue
+                    }
+
+                    // ⭐ Manifiestos sueltos: el pipeline puede dejar
+                    // `manifest_pf1.json`, `manifest_pf2.json`… dentro del pack.
+                    // Bedrock escanea `manifest.json` en subcarpetas y un segundo
+                    // manifiesto con otro nombre confunde la carga; además expone
+                    // uuid que ya no existen. Solo se conserva el canónico, que
+                    // además se regenera.
+                    if (relativePath.substringAfterLast('/').let {
+                            it.startsWith("manifest") && it.endsWith(".json")
+                        }
+                    ) {
                         continue
                     }
 
@@ -1877,6 +2195,41 @@ val reportLines = MergeReportGenerator.build(
      * @param customName Nombre del modpack
      * @return Pair con los UUIDs de header (BP, RP)
      */
+    /**
+     * 3.11 — Registra las raíces de un addon con una SEMILLA estable (UUID de
+     * sus manifiestos) para que los tokens `_pf<hex>` de `IdentifierRemapper`
+     * sobrevivan a las reexportaciones. La CLAVE del propietario puede ser
+     * posicional (`addon_3`): mantiene determinista al ganador de una colisión.
+     */
+    private fun registrarPropietario(roots: List<File>, etiqueta: String, owner: String) {
+        val raices = roots.filter { it.isDirectory }.distinctBy { it.absolutePath }
+        if (raices.isEmpty()) return
+        val semilla = AddonOwnerRegistry.stableSeed(raices, etiqueta)
+        raices.forEach { AddonOwnerRegistry.register(it, owner, etiqueta, semilla) }
+    }
+
+    /** Nombre visible del addon: sin la estampa `extracted_<epochMs>_`. */
+    private fun etiquetaDeAddon(extractedDir: String): String =
+        File(extractedDir).name.replace(Regex("(?i)^extracted_\\d+_"), "").ifBlank {
+            File(extractedDir).name
+        }
+
+    /**
+     * Resultado de [generateLinkedManifests]: los UUID nuevos y lo que se
+     * negoció con los manifiestos RP originales (3.6). Sin devolverlo, el
+     * reporte no podía decir que el modpack exige una versión del juego
+     * concreta ni qué capabilities se conservaron.
+     */
+    private data class LinkedManifests(
+        val bpHeaderUuid: String?,
+        val rpHeaderUuid: String?,
+        val rpMinEngineVersion: List<Int> = emptyList(),
+        val rpCapabilities: List<String> = emptyList(),
+        val rpSubpacks: Int = 0,
+        /** 3.10: dependencias por UUID a packs que no van en el `.mcaddon`. */
+        val externalDependenciesDropped: List<String> = emptyList()
+    )
+
     private fun generateLinkedManifests(
         bpDirs: List<String>,
         rpDirs: List<String>,
@@ -1886,7 +2239,7 @@ val reportLines = MergeReportGenerator.build(
         customAuthor: String = "",
         customVersion: String = "1.0.0",
         customDescription: String = ""
-    ): Pair<String?, String?> {
+    ): LinkedManifests {
         // Preflight the actual extracted content, not just the metadata shown in the
         // import screen. Findings are added to the existing conflict UI so the user
         // gets an actionable reason for every unsafe export.
@@ -1961,6 +2314,17 @@ val reportLines = MergeReportGenerator.build(
             packDescription = customDescription,
             packAuthor = customAuthor
         )
+        // 3.5/3.6 — `subpacks`, `min_engine_version` y `capabilities` se
+        // negocian con los manifiestos RP originales: sin `subpacks` el juego
+        // ignora las variantes, y `generateRpManifest` partía de un
+        // `min_engine_version` fijo (1.21.0) y sin capabilities.
+        val rpHeader = ManifestGenerator.applyOriginalRpSettings(rpManifestObj, originalRpManifests)
+        if (rpHeader.subpacks > 0) {
+            PackForgeLog.d(TAG, "Subpacks RP conservados: ${rpHeader.subpacks}")
+        }
+        if (rpHeader.capabilities.isNotEmpty()) {
+            PackForgeLog.d(TAG, "Capabilities RP conservadas: ${rpHeader.capabilities.joinToString()}")
+        }
         val newRpHeaderUuid = rpManifestObj.optJSONObject("header")?.optString("uuid")
             ?: java.util.UUID.randomUUID().toString()
 
@@ -1972,6 +2336,30 @@ val reportLines = MergeReportGenerator.build(
             } catch (e: Exception) { null }
         }.toSet()
 
+        // ⭐ TICKET-CORE-005 — UUIDs ORIGINALES de los BPs, para remapear las
+        // dependencias que los citaban (p.ej. el RP del gravestone → su BP).
+        val originalBpHeaderUuids = originalBpManifestFiles.mapNotNull { f ->
+            try {
+                val json = JSONObject(f.readText(Charsets.UTF_8))
+                json.optJSONObject("header")?.optString("uuid")
+            } catch (e: Exception) { null }
+        }.toSet()
+
+        // ⭐ TICKET-CORE-005 — Los packs fusionados reciben UUIDs NUEVOS, pero sus
+        // `dependencies` por UUID siguen citando los VIEJOS (el BP citando su RP,
+        // y el RP del gravestone citando su BP). Bedrock no resuelve esas
+        // dependencias y NO inicializa el pack: los bloques aparecen, pero el
+        // script nunca corre (ni tumba, ni UI de economía, ni HUD anclado).
+        //
+        // El UUID nuevo del BP se conoce AQUÍ (el generador lo usa para el nuevo
+        // dependiente del RP), así que el mapeo se registra antes de construir el
+        // RP y se reutiliza para el BP.
+        val newBpHeaderUuid = java.util.UUID.randomUUID().toString()
+        val uuidRemap = ManifestGenerator.UuidRemap().apply {
+            originalBpHeaderUuids.forEach { remember(it, newBpHeaderUuid) }
+            originalRpHeaderUuids.forEach { remember(it, newRpHeaderUuid) }
+        }
+
         val bpManifestObj = ManifestGenerator.buildMergedBpManifest(
             originalBpManifests = originalBpManifestFiles,
             originalRpHeaderUuids = originalRpHeaderUuids,
@@ -1980,7 +2368,9 @@ val reportLines = MergeReportGenerator.build(
             hasScriptsFolder = scriptResult.addonCount > 0,
             packAuthor = customAuthor,
             packVersion = customVersion,
-            packDescription = customDescription
+            packDescription = customDescription,
+            remap = uuidRemap,
+            forcedBpHeaderUuid = newBpHeaderUuid
         )
 
         // Garantizar dependencias de script siempre completas (fix trabe con UI / iluminación dinámica).
@@ -2053,10 +2443,52 @@ val reportLines = MergeReportGenerator.build(
             }
         }
 
-        val newBpHeaderUuid = bpManifestObj.optJSONObject("header")?.optString("uuid")
-            ?: java.util.UUID.randomUUID().toString()
+        // ⭐ TICKET-CORE-005 — El RP fusionado debe apuntar al BP fusionado.
+        runCatching {
+            val rpDeps = rpManifestObj.optJSONArray("dependencies")
+                ?: JSONArray().also { rpManifestObj.put("dependencies", it) }
+            val already = (0 until rpDeps.length()).any { i ->
+                rpDeps.optJSONObject(i)?.optString("uuid", "")
+                    ?.equals(newBpHeaderUuid, ignoreCase = true) == true
+            }
+            if (!already) {
+                rpDeps.put(JSONObject().apply {
+                    put("uuid", newBpHeaderUuid)
+                    put("version", JSONArray(listOf(1, 0, 0)))
+                })
+            }
+        }.onFailure {
+            PackForgeLog.w(TAG, "No se pudo vincular el RP fusionado al BP: ${it.message}")
+        }
 
-        // ══ ESCRIBIR using UTF-8 sin BOM ══
+        // ══ 3.10 — DEPENDENCIAS EXTERNAS COLGANDO ══
+        // Bedrock NO inicializa un pack cuyas `dependencies` por UUID no están
+        // instaladas: el .mcaddon entero queda muerto (datos y scripts) y el
+        // usuario solo ve que "no carga". Un addon que dependía de otro pack no
+        // incluido en la fusión bastaba para provocarlo.
+        val uuidsDelPack = setOf(newBpHeaderUuid, newRpHeaderUuid)
+        val externas = (
+            ManifestGenerator.dropExternalUuidDependencies(bpManifestObj, uuidsDelPack, "BP") +
+                ManifestGenerator.dropExternalUuidDependencies(rpManifestObj, uuidsDelPack, "RP")
+            ).distinctBy { it.uuid.lowercase() }
+        externas.forEach { dep ->
+            val detalle = "El manifiesto fusionado (${dep.declaredBy}) dependía del pack " +
+                "externo ${dep.uuid}${if (dep.version.isNotEmpty()) " v${dep.version}" else ""}, " +
+                "que NO está dentro del .mcaddon. Bedrock no carga un pack con dependencias " +
+                "ausentes, así que la dependencia se eliminó para que el modpack arranque. " +
+                "Si ese pack es necesario, instálalo por separado."
+            PackForgeLog.w(TAG, detalle)
+            ConflictRegistry.logConflict(
+                severity = com.packforge.app.domain.model.ConflictSeverity.MEDIUM,
+                type = "EXTERNAL_DEPENDENCY_DROPPED",
+                file = "manifest.json",
+                addon1 = dep.declaredBy,
+                addon2 = dep.uuid,
+                description = detalle
+            )
+        }
+
+        // ══ ESCRIBIR en UTF-8 sin BOM ══
         val bpManifestFile = File(mergedBpDir, "manifest.json")
         val rpManifestFile = File(mergedRpDir, "manifest.json")
         if (mergedBpDir.exists() || mergedBpDir.mkdirs()) {
@@ -2128,7 +2560,16 @@ val reportLines = MergeReportGenerator.build(
         PackForgeLog.d(TAG, "Manifests escritos con UTF-8 sin BOM")
         PackForgeLog.d(TAG, "UUIDs - BP: $newBpHeaderUuid, RP: $newRpHeaderUuid")
 
-        return Pair(newBpHeaderUuid, newRpHeaderUuid)
+        return LinkedManifests(
+            bpHeaderUuid = newBpHeaderUuid,
+            rpHeaderUuid = newRpHeaderUuid,
+            rpMinEngineVersion = rpHeader.minEngineVersion,
+            rpCapabilities = rpHeader.capabilities,
+            rpSubpacks = rpHeader.subpacks,
+            externalDependenciesDropped = externas.map { dep ->
+                "${dep.declaredBy}: ${dep.uuid}${if (dep.version.isNotEmpty()) " v${dep.version}" else ""}"
+            }
+        )
     }
     
     /**
@@ -2425,6 +2866,34 @@ val reportLines = MergeReportGenerator.build(
         if (mergedBpDir != null) DirIndexCache.invalidate(mergedBpDir)
         if (mergedRpDir != null) DirIndexCache.invalidate(mergedRpDir)
 
+
+        // ⭐ Red de seguridad: ningún manifiesto suelto entra al .mcaddon.
+        // Se conserva solo el `manifest.json` de la raíz de cada pack (que el
+        // pipeline acaba de regenerar); los `manifest_pf*.json` que deje la fase
+        // de copia se retiran a `_packforge/manifiestos_descartados/` para que
+        // queden en disco (trazabilidad) pero no en el paquete.
+        listOfNotNull(mergedBpDir, mergedRpDir).forEach { packDir ->
+            if (!packDir.isDirectory) return@forEach
+            packDir.walkTopDown()
+                .filter { it.isFile }
+                .filter { f ->
+                    val nombre = f.name
+                    nombre != "manifest.json" &&
+                        nombre.startsWith("manifest") &&
+                        nombre.endsWith(".json")
+                }
+                .toList()
+                .forEach { suelto ->
+                    val destino = File(packDir, "_packforge/manifiestos_descartados/${suelto.name}")
+                    destino.parentFile?.mkdirs()
+                    runCatching { suelto.renameTo(destino) }
+                    PackForgeLog.w(
+                        TAG,
+                        "🧹 Manifiesto suelto retirado del paquete: ${suelto.name}"
+                    )
+                }
+        }
+
         traceModelosEntity(mergedRpDir, "antes de empaquetar")
 
         // Escribir PackForge.ID dentro de cada pack en lugar de la raíz del .mcaddon
@@ -2515,9 +2984,24 @@ val reportLines = MergeReportGenerator.build(
             // `.vscode/launch.json` y `.vscode/settings.json` viajaban dentro del
             // .mcaddon y el validador los reportaba como "cifrado por sustitución".
             val enCarpetaOculta = relParaBasura.split('/').any { it.startsWith(".") }
+
+            // ? Los scripts viven SOLO en scripts/modules/<addon_id>/; la ra�z
+            // scripts/ est� reservada al bootstrapper `main.js`.
+            //
+            // El pipeline deja copias PLANAS de los .js de cada addon en
+            // scripts/ (una por cada ruta de copia que recorre el pack). Dos
+            // addons con `scripts/index.js` se pisaban entre s� y, seg�n el
+            // orden, un `main.js` de addon pod�a SOBRESCRIBIR el bootstrapper
+            // del router y dejar el modpack sin cargar ning�n script. No se
+            // empaquetan: el c�digo real ya viaja en modules/.
+            val esScriptPlano = relParaBasura.startsWith("scripts/") &&
+                !relParaBasura.startsWith("scripts/modules/") &&
+                relParaBasura != "scripts/main.js"
+
             val isInternalJunk = ext == "bak" ||
                 curFile.name.startsWith(".") ||
                 enCarpetaOculta ||
+                esScriptPlano ||
                 relParaBasura.startsWith("_packforge/")
             if (isInternalJunk) return@forEach
 
@@ -2701,106 +3185,17 @@ val reportLines = MergeReportGenerator.build(
         bpSources: List<ScriptSource>,
         mergedBpDir: File
     ): ScriptMergeResult {
-        val imports = mutableListOf<String>()
-        val libraryDeps = mutableMapOf<String, String>()
-        val skippedAddons = mutableListOf<String>()
-
-        bpSources.forEach { source ->
-            val key = source.key
-            val bpDir = source.directory
-            // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
-            val allFiles = DirIndexCache.index(bpDir).allFiles
-            val scriptFiles = allFiles
-                .filter { it.extension.lowercase() in SCRIPT_EXTENSIONS }
-            if (scriptFiles.isEmpty()) return@forEach
-
-            // 2. Leer el entry original del manifest
-            val manifest = source.manifest
-            var entry = "scripts/main.js"
-            manifest.optJSONArray("modules")?.let { mods ->
-                for (i in 0 until mods.length()) {
-                    val m = mods.getJSONObject(i)
-                    if (m.optString("type") == "script") {
-                        entry = m.optString("entry", "scripts/main.js")
-                    }
-                }
-            }
-            val relativeEntry = BedrockCompatibilityAnalyzer.resolveScriptEntry(bpDir, entry)
-            if (relativeEntry == null) {
-                skippedAddons.add(key)
-                PackForgeLog.e(
-                    "PackForge_Scripts",
-                    "Script omitido para '$key': entry inválido o inexistente '$entry'"
-                )
-                return@forEach
-            }
-            val targetDir = File(mergedBpDir, "scripts/$key")
-            val copied = scriptFiles.all { file ->
-                val target = File(targetDir, file.relativeTo(bpDir).invariantSeparatorsPath)
-                target.parentFile?.mkdirs()
-                try {
-                    FileUtils.fastCopy(file, target)
-                    true
-                } catch (_: Exception) {
-                    false
-                }
-            }
-            if (!copied) {
-                skippedAddons.add(key)
-                PackForgeLog.e("PackForge_Scripts", "No se pudieron copiar los scripts de '$key'")
-                return@forEach
-            }
-            PackForgeLog.d("PackForge_Scripts", "Scripts de '$key' preservados en scripts/$key/")
-            imports.add("import \"./$key/$relativeEntry\";")
-
-            // 3. Recoger versiones de librerías @minecraft/*
-            manifest.optJSONArray("dependencies")?.let { deps ->
-                for (i in 0 until deps.length()) {
-                    val dep = deps.getJSONObject(i)
-                    val name = dep.optString("module_name", "")
-                    if (name.startsWith("@minecraft/")) {
-                        val ver = dep.optString("version", "1.0.0")
-                        val current = libraryDeps[name]
-                        if (current == null || compareSemver(ver, current) > 0) {
-                            libraryDeps[name] = ver
-                        }
-                    }
-                }
-            }
-        }
-
-        if (imports.isEmpty()) return ScriptMergeResult(0, emptyMap(), skippedAddons)
-
-        // 4. ⭐ Generar el main.js COMBINADO ⭐
-        val mainJs = File(mergedBpDir, "scripts/main.js")
-        mainJs.parentFile?.mkdirs()
-        mainJs.writeText(
-            "// PackForge combined entry\n" +
-            imports.joinToString("\n") + "\n"
+        val bpDirs = bpSources.map { it.directory }
+        val routeResult = ScriptRouterEngine.routeAndBuildBootstrapper(bpDirs, mergedBpDir)
+        return ScriptMergeResult(
+            addonCount = routeResult.routedCount,
+            libraryDeps = routeResult.libraryDeps,
+            skippedAddons = routeResult.skippedAddons
         )
-
-        PackForgeLog.d("PackForge_Scripts", "✅ main.js combinado con ${imports.size} imports")
-        libraryDeps.forEach { (name, ver) ->
-            PackForgeLog.d("PackForge_Scripts", "📚 $name → $ver")
-        }
-
-        if (skippedAddons.isNotEmpty()) {
-            PackForgeLog.w(
-                "PackForge_Scripts",
-                "Scripts no incluidos por entry inválido: ${skippedAddons.joinToString()}"
-            )
-        }
-        return ScriptMergeResult(imports.size, libraryDeps, skippedAddons)
     }
 
     private fun compareSemver(a: String, b: String): Int {
-        val pa = a.split(".").map { it.toIntOrNull() ?: 0 }
-        val pb = b.split(".").map { it.toIntOrNull() ?: 0 }
-        for (i in 0 until 3) {
-            val cmp = (pa.getOrElse(i){0}).compareTo(pb.getOrElse(i){0})
-            if (cmp != 0) return cmp
-        }
-        return 0
+        return ScriptRouterEngine.compareSemver(a, b)
     }
 
     /**

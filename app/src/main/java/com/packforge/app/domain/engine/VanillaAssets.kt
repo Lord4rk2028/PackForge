@@ -84,7 +84,42 @@ object VanillaAssets {
         "geometry.llamaspit", "geometry.wither_skull",
         "geometry.arrow.skeleton", "geometry.tnt", "geometry.balloon",
         "geometry.heart", "geometry.dragon_fireball", "geometry.wind_charge",
-        "geometry.ominous_banner", "geometry.trial_spawner", "geometry.vault"
+        "geometry.ominous_banner", "geometry.trial_spawner", "geometry.vault",
+        // ══════════════════════════════════════════════════════════════════
+        // TICKET-CORE-004 — identificadores vanilla SIN sufijo separado.
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // El juego no siempre usa `entidad.variante`: también define nombres
+        // pegados. `iron_golem.entity.json` del juego referencia
+        // `geometry.irongolem` (sin guion bajo), y los caballos/guardianes
+        // `geometry.donkeymule.baby`, `geometry.horse.baby`… Ninguno estaba,
+        // así que el healer les generaba cajas 8x8x8 ENCIMA del modelo vanilla.
+        "geometry.irongolem", "geometry.irongolem.baby", "geometry.irongolem.cracked_low",
+        "geometry.irongolem.cracked_medium", "geometry.irongolem.cracked_high",
+        "geometry.irongolem.cracked_none",
+        "geometry.donkeymule", "geometry.donkeymule.baby",
+        "geometry.horse", "geometry.horse.baby", "geometry.horse_v2", "geometry.horse_v3",
+        "geometry.skeletonhorse", "geometry.skeletonhorse.baby",
+        "geometry.zombiehorse", "geometry.zombiehorse.baby",
+        "geometry.enderdragon", "geometry.enderdragon.baby",
+        "geometry.enderscrystal", "geometry.ender_crystal",
+        "geometry.happyscrap", "geometry.happyghast", "geometry.happy_ghast",
+        "geometry.pig", "geometry.pig.baby", "geometry.pig_v2", "geometry.pig_v3",
+        "geometry.cow", "geometry.cow.baby", "geometry.cow_v2", "geometry.cow_v3",
+        "geometry.sheep", "geometry.sheep.baby", "geometry.sheep_v2", "geometry.sheep_v3",
+        "geometry.chicken", "geometry.chicken.baby",
+        "geometry.cat", "geometry.cat.baby", "geometry.ocelot", "geometry.ocelot.baby",
+        "geometry.wolf", "geometry.wolf.baby", "geometry.fox", "geometry.fox.baby",
+        "geometry.villager", "geometry.villager.baby", "geometry.villager_v2",
+        "geometry.villager_v3", "geometry.villager_zombie",
+        "geometry.zombievillager", "geometry.zombie_villager.baby",
+        "geometry.zombie_villager_v2", "geometry.zombie_villager_v2.baby",
+        "geometry.snowgolem", "geometry.snow_golem",
+        "geometry.glow_squid", "geometry.glowsquid",
+        "geometry.armadillo.baby", "geometry.armadillo",
+        // ⭐ TICKET-CORE-004 — variantes del Wither (CamelCase, sin punto interno
+        // tras la entidad): `wither.entity.json` usa la base y la de armadura.
+        "geometry.witherBoss", "geometry.witherBoss.armor.v1.8"
     )
 
     /** Geometrías vanilla por FAMILIA (prefijo de segmento). (mutable para actualización remota) */
@@ -101,15 +136,113 @@ object VanillaAssets {
         // nunca las cubre todas: `geometry.item_sprite` faltaba y se reportaba
         // como modelo faltante).
         "geometry.item_sprite.", "geometry.armor_stand.", "geometry.chest.",
-        "geometry.shulker_box.", "geometry.banner.", "geometry.bed."
+        "geometry.shulker_box.", "geometry.banner.", "geometry.bed.",
+        // ══════════════════════════════════════════════════════════════════
+        // TICKET-CORE-004 — variantes vanilla por FAMILIA ('.baby', '.armor'…).
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // Al fusionar los 3 addons reales de Downloads, Just-Health-Indicator
+        // referenciaba geometrías del JUEGO que ningún addon define
+        // (`geometry.armadillo.baby`, `geometry.bat_v2`, `geometry.camel.baby`,
+        // `geometry.breeze_wind_top`…). Solo se validaba el id EXACTO contra la
+        // lista de arriba, así que las variantes caían como "modelo faltante" y
+        // el healer generaba 73 placeholders de caja 8x8x8 ENCIMA de modelos
+        // vanilla, rompiendo el render de esos mobs.
+        //
+        // El catálogo empaquetado ya lista las variantes reales; esto es la red
+        // de seguridad para las de una versión del juego posterior al catálogo.
+        "geometry.armadillo.", "geometry.bat.", "geometry.bee.",
+        "geometry.bogged.", "geometry.breeze.", "geometry.breeze_",
+        "geometry.camel.", "geometry.cat.", "geometry.cod.",
+        "geometry.copper_golem.", "geometry.creaking.", "geometry.dolphin.",
+        "geometry.donkey.", "geometry.elder_guardian.", "geometry.endermite.",
+        "geometry.ender_crystal.", "geometry.ender_dragon.",
+        "geometry.glow_squid.", "geometry.happy_ghast.", "geometry.hoglin.",
+        "geometry.iron_golem.", "geometry.mule.", "geometry.nautilus.",
+        "geometry.parched.", "geometry.parrot.", "geometry.phantom.",
+        "geometry.pig.", "geometry.pillager.", "geometry.polar_bear.",
+        "geometry.pufferfish.", "geometry.rabbit.", "geometry.salmon.",
+        "geometry.silverfish.", "geometry.skeleton.", "geometry.skeleton_horse.",
+        "geometry.snow_golem.", "geometry.spider.", "geometry.squid.",
+        "geometry.strider.", "geometry.tropicalfish.", "geometry.turtle.",
+        "geometry.villager.", "geometry.villager_v2.", "geometry.vindicator.",
+        "geometry.wandering_trader.", "geometry.witch.", "geometry.wolf.",
+        "geometry.zoglin.", "geometry.zombie.", "geometry.zombie_horse.",
+        "geometry.zombie_villager.", "geometry.zombie_villager_v2."
     )
 
     fun isVanillaGeometry(id: String): Boolean {
+        ensureCatalog()
         val clean = id.trim()
         if (clean.isEmpty()) return false
         if (clean in VANILLA_GEOMETRIES) return true
-        return VANILLA_GEOMETRY_PREFIXES.any { clean.startsWith(it) }
+        if (VANILLA_GEOMETRY_PREFIXES.any { clean.startsWith(it) }) return true
+        // ⭐ TICKET-CORE-004 — red de seguridad por ENTIDAD del juego:
+        // `geometry.bat_v2`, `geometry.breeze_wind_top`, `geometry.bogged.armor`
+        // no están ni en la lista ni en el catálogo con ese sufijo exacto, pero
+        // la ENTIDAD que las define (`bat`, `breeze`, `bogged`) sí es vanilla.
+        // Se exige frontera de segmento ('.' o '_') y que la entidad exista: un
+        // `geometry.custombat` o `geometry.armadilloboss` NO matchea.
+        val tail = clean.removePrefix("geometry.")
+        if (tail.isEmpty() || tail == clean) return false
+        return VANILLA_GEOMETRY_ENTITIES.any { entity ->
+            tail == entity ||
+                tail.startsWith("$entity.") ||
+                tail.startsWith("${entity}_")
+        }
     }
+
+    /**
+     * Nombres de entidad vanilla que el juego usa como raíz del identificador de
+     * geometría (`geometry.<entidad>`). Se comparan por SEGMENTO, nunca por
+     * substring, así que no absorben geometrías de addon.
+     */
+    private val VANILLA_GEOMETRY_ENTITIES = setOf(
+        "allay", "armadillo", "armor_stand", "arrow", "axolotl", "bat", "bee",
+        "bell", "blaze", "boat", "bogged", "breeze", "camel", "camel_husk",
+        "cat", "chest", "chest_boat", "chicken", "cod", "conduit",
+        "copper_golem", "cow", "cow_cold", "creaking", "creeper", "dolphin",
+        "donkey", "dragon", "dragon_fireball", "drowned", "egg", "elder_guardian",
+        "elytra", "end_crystal", "ender_crystal", "ender_dragon", "enderman",
+        "endermite", "evoker", "experience_orb", "eye_of_ender", "fireball",
+        "firework_rocket", "fishing_bobber", "fox", "frog", "ghast", "glow_squid",
+        "goat", "guardian", "happy_ghast", "hoglin", "horse", "husk",
+        "iron_golem", "item", "item_frame", "item_sprite", "leash_knot",
+        "lectern", "lingering_potion", "llama", "llama_spit", "magma_cube",
+        "minecart", "mooshroom", "mule", "nautilus", "ocelot", "panda",
+        "parched", "parrot", "phantom", "pig", "piglin", "piglin_brute",
+        "pillager", "player", "polar_bear", "pufferfish", "rabbit", "ravager",
+        "salmon", "sheep", "shield", "shulker", "shulker_bullet", "silverfish",
+        "sign", "skeleton", "skeleton_horse", "slime", "sniffer", "snow_golem",
+        "snowball", "spider", "splash_potion", "squid", "stray", "strider",
+        "tadpole", "tnt", "trident", "tropicalfish", "turtle", "vex",
+        "villager", "villager_v2", "vindicator", "wandering_trader", "warden",
+        "wind_charge", "witch", "wither", "wither_boss", "wither_skull", "wolf",
+        "zoglin", "zombie", "zombie_horse", "zombie_villager",
+        "zombie_villager_v2",
+        // ⭐ TICKET-CORE-004 — alias PEGADOS del juego (sin guion bajo/punto):
+        // `geometry.irongolem`, `geometry.donkeymule.baby`, `geometry.enderdragon`.
+        //
+        // Esta es la lista COMPLETA de ids vanilla que Just-Health-Indicator usa
+        // en sus 101 `entity/*.entity.json`; se extrajo de los archivos reales, no
+        // se inventó. Las variantes (`.baby`, `.armor.v1.8`, `_ropes`…) se derivan
+        // por prefijo de segmento de estos nombres base.
+        "irongolem", "donkeymule", "skeletonhorse", "zombiehorse", "enderdragon",
+        "glowsquid", "snowgolem", "zombievillager", "happyghast", "coppergolem",
+        "wanderingtrader", "happyscrap", "polarbear", "witherboss", "villager",
+        // `zombie_villager_v2.entity.json` escribe la familia con el orden
+        // INVERTIDO (`villagerzombie.baby`), y el mob de aldea también.
+        "villagerzombie", "villagerzombie_v2", "zombievillager_v2",
+        "tropicalfish", "magma_cube", "camel_husk", "nautilus", "parched",
+        "creaking", "armadillo", "allay", "axolotl", "bat", "bee", "blaze",
+        "breeze", "camel", "cat", "cod", "dolphin", "dragon", "fox", "frog",
+        "ghast", "goat", "guardian", "hoglin", "horse", "magma_cube",
+        "parrot", "phantom", "pig", "piglin", "pillager", "pufferfish",
+        "rabbit", "ravager", "salmon", "silverfish", "slime", "sniffer",
+        "squid", "strider", "tadpole", "turtle", "warden", "wind_charge",
+        "witch", "wither", "wolf", "zoglin", "zombie", "zombie_horse",
+        "zombie_villager", "cape", "endermite", "eye_of_ender"
+    )
 
     // ── RENDER CONTROLLERS ─────────────────────────────────────────────
 
@@ -163,7 +296,21 @@ object VanillaAssets {
         // referencian y son del juego: `render_controllers/llama_spit.render_controllers.json`
         // y `render_controllers/wither_skull.render_controllers.json`. Faltaban
         // en el catálogo, así que se reportaban como ausentes.
-        "controller.render.llama_spit", "controller.render.wither_skull"
+        "controller.render.llama_spit", "controller.render.wither_skull",
+        // ══════════════════════════════════════════════════════════════════
+        // TICKET-CORE-004 — render controllers vanilla ausentes del catálogo.
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // El juego los define y nadie los sobreescribe, pero al no estar en la
+        // lista el validador los daba por "ausentes" en 3 entidades del reporte
+        // real: `creeper_armor` (jungla/armadura del creeper), los tres pases del
+        // dragón y los tres tamaños del pufferfish.
+        "controller.render.creeper_armor",
+        "controller.render.ender_dragon_default",
+        "controller.render.ender_dragon_death_pre_pass",
+        "controller.render.ender_dragon_death_main_pass",
+        "controller.render.pufferfish.small", "controller.render.pufferfish.medium",
+        "controller.render.pufferfish.large"
     )
 
     private var VANILLA_RENDER_CONTROLLER_PREFIXES = mutableListOf(
@@ -175,6 +322,7 @@ object VanillaAssets {
     )
 
     fun isVanillaRenderController(id: String): Boolean {
+        ensureCatalog()
         val clean = id.trim()
         if (clean.isEmpty()) return false
         if (clean in VANILLA_RENDER_CONTROLLERS) return true
@@ -279,6 +427,7 @@ object VanillaAssets {
     )
 
     fun isVanillaAnimation(id: String): Boolean {
+        ensureCatalog()
         val clean = id.trim()
         if (clean.isEmpty()) return false
         // 1) Catálogo real (descargado/empaquetado): ids exactos.
@@ -370,10 +519,104 @@ object VanillaAssets {
         // que marcarla no puede enmascarar una textura de addon con esa ruta.
         // El reporte real de Better MC daba `textures/models/armor/copper_1` y
         // `copper_2` por ausentes aunque el juego las trae de fábrica.
-        "textures/models/armor/"
+        "textures/models/armor/",
+        // ══════════════════════════════════════════════════════════════════
+        // TICKET-CORE-004 — cosido de assets vanilla (hallado fusionando los
+        // 3 addons reales de Downloads).
+        // ══════════════════════════════════════════════════════════════════
+        //
+        // Just-Health-Indicator SOBRESCRIBE 100 `entity/*.entity.json` de
+        // vanilla (`minecraft:armadillo`, `minecraft:bee`…) solo para pegar su
+        // HUD de vida encima. Esos archivos citan texturas del JUEGO que el
+        // pack nunca empaqueta, porque no hace falta: el RP es un overlay.
+        //
+        // La regla de arriba fallaba justo ahí. `textures/entity/armadillo` no
+        // lleva "/" final y, por tanto, el prefijo "textures/entity/armadillo/"
+        // no matcheaba → el reporte daba 283 "texturas faltantes" HIGH falsas
+        // y el healer generaba 73 geometrías placeholder (cajas 8x8x8) que
+        // SOBRESCRIBÍAN modelos vanilla.
+        //
+        // Mientras el índice del juego no esté disponible, la lista cubre las
+        // familias de mob vanilla para las que existe una entidad del juego con
+        // ese prefijo (`minecraft:armadillo`, `minecraft:bee`…). Una ruta de
+        // addon con un prefijo DISTINTO (`mymob/armadillo_wild`) no matchea,
+        // porque la comparación es de segmento completo, nunca de substring.
+        "textures/entity/snow_golem",
+        "textures/entity/snow_golem/",
+        "textures/entity/fish/",
+        "textures/entity/saddle",
+        "textures/entity/saddle/",
+        "textures/entity/saddle_v2",
+        "textures/entity/steve/",
+        "textures/entity/alex/",
+        "textures/entity/villager2/",
+        "textures/entity/zombie_villager/",
+        "textures/entity/zombie_villager2/",
+        "textures/entity/turtle/",
+        "textures/entity/sea_turtle",
+        "textures/entity/glow_squid/",
+        "textures/entity/happy_ghast/",
+        "textures/entity/copper_golem/",
+        "textures/entity/iron_golem/",
+        "textures/entity/iron_golem",
+        "textures/entity/hoglin/",
+        "textures/entity/zoglin/",
+        "textures/entity/parrot/",
+        "textures/entity/dolphin",
+        "textures/entity/dolphin/",
+        "textures/entity/guardian_beam",
+        "textures/entity/guardian_elder",
+        "textures/entity/endermite",
+        "textures/entity/endercrystal/",
+        "textures/entity/creaking/",
+        "textures/entity/strider/",
+        "textures/entity/nautilus/",
+        "textures/entity/parched/",
+        "textures/entity/silverfish",
+        "textures/entity/blaze",
+        "textures/entity/phantom",
+        "textures/entity/pillager",
+        "textures/entity/polar_bear",
+        "textures/entity/polar_bear/",
+        "textures/entity/pufferfish",
+        "textures/entity/rabbit/",
+        "textures/entity/camel_husk/",
+        "textures/entity/horse2/",
+        "textures/entity/squid",
+        "textures/entity/squid/",
+        "textures/entity/wandering_trader",
+        "textures/entity/witch",
+        "textures/entity/vindicator",
+        "textures/entity/bee/",
+        "textures/entity/armadillo",
+        "textures/entity/armadillo/",
+        // ⭐ TICKET-CORE-004 — texturas PLANAS de mobs vanilla (sin subcarpeta).
+        // `guardian.entity.json` y `elder_guardian.entity.json` usan el archivo
+        // suelto `textures/entity/guardian`; las familias de arriba esperaban una
+        // barra y no matcheaban, así que el reporte las daba por ausentes.
+        "textures/entity/guardian",
+        "textures/entity/guardian_beam",
+        "textures/entity/guardian_elder",
+        "textures/entity/iron_golem",
+        "textures/entity/blaze",
+        "textures/entity/phantom",
+        "textures/entity/pillager",
+        "textures/entity/polar_bear",
+        "textures/entity/pufferfish",
+        "textures/entity/silverfish",
+        "textures/entity/squid",
+        "textures/entity/snow_golem",
+        "textures/entity/endermite",
+        "textures/entity/saddle",
+        "textures/entity/saddle_v2",
+        "textures/entity/sea_turtle",
+        "textures/entity/wandering_trader",
+        "textures/entity/witch",
+        "textures/entity/vindicator"
     )
 
     fun isVanillaTexture(path: String): Boolean {
+        ensureCatalog()
         val clean = path.trim().replace('\\', '/').removePrefix("./")
         if (clean.isEmpty()) return false
 
@@ -381,10 +624,13 @@ object VanillaAssets {
             if (!clean.startsWith(prefix)) return@any false
             // Prefijo con "/" final: startsWith ya garantiza el corte de segmento.
             if (prefix.endsWith("/")) return@any true
-            // Prefijo cerrado: debe terminar ahí o seguir con "." (extensión).
-            // Así "textures/entity/steve2" NO matchea con "textures/entity/steve".
+            // Prefijo de FAMILIA (`textures/entity/armadillo`, sin "/" final):
+            // el asset vanilla es el archivo del prefijo, su `.png`/`.tga`, o
+            // cualquier cosa DENTRO de esa carpeta. El reporte de los 3 addons
+            // reales las daba por ausentes solo porque la referencia no llevaba
+            // barra ("textures/entity/armadillo" frente a "…/armadillo/").
             val rest = clean.substring(prefix.length)
-            rest.isEmpty() || rest.startsWith(".")
+            rest.isEmpty() || rest.startsWith(".") || rest.startsWith("/")
         }
     }
 
@@ -398,6 +644,7 @@ object VanillaAssets {
     )
 
     fun isVanillaSound(path: String): Boolean {
+        ensureCatalog()
         val clean = path.trim().replace('\\', '/').removePrefix("./")
         if (clean.isEmpty()) return false
         return VANILLA_SOUND_PREFIXES.any { clean.startsWith(it) }
@@ -441,7 +688,15 @@ object VanillaAssets {
         if (clean.isEmpty()) return false
         // Un material con namespace es del pack: nunca vanilla por esta vía.
         if (clean.contains(':')) return false
-        return clean in VANILLA_MATERIALS
+        if (clean in VANILLA_MATERIALS) return true
+        // ⭐ TICKET-CORE-004 — SUFIJO DE STATE. El juego deriva materiales de
+        // unos pocos indicando el estado de rasterizado: `entity_dissolve_layer0`,
+        // `…#0.skinning`, `…#0.emissive_glint`… El dragón vanilla del addon real
+        // usa `entity_dissolve_layer0.skinning` y `entity_dissolve_layer1.skinning`,
+        // que estaban en la lista BASE pero se comparaban por igualdad y salían
+        // como "material custom no existe" (2 referencias rotas falsas).
+        val base = clean.substringBefore('.')
+        return base != clean && base in VANILLA_MATERIALS
     }
 
     /**
@@ -617,6 +872,42 @@ object VanillaAssets {
     /** Evita recargar el catálogo en cada llamada. */
     @Volatile
     private var catalogLoaded = false
+
+    /** Evita reintentar la autocarga en cada consulta si ya se intentó. */
+    @Volatile
+    private var autoLoadAttempted = false
+
+    /**
+     * ⭐ TICKET-CORE-008 — AUTOCARGA DEL CATÁLOGO.
+     *
+     * El catálogo de 2.223 ids solo se cargaba desde `PackForgeApplication`
+     * (`onCreate`). En cualquier entorno **sin esa Application** —tests JVM,
+     * builds de escritorio, un fallo de arranque— el catálogo quedaba VACÍO y
+     * todas las listas heurísticas se quedaban solas.
+     *
+     * Consecuencia medida (pack de prueba generado en JVM): sin catálogo,
+     * `controller.render.armadillo.v2` (una variante vanilla que solo aparece
+     * en el catálogo) se clasificaba como «no vanilla», `EntityDependencyResolver`
+     * lo tomaba por referencia colgante y lo ELIMINABA. Sin el render controller
+     * de su propio modelo, el mob **no se dibuja**: los mobs vanilla salían
+     * invisibles en 64 entidades. El usuario lo reprodujo en el juego.
+     *
+     * Cargarlo bajo demanda desde el classpath elimina la dependencia del ciclo
+     * de vida de Android: la primera consulta lo carga y el resultado es igual
+     * en la app, en los tests y en cualquier build.
+     */
+    private fun ensureCatalog() {
+        if (catalogLoaded || autoLoadAttempted) return
+        autoLoadAttempted = true
+        loadBundledCatalog(null)
+    }
+
+    /** `true` si el catálogo real está disponible (y no solo las heurísticas). */
+    val isCatalogReady: Boolean
+        get() {
+            ensureCatalog()
+            return catalogEntryCount > 0
+        }
 
     /** Entradas efectivamente cargadas (diagnóstico y tests). */
     @Volatile

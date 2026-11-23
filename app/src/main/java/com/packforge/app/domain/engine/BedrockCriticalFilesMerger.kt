@@ -3,10 +3,6 @@ package com.packforge.app.domain.engine
 import com.packforge.app.util.PackForgeLog
 import com.packforge.app.domain.model.ConflictSeverity
 import com.packforge.app.util.logFile
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.Dispatchers
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -33,6 +29,7 @@ import java.util.Locale
  * necesitan sus .entity.json, render_controllers y animaciones.
  */
 object BedrockCriticalFilesMerger {
+    private const val TAG = "PackForge_BedrockMerger"
 
     data class TextureCoverageReport(
         val coveragePercent: Float,
@@ -42,6 +39,55 @@ object BedrockCriticalFilesMerger {
     )
 
     // Helper
+    /**
+     * Reporta una colisión REAL entre dos addons en un catálogo indexado por
+     * identificador (`texture_data`, `blocks.json`).
+     *
+     * Antes el primero ganaba **en silencio**: el segundo addon perdía su
+     * textura/mapeo y ni el reporte ni la pantalla de Conflictos lo decían
+     * (regla 15 de AGENTS.md). Un valor idéntico no es conflicto (regla 8).
+     *
+     * Severidad: MEDIUM si la clave es un id custom (perder su textura deja el
+     * bloque/ítem con el atlas equivocado); LOW para overrides de vanilla o
+     * claves planas, que es el patrón normal de un pack de texturas y no debe
+     * bloquear la exportación.
+     */
+    private fun reportarColisionDeCatalogo(
+        ruta: String,
+        clave: String,
+        valorPrevio: Any?,
+        valorEntrante: Any?,
+        duenioPrevio: String,
+        duenioEntrante: String,
+        tipo: String = "TEXTURE_OVERWRITE"
+    ) {
+        if (JsonDeepMerger.equivalentlyEqual(valorPrevio, valorEntrante)) return
+        val esCustom = clave.contains(':')
+        ConflictRegistry.logConflict(
+            severity = if (esCustom) ConflictSeverity.MEDIUM else ConflictSeverity.LOW,
+            type = tipo,
+            file = ruta,
+            addon1 = duenioPrevio,
+            addon2 = duenioEntrante,
+            description = "La clave '$clave' está definida con valores distintos en " +
+                "'$duenioPrevio' y '$duenioEntrante'. Se conserva la de '$duenioPrevio' " +
+                "(primero en el orden de fusión); la de '$duenioEntrante' no llega al pack. " +
+                "Cambia el orden o el ganador en Conflictos si prefieres la otra."
+        )
+    }
+
+    /**
+     * Etiqueta legible del addon dueño de una carpeta de pack.
+     *
+     * `rpDir.name` suele ser `"rp"` (todas las raíces extraídas se llaman igual),
+     * así que un conflicto acababa diciendo «rp choca con rp»: el reporte no
+     * servía para localizar el addon. `AddonOwnerRegistry` guarda el nombre real
+     * que ve el usuario; las llamadas directas a los mergers (tests) siguen
+     * cayendo en el nombre de la carpeta.
+     */
+    private fun etiquetaAddon(dir: File): String =
+        AddonOwnerRegistry.ownerOf(dir)?.let { AddonOwnerRegistry.labelOf(it) } ?: dir.name
+
     private fun calculateCoverage(
         terrainData: JSONObject, 
         itemData: JSONObject,
@@ -137,6 +183,8 @@ object BedrockCriticalFilesMerger {
     // =====================================================================
     fun mergeTerrainTexture(rpDirs: List<File>, destDir: File) {
         val mergedTextureData = JSONObject()
+        // Quién aportó cada clave: sin esto el conflicto no dice a quién culpar.
+        val duenios = HashMap<String, String>()
         var maxPadding = 8
         var maxMipLevels = 4
 
@@ -154,6 +202,16 @@ object BedrockCriticalFilesMerger {
                             val cleanValue = JsonDeepMerger.cleanJsonValue(value)
                             if (!mergedTextureData.has(cleanBlockName)) {
                                 mergedTextureData.put(cleanBlockName, cleanValue)
+                                duenios[cleanBlockName] = etiquetaAddon(rpDir)
+                            } else {
+                                reportarColisionDeCatalogo(
+                                    ruta = "textures/terrain_texture.json",
+                                    clave = cleanBlockName,
+                                    valorPrevio = mergedTextureData.get(cleanBlockName),
+                                    valorEntrante = cleanValue,
+                                    duenioPrevio = duenios[cleanBlockName] ?: "otro addon",
+                                    duenioEntrante = etiquetaAddon(rpDir)
+                                )
                             }
                         }
                     }
@@ -191,6 +249,7 @@ object BedrockCriticalFilesMerger {
     // =====================================================================
     fun mergeItemTexture(rpDirs: List<File>, destDir: File) {
         val mergedTextureData = JSONObject()
+        val duenios = HashMap<String, String>()
 
         rpDirs.forEach { rpDir ->
             val file = File(rpDir, "textures/item_texture.json")
@@ -204,6 +263,16 @@ object BedrockCriticalFilesMerger {
                             val cleanValue = JsonDeepMerger.cleanJsonValue(value)
                             if (!mergedTextureData.has(cleanItemName)) {
                                 mergedTextureData.put(cleanItemName, cleanValue)
+                                duenios[cleanItemName] = etiquetaAddon(rpDir)
+                            } else {
+                                reportarColisionDeCatalogo(
+                                    ruta = "textures/item_texture.json",
+                                    clave = cleanItemName,
+                                    valorPrevio = mergedTextureData.get(cleanItemName),
+                                    valorEntrante = cleanValue,
+                                    duenioPrevio = duenios[cleanItemName] ?: "otro addon",
+                                    duenioEntrante = etiquetaAddon(rpDir)
+                                )
                             }
                         }
                     }
@@ -236,6 +305,7 @@ object BedrockCriticalFilesMerger {
         val merged = JSONObject().apply {
             put("format_version", JSONArray().apply { put(1); put(1); put(0) })
         }
+        val duenios = HashMap<String, String>()
 
         rpDirs.forEach { rpDir ->
             val file = File(rpDir, "blocks.json")
@@ -244,8 +314,24 @@ object BedrockCriticalFilesMerger {
                     val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
                     json.keys().forEach { key ->
                         val cleanKey = key.sanitizeKey()
-                        if (cleanKey != "format_version" && !merged.has(cleanKey)) {
-                            merged.put(cleanKey, JsonDeepMerger.cleanJsonValue(json.get(key)))
+                        // `format_version` no es un id de bloque: no entra al
+                        // catálogo ni se compara con las claves de otros addons.
+                        if (cleanKey != "format_version") {
+                            val cleanValue = JsonDeepMerger.cleanJsonValue(json.get(key))
+                            if (!merged.has(cleanKey)) {
+                                merged.put(cleanKey, cleanValue)
+                                duenios[cleanKey] = etiquetaAddon(rpDir)
+                            } else {
+                                reportarColisionDeCatalogo(
+                                    ruta = "blocks.json",
+                                    clave = cleanKey,
+                                    valorPrevio = merged.get(cleanKey),
+                                    valorEntrante = cleanValue,
+                                    duenioPrevio = duenios[cleanKey] ?: "otro addon",
+                                    duenioEntrante = etiquetaAddon(rpDir),
+                                    tipo = "BLOCK_RENDER_OVERWRITE"
+                                )
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -268,82 +354,22 @@ object BedrockCriticalFilesMerger {
     //    ⭐ DUCK TYPING: Clasifica por contenido raíz "minecraft:client_entity",
     //    NO por extensión .entity.json. Esto permite procesar archivos con
     //    nombres ofuscados (ej: .fT.json, .7I.json) correctamente.
+    //
+    //    ⭐ TICKET-CORE-015: el agrupado es por **identifier**, no por nombre de
+    //    archivo. Con el agrupado por nombre, dos addons con `entity/mob.json`
+    //    pero identifiers distintos se fusionaban sobre el mismo objeto raíz
+    //    (`minecraft:client_entity` es una clave fija): el identifier del
+    //    perdedor se sobrescribía y su entidad quedaba sin definición de
+    //    cliente. El BP la seguía declarando → **mob invisible**. Ver
+    //    DeclarationFileRouter.
     // =====================================================================
     suspend fun mergeEntityDefinitions(rpDirs: List<File>, destDir: File) {
-        val destEntityDir = File(destDir, "entity")
-        destEntityDir.mkdirs()
-
-        // Recolectar todos los archivos de entidad de todos los RP, agrupados por nombre de destino.
-        // Los archivos con el MISMO nombre se procesan SECUENCIALMENTE (último addon gana, como el original).
-        // Los archivos con nombres DIFERENTES se procesan en PARALELO.
-        val entityFilesByName = mutableMapOf<String, MutableList<Pair<File, File>>>() // filename → [(sourceFile, rpDir)]
-        rpDirs.forEachIndexed { addonIndex, rpDir ->
-            val entityDir = File(rpDir, "entity")
-            if (entityDir.exists()) {
-                entityDir.listFiles()?.filter { it.extension.equals("json", ignoreCase = true) }?.forEach { file ->
-                    entityFilesByName.getOrPut(file.name) { mutableListOf() } += Pair(file, rpDir)
-                }
-            }
-        }
-
-        // ⭐ OPTIMIZACIÓN: Procesar archivos de entidad en PARALELO por nombre de destino.
-        // Mismo nombre → secuencial (preserva "último addon gana"). Diferente nombre → paralelo.
-        coroutineScope {
-            entityFilesByName.map { (fileName, files) ->
-                async(Dispatchers.IO) {
-                    files.forEachIndexed { fileIndex, (file, rpDir) ->
-                        // Zero-Excess I/O: leer UNA vez, clasificar + fusionar del mismo parse
-                        val rawText = try { file.readText(Charsets.UTF_8) } catch (_: Exception) { return@forEachIndexed }
-                        val json = try { JsonDeepMerger.cleanJsonObject(JSONObject(rawText)) } catch (_: Exception) { return@forEachIndexed }
-
-                        // ⭐ DUCK TYPING: Solo procesar si contiene la clave raíz de entidad
-                        if (!json.has("minecraft:client_entity")) return@forEachIndexed
-
-                        val destFile = File(destEntityDir, fileName)
-
-                        if (fileIndex == 0 && !destFile.exists()) {
-                            // Primer archivo con este nombre: copiar LIMPIANDO espacios en claves/valores
-                            try {
-                                OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use { writer ->
-                                    writer.write(json.toString())
-                                }
-                            } catch (e: Exception) {
-                                file.copyTo(destFile)
-                            }
-                            PackForgeLog.d("PackForge_Entity", "✅ Copiado (duck typing): entity/$fileName")
-                        } else {
-                            // Archivos subsecuentes con el mismo nombre: FUSIONAR inteligentemente
-                            try {
-                                val base = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
-
-                                // Fusionar recursivamente las definiciones de entidad
-                                json.keys().forEach { entityKey ->
-                                    val cleanKey = entityKey.sanitizeKey()
-                                    if (base.has(cleanKey)) {
-                                        val baseVal = base.get(cleanKey)
-                                        val mergeVal = json.get(cleanKey)
-                                        if (baseVal is JSONObject && mergeVal is JSONObject) {
-                                            base.put(cleanKey, JsonDeepMerger.deepMerge(baseVal, mergeVal))
-                                        } else {
-                                            base.put(cleanKey, mergeVal)
-                                        }
-                                    } else {
-                                        base.put(cleanKey, json.get(cleanKey))
-                                    }
-                                }
-
-                                OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
-                                    it.write(base.toString())
-                                }
-                                PackForgeLog.d("PackForge_Entity", "🔀 Fusionado (duck typing): entity/$fileName")
-                            } catch (e: Exception) {
-                                PackForgeLog.e("PackForge_Entity", "Error fusionando $fileName: ${e.message}")
-                            }
-                        }
-                    }
-                }
-            }.awaitAll()
-        }
+        DeclarationFileRouter.route(
+            sourceDirs = rpDirs,
+            destRoot = destDir,
+            subcarpeta = "entity",
+            claveDeclaracion = "minecraft:client_entity"
+        )
     }
 
     // =====================================================================
@@ -648,6 +674,8 @@ object BedrockCriticalFilesMerger {
     fun mergeGeometryFiles(rpDirs: List<File>, destDir: File) {
         // Mapa: ruta relativa del archivo -> JSONObject fusionado
         val geoFiles = mutableMapOf<String, JSONObject>()
+        // Quién aportó cada archivo: sin esto el duplicado no dice a quién culpar.
+        val propietarios = mutableMapOf<String, String>()
         var processedCount = 0
 
         rpDirs.forEach { rpDir ->
@@ -679,10 +707,17 @@ object BedrockCriticalFilesMerger {
 
                     if (existing == null) {
                         geoFiles[relativePath] = json
+                        propietarios[relativePath] = etiquetaAddon(rpDir)
                         logFile { "Agregada geometria (duck typing): $relativePath" }
                     } else {
                         // Fusionar deduplicando por identifier dentro de minecraft:geometry
-                        mergeGeoJson(existing, json, relativePath)
+                        mergeGeoJson(
+                            existing,
+                            json,
+                            relativePath,
+                            propietarios[relativePath] ?: "otro addon",
+                            etiquetaAddon(rpDir)
+                        )
                     }
                 } catch (e: Exception) {
                     PackForgeLog.e("PackForge_Geometry", "Error procesando $relativePath: ${e.message}")
@@ -707,7 +742,13 @@ object BedrockCriticalFilesMerger {
      * Fusiona dos archivos de geometria con el mismo path relativo,
      * deduplicando las entradas de minecraft:geometry por description.identifier.
      */
-    private fun mergeGeoJson(base: JSONObject, incoming: JSONObject, path: String) {
+    private fun mergeGeoJson(
+        base: JSONObject,
+        incoming: JSONObject,
+        path: String,
+        duenioPrevio: String,
+        duenioEntrante: String
+    ) {
         // ⭐ FASE 5: además del array moderno hay que fusionar las claves raíz
         // legacy ("geometry.x": {…}). Antes solo se tocaba `minecraft:geometry`,
         // así que en un archivo legacy la geometría del segundo addon se perdía
@@ -718,12 +759,14 @@ object BedrockCriticalFilesMerger {
         if (baseArr != null || incomingArr != null) {
             val acumulado = baseArr ?: JSONArray()
 
-            // Coleccionar identifiers existentes
-            val existingIdentifiers = mutableSetOf<String>()
+            // Coleccionar las geometrías existentes por identifier, con su
+            // CONTENIDO: así se distingue “el segundo addon redefine lo mismo”
+            // (no hay conflicto) de “define otra malla y se pierde” (sí lo hay).
+            val existentes = mutableMapOf<String, JSONObject>()
             for (i in 0 until acumulado.length()) {
-                val desc = acumulado.optJSONObject(i)?.optJSONObject("description")
-                val id = desc?.optString("identifier")
-                if (id != null) existingIdentifiers.add(id)
+                val geo = acumulado.optJSONObject(i) ?: continue
+                val id = geo.optJSONObject("description")?.optString("identifier") ?: continue
+                existentes.putIfAbsent(id, geo)
             }
 
             incomingArr?.let { inc ->
@@ -731,12 +774,21 @@ object BedrockCriticalFilesMerger {
                     val geo = inc.optJSONObject(i) ?: continue
                     val id = geo.optJSONObject("description")?.optString("identifier") ?: continue
 
-                    if (!existingIdentifiers.contains(id)) {
+                    val previa = existentes[id]
+                    if (previa == null) {
                         acumulado.put(geo)
-                        existingIdentifiers.add(id)
+                        existentes[id] = geo
                         logFile { "  + Geometria $id agregada en $path" }
                     } else {
-                        PackForgeLog.w("PackForge_Geometry", "  Geometria duplicada $id en $path (manteniendo primera)")
+                        reportarGeometriaDuplicada(
+                            path = path,
+                            id = id,
+                            valorPrevio = previa,
+                            valorEntrante = geo,
+                            duenioPrevio = duenioPrevio,
+                            duenioEntrante = duenioEntrante,
+                            mantenida = "primera"
+                        )
                     }
                 }
             }
@@ -749,12 +801,168 @@ object BedrockCriticalFilesMerger {
         incoming.keys().forEach { key ->
             if (!key.startsWith("geometry.")) return@forEach
             val valor = incoming.optJSONObject(key) ?: return@forEach
-            if (!base.has(key)) {
+            val previo = base.optJSONObject(key)
+            if (previo == null) {
                 base.put(key, valor)
                 logFile { "  + Geometria legacy $key agregada en $path" }
             } else {
-                PackForgeLog.w("PackForge_Geometry", "  Geometria legacy duplicada $key en $path (manteniendo primera)")
+                reportarGeometriaDuplicada(
+                    path = path,
+                    id = key,
+                    valorPrevio = previo,
+                    valorEntrante = valor,
+                    duenioPrevio = duenioPrevio,
+                    duenioEntrante = duenioEntrante,
+                    mantenida = "primera"
+                )
             }
+        }
+    }
+
+    /**
+     * Un `geometry.x` declarado por dos addons con CONTENIDO DISTINTO se
+     * resolvía en silencio: ganaba la primera malla y el segundo mob aparecía
+     * con el modelo equivocado. Antes solo quedaba un `PackForgeLog.w`, que en
+     * Android va a logcat y nunca llega a `fusion_report.txt` (regla 18).
+     *
+     * Ahora se registra con los dos addons. La alternativa de contenido suele
+     * poder recuperarse después: `EntityDependencyResolver` aliasa las
+     * variantes con `_pf<hash6>` cuando la entidad lo requiere.
+     */
+    private fun reportarGeometriaDuplicada(
+        path: String,
+        id: String,
+        valorPrevio: Any?,
+        valorEntrante: Any?,
+        duenioPrevio: String,
+        duenioEntrante: String,
+        mantenida: String
+    ) {
+        if (JsonDeepMerger.equivalentlyEqual(valorPrevio, valorEntrante)) {
+            PackForgeLog.d(
+                "PackForge_Geometry",
+                "Geometría '$id' idéntica en '$duenioEntrante': se deduplica sin conflicto"
+            )
+            return
+        }
+        PackForgeLog.w(
+            "PackForge_Geometry",
+            "Geometría duplicada '$id' en $path (se mantiene la $mantenida)"
+        )
+        ConflictRegistry.logConflict(
+            severity = ConflictSeverity.MEDIUM,
+            type = "GEOMETRY_IDENTIFIER_COLLISION",
+            file = path,
+            addon1 = duenioPrevio,
+            addon2 = duenioEntrante,
+            description = "El identificador '$id' está definido con mallas distintas en " +
+                "'$duenioPrevio' y '$duenioEntrante'. Se conserva la $mantenida y el motor " +
+                "intentará aliasar la otra variante (_pf<hash>) para las entidades que la usen; " +
+                "si un mob se ve con el modelo equivocado, revisa esta colisión."
+        )
+    }
+
+    // =====================================================================
+    // 9b. FAMILIAS DECLARATIVAS NUEVAS (3.8)
+    //     item_catalog/, cameras/, dimensions/, worldgen/feature_rules/.
+    // =====================================================================
+
+    /**
+     * Familias con raíz fija y `description.identifier` que NO tenían fusión
+     * dedicada: se copiaban por ruta. Dos consecuencias medidas:
+     *
+     *  · el mismo identifier en archivos con nombres distintos quedaba
+     *    DUPLICADO en el pack (Bedrock descarta uno en silencio), y
+     *  · dos addons con el mismo nombre de archivo se pisaban (ganaba el
+     *    último), perdiendo la definición del otro.
+     *
+     * Se reutiliza [DeclarationFileRouter]: una identidad = un archivo, con
+     * separación `_pf<hash>` cuando dos ids distintos comparten nombre y fusión
+     * por componente (con negociación de `format_version`) cuando el id
+     * coincide.
+     */
+    private val FAMILIAS_DECLARATIVAS = listOf(
+        "item_catalog" to "minecraft:item_catalog",
+        "cameras" to "minecraft:camera_preset",
+        "dimensions" to "minecraft:dimension",
+        "worldgen/feature_rules" to "minecraft:feature_rules"
+    )
+
+    suspend fun mergeDeclarativeFamilies(bpDirs: List<File>, destDir: File) {
+        for ((subcarpeta, clave) in FAMILIAS_DECLARATIVAS) {
+            val resultado = DeclarationFileRouter.route(
+                sourceDirs = bpDirs,
+                destRoot = destDir,
+                subcarpeta = subcarpeta,
+                claveDeclaracion = clave
+            )
+            if (resultado.written == 0) continue
+            logFile {
+                "Familia declarativa '$subcarpeta': ${resultado.written} archivo(s), " +
+                    "${resultado.fusionados} fusionado(s), ${resultado.divididos} separado(s)"
+            }
+        }
+    }
+
+    /**
+     * 3.8 — `trading/` NO declara identifier (la tabla se referencia por RUTA
+     * desde `minecraft:economy_trade_table`), así que no se puede enrutar por
+     * identidad. Se fusiona por ruta con la prioridad del pipeline y se
+     * REPORTAR cuando dos addons publican la misma tabla con contenido
+     * distinto: antes se mezclaban sus listas de trades sin decírselo a nadie.
+     */
+    fun mergeTradingTables(bpDirs: List<File>, destDir: File) {
+        val porRuta = LinkedHashMap<String, JSONObject>()
+        val duenios = LinkedHashMap<String, MutableList<String>>()
+
+        bpDirs.forEach { bpDir ->
+            val addon = etiquetaAddon(bpDir)
+            for (file in DirIndexCache.index(bpDir).jsonFiles) {
+                val rel = file.relativeTo(bpDir).path.replace(File.separatorChar, '/')
+                if (!rel.startsWith("trading/")) continue
+                val json = runCatching {
+                    JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
+                }.getOrNull() ?: continue
+
+                val previo = porRuta[rel]
+                if (previo == null) {
+                    porRuta[rel] = json
+                    duenios.getOrPut(rel) { mutableListOf() }.add(addon)
+                    continue
+                }
+
+                val autores = duenios.getOrPut(rel) { mutableListOf() }
+                if (!autores.contains(addon)) autores.add(addon)
+                if (!JsonDeepMerger.equivalentlyEqual(previo, json)) {
+                    ConflictRegistry.logConflict(
+                        severity = ConflictSeverity.LOW,
+                        type = "TRADING_TABLE_MERGED",
+                        file = rel,
+                        addon1 = autores.firstOrNull() ?: addon,
+                        addon2 = addon,
+                        description = "Dos addons publican la tabla de comercio '$rel' con " +
+                            "contenido distinto. Se fusionó por ruta (prioridad del pipeline: " +
+                            "gana el addon más prioritario) y ambas listas de trades se " +
+                            "combinan; revisa el resultado si esperabas solo una."
+                    )
+                }
+                porRuta[rel] = try {
+                    JsonDeepMerger.deepMerge(previo, json)
+                } catch (_: Exception) {
+                    json
+                }
+            }
+        }
+
+        porRuta.forEach { (rel, json) ->
+            val destino = File(destDir, rel)
+            destino.parentFile?.mkdirs()
+            OutputStreamWriter(FileOutputStream(destino), StandardCharsets.UTF_8).use {
+                it.write(json.toString())
+            }
+        }
+        if (porRuta.isNotEmpty()) {
+            logFile { "Tablas de comercio fusionadas: ${porRuta.size} archivo(s)" }
         }
     }
 
@@ -1100,6 +1308,11 @@ object BedrockCriticalFilesMerger {
         bpDirs.forEach { bpDir ->
             val recipesDir = File(bpDir, "recipes")
             if (recipesDir.exists()) {
+                // ⭐ TICKET-CORE-014 — El token estable se calcula UNA vez por
+                // directorio (coste O(contenido)), no por archivo (O(n²)): solo
+                // se usa en colisiones, pero el directorio hay que recorrerlo
+                // entero para hashearlo.
+                val tokenBp = tokenEstableDe(bpDir)
                 recipesDir.listFiles()?.filter { it.extension == "json" }?.forEach { file ->
                     try {
                         val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
@@ -1120,7 +1333,7 @@ object BedrockCriticalFilesMerger {
                                 // Colisión de receta: alias del identifier y conservar AMBAS
                                 // (las recetas no se referencian por id desde los items, así
                                 // que ambas variantes quedan craftables sin romper nada).
-                                val token = Integer.toHexString(bpDir.name.hashCode()).takeLast(4).padStart(4, '0')
+                                val token = tokenBp
                                 val newId = "${identifier}_pf$token"
                                 val recipeKey = json.keys().asSequence()
                                     .firstOrNull { it.startsWith("minecraft:recipe_") }
@@ -1135,7 +1348,7 @@ object BedrockCriticalFilesMerger {
                             }
                         } else {
                             // Sin identifier, copiar con nombre único
-                            val destFile = File(destRecipesDir, "${file.nameWithoutExtension}_${bpDir.name.hashCode().toString(16)}.json")
+                            val destFile = File(destRecipesDir, "${file.nameWithoutExtension}_$tokenBp.json")
                             OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
                                 it.write(json.toString())
                             }
@@ -1285,14 +1498,30 @@ object BedrockCriticalFilesMerger {
     //     HIGH para revisión manual (ej. dos addons cambiando minecraft:movement).
     // =====================================================================
     fun mergePlayerEntity(bpDirs: List<File>, mergedBpDir: File) {
-        data class Candidate(val json: JSONObject, val version: List<Int>, val ownerName: String)
+        data class Candidate(val json: JSONObject, val version: List<Int>, val ownerName: String, val addonId: String)
+
+        // ⚠️ Aquí se llamaba a SchemaNormalizer.normalize(...) para «adaptar al
+        // esquema objetivo» antes del deepMerge. Se ha RETIRADO (TICKET-CORE-010):
+        //
+        //   · Este método solo procesa ficheros `player.entity.json`, es decir
+        //     ENTIDADES, mientras que la única transformación verificada del
+        //     normalizador exige un contenedor `minecraft:block`. La llamada no
+        //     podía cambiar nada: era código muerto que aparentaba normalizar.
+        //   · El «objetivo» se calculaba con `detectMaxFormatVersion` sobre los
+        //     `manifest.json`, cuyo `format_version` es el del FORMATO DE
+        //     MANIFIESTO (2 o 3), no el del esquema de contenido (1.x.y).
+        //
+        // El reparto de esquemas de cada addon se informa ahora en el reporte
+        // (`SchemaNormalizer.summarizeSchemaSpread`), sin tocar el contenido:
+        // Bedrock elige el esquema por el `format_version` de cada archivo, y
+        // los antiguos siguen siendo válidos.
 
         val candidates = mutableListOf<Candidate>()
-        bpDirs.forEach { bpDir ->
+        bpDirs.forEachIndexed { index, bpDir ->
             val playerFile = sequenceOf(
                 File(bpDir, "player.entity.json"),
                 File(bpDir, "entities/player.entity.json")
-            ).firstOrNull { it.exists() } ?: return@forEach
+            ).firstOrNull { it.exists() } ?: return@forEachIndexed
             try {
                 val json = JsonDeepMerger.cleanJsonObject(JSONObject(playerFile.readText(Charsets.UTF_8)))
                 // ⭐ FASE 5 (fix real): el override del jugador puede venir como
@@ -1310,7 +1539,16 @@ object BedrockCriticalFilesMerger {
                         json.optJSONObject("minecraft:client_entity")?.optJSONObject("description")
                             ?.optString("identifier").orEmpty()
                     }
-                if (id != "minecraft:player") return@forEach // solo overrides reales del jugador
+                if (id != "minecraft:player") return@forEachIndexed // solo overrides reales del jugador
+
+                // El JSON entra TAL CUAL al deepMerge: no se reescribe su
+                // esquema (ver la nota del inicio de mergePlayerEntity).
+                val addonId = bpDir.name
+                    .replace(Regex("(?i)_?(bp|behavior|packs?)$"), "")
+                    .replace(Regex("[^A-Za-z0-9_]"), "_")
+                    .lowercase(Locale.ROOT)
+                    .ifBlank { "addon_${index + 1}" }
+
                 val manifest = File(bpDir, "manifest.json")
                 var version = listOf(1, 0, 0)
                 if (manifest.exists()) {
@@ -1322,7 +1560,7 @@ object BedrockCriticalFilesMerger {
                         }
                     } catch (_: Exception) {}
                 }
-                candidates.add(Candidate(json, version, bpDir.name))
+                candidates.add(Candidate(json, version, bpDir.name, addonId))
             } catch (e: Exception) {
                 PackForgeLog.e("PackForge_Player", "Error leyendo ${playerFile.name}: ${e.message}")
             }
@@ -1350,6 +1588,21 @@ object BedrockCriticalFilesMerger {
         OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use {
             it.write(merged.toString(4))
         }
+
+        // 3.6 — Mismo caso que el enrutador de declaraciones: los candidatos se
+        // apilan por prioridad de `manifest.version` y el resultado declara un
+        // solo esquema. Si no coinciden, se reporta (no se reescribe: regla 16).
+        FormatVersionNegotiator.negotiate(
+            filePath = "player.entity.json",
+            identifier = "minecraft:player",
+            aportantes = ordered.map {
+                FormatVersionNegotiator.Aportante(
+                    it.ownerName,
+                    SchemaNormalizer.formatVersionOf(it.json)
+                )
+            },
+            mantenida = SchemaNormalizer.formatVersionOf(merged)
+        )
         ConflictRegistry.logConflict(
             severity = com.packforge.app.domain.model.ConflictSeverity.MEDIUM,
             type = "PLAYER_JSON_HYBRID_MERGED",
@@ -1464,7 +1717,7 @@ object BedrockCriticalFilesMerger {
             val file = File(rpDir, "sound_definitions.json")
             if (!file.exists()) return@forEach
             try {
-                val token = Integer.toHexString(rpDir.name.hashCode()).takeLast(4).padStart(4, '0')
+                val token = tokenEstableDe(rpDir)
                 val json = JsonDeepMerger.cleanJsonObject(JSONObject(file.readText(Charsets.UTF_8)))
                 formatVersion = maxOf(formatVersion, json.optInt("format_version", 1))
                 json.keys().forEach { key ->
@@ -1542,7 +1795,7 @@ object BedrockCriticalFilesMerger {
         rpDirs.forEach { rpDir ->
             val particlesDir = File(rpDir, "particles")
             if (!particlesDir.isDirectory) return@forEach
-            val token = Integer.toHexString(rpDir.name.hashCode()).takeLast(4).padStart(4, '0')
+            val token = tokenEstableDe(rpDir)
 
             particlesDir.listFiles()?.filter { it.extension.equals("json", true) }?.forEach { file ->
                 try {
@@ -1876,12 +2129,24 @@ object BedrockCriticalFilesMerger {
             val losers = files.drop(1)
             val isVanilla = identifier.startsWith("minecraft:")
 
-            val severity = if (isVanilla) {
-                ConflictSeverity.MEDIUM
-            } else {
-                ConflictSeverity.CRITICAL
+            // ⭐ TICKET-CORE-004 — Un identifier VANILLA repetido NO es un
+            // conflicto: es el patrón normal de cualquier addon que parchea
+            // mobs del juego (Just-Health-Indicator sobrescribe 101). Nadie
+            // tiene que decidir nada (el juego se queda el ganador, y el
+            // ganador es el que ya calculó la fusión), así que registrarlo
+            // como MEDIUM solo engordaba el contador "conflictos" y bajaba
+            // el semáforo. Se informa igual como nota vanilla.
+            if (isVanilla) {
+                PackForgeLog.d(
+                    "PackForge_Entity",
+                    "${VanillaAssets.VANILLA_NOTE}: '$identifier' en ${files.size} archivos; " +
+                        "usará ${winner.name} (reemplazo vanilla, no es conflicto)"
+                )
+                continue
             }
-            val kind = if (isVanilla) "ENTITY_DUPLICATE_VANILLA" else "ENTITY_DUPLICATE_CUSTOM"
+
+            val severity = ConflictSeverity.CRITICAL
+            val kind = "ENTITY_DUPLICATE_CUSTOM"
 
             ConflictRegistry.logConflict(
                 severity = severity,
@@ -1889,30 +2154,10 @@ object BedrockCriticalFilesMerger {
                 file = "entity/${winner.name}",
                 addon1 = "ganador: $identifier",
                 addon2 = losers.joinToString(", ") { it.name },
-                description = if (isVanilla) {
-                    "El identifier VANILLA '$identifier' está declarado en ${files.size} archivos. " +
-                        "Bedrock usará solo el ganador (${winner.name}); los demás quedan inutilizados. " +
-                        VanillaAssets.VANILLA_NOTE
-                } else {
-                    "El identifier CUSTOM '$identifier' está declarado en ${files.size} archivos: " +
-                        "Bedrock descartará ${losers.size} en silencio. Revisa si ambos addons son necesarios."
-                }
+                description = "El identifier CUSTOM '$identifier' está declarado en ${files.size} archivos: " +
+                    "Bedrock descartará ${losers.size} en silencio. Revisa si ambos addons son necesarios."
             )
 
-            if (isVanilla) {
-                // Duplicado vanilla: se aparta a .shadow/ para que Bedrock no lo
-                // cargue y el conflicto quede visible pero sin romper el pack.
-                for (loser in losers) {
-                    val shadowDir = File(entityDir, ".shadow/$identifier")
-                    val target = File(shadowDir, loser.name)
-                    try {
-                        shadowDir.mkdirs()
-                        loser.renameTo(target)
-                    } catch (_: Exception) {
-                        // Si no se puede mover, se deja: el conflicto ya está reportado.
-                    }
-                }
-            }
             // Duplicado custom: NO se mueve nada. La decisión es del usuario
             // en la pantalla de Conflictos (regla: nunca resolver en silencio).
         }
@@ -1933,45 +2178,16 @@ object BedrockCriticalFilesMerger {
     //     dejar de construirse el BedrockIdentifierIndex masivo, y se
     //     eliminó para no dejar dos resolutores divergentes.
     // =====================================================================
-    fun mergeAttachables(rpDirs: List<File>, destDir: File) {
-        val destAttachDir = File(destDir, "attachables")
-        destAttachDir.mkdirs()
-        rpDirs.forEach { rpDir ->
-            val attachDir = File(rpDir, "attachables")
-            if (!attachDir.isDirectory) return@forEach
-            attachDir.listFiles()?.filter { it.extension.equals("json", true) }?.forEach { file ->
-                // ⭐ SEMANTIC: Leer una vez, clasificar por contenido (duck typing)
-                val rawText = try { file.readText(Charsets.UTF_8) } catch (_: Exception) { return@forEach }
-                val incomingJson = try { JsonDeepMerger.cleanJsonObject(JSONObject(rawText)) } catch (_: Exception) { return@forEach }
-
-                // ⭐ DUCK TYPING: Solo procesar archivos con minecraft:attachable
-                if (!incomingJson.has("minecraft:attachable")) return@forEach
-
-                val destFile = File(destAttachDir, file.name)
-                if (!destFile.exists()) {
-                    try {
-                        OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use { it.write(incomingJson.toString()) }
-                    } catch (_: Exception) { file.copyTo(destFile, overwrite = true) }
-                    PackForgeLog.d("PackForge_Attach", "✅ Copiado (duck typing): attachables/${file.name}")
-                } else {
-                    try {
-                        val base = JsonDeepMerger.cleanJsonObject(JSONObject(destFile.readText(Charsets.UTF_8)))
-                        // Merge por clave raíz (ej. "minecraft:attachable")
-                        incomingJson.keys().forEach { key ->
-                            val cleanKey = key.sanitizeKey()
-                            if (base.has(cleanKey)) {
-                                val bv = base.get(cleanKey); val iv = incomingJson.get(key)
-                                if (bv is JSONObject && iv is JSONObject) base.put(cleanKey, JsonDeepMerger.deepMerge(bv, iv))
-                                else base.put(cleanKey, iv)
-                            } else base.put(cleanKey, incomingJson.get(key))
-                        }
-                        OutputStreamWriter(FileOutputStream(destFile), StandardCharsets.UTF_8).use { it.write(base.toString()) }
-                        PackForgeLog.d("PackForge_Attach", "🔀 Fusionado (duck typing): attachables/${file.name}")
-                    } catch (e: Exception) { PackForgeLog.e("PackForge_Attach", "Error: ${e.message}") }
-                }
-            }
-        }
-        PackForgeLog.d("PackForge_Attach", "✅ attachables fusionados")
+    suspend fun mergeAttachables(rpDirs: List<File>, destDir: File) {
+        // Igual que las entidades: un attachable es UNA declaración con
+        // identifier y la raíz es fija (`minecraft:attachable`). Fusionar por
+        // nombre de archivo mezclaba dos attachables distintos en uno solo.
+        DeclarationFileRouter.route(
+            sourceDirs = rpDirs,
+            destRoot = destDir,
+            subcarpeta = "attachables",
+            claveDeclaracion = "minecraft:attachable"
+        )
     }
 
     // =====================================================================
@@ -2031,6 +2247,48 @@ object BedrockCriticalFilesMerger {
             description = "Fusión de functions/tick.json (${combinedValues.size} funciones registradas: ${combinedValues.joinToString()})."
         )
         PackForgeLog.d("PackForge_Tick", "✅ functions/tick.json fusionado con ${combinedValues.size} funciones: ${combinedValues.joinToString()}")
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  TOKEN ESTABLE POR ADDON (TICKET-CORE-014)
+    // ══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Token `_pf<hex4>` ESTABLE para un directorio de addon.
+     *
+     * Los sufijos de desambiguación (`_pfXXXX`) deben ser únicos dentro de la
+     * fusión PERO estables entre exportaciones del mismo addon: si el jugador
+     * re-exporta y reinstala, los identificadores que ya viven en sus mundos
+     * deben seguir resolviéndose.
+     *
+     * La versión anterior usaba `dir.name.hashCode()`, que cambia con cada
+     * exportación porque el directorio extraído se llama `extracted_<epochMs>_…`.
+     * Ahora el token se deriva del **contenido** del directorio: como la
+     * extracción es determinista en bytes, el resumen SHA-256 es idéntico entre
+     * exportaciones del mismo ZIP.
+     *
+     * Se lee el contenido completo del directorio (una sola vez por llamada), lo
+     * que es caro si se llama en un bucle por archivo; por eso los llamadores lo
+     * calculan UNA vez por directorio y lo reutilizan, no por entrada.
+     */
+    private fun tokenEstableDe(dir: File): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        dir.listFiles()?.forEach { f ->
+            try {
+                if (f.isDirectory) {
+                    f.walkTopDown().forEach { if (it.isFile) digest.update(it.readBytes()) }
+                } else {
+                    digest.update(f.readBytes())
+                }
+            } catch (_: Exception) {
+                // Un archivo ilegible no contribuye al resumen; el resto sí.
+            }
+        }
+        val hex = digest.digest()
+        val builder = StringBuilder(hex.size * 2)
+        for (b in hex) builder.append("%02x".format(b))
+        val crudo = builder.toString()
+        return if (crudo.all { it == '0' }) "0000" else crudo.take(4)
     }
 }
 

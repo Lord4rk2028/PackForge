@@ -24,7 +24,11 @@ object ConflictRegistry {
 
     /** Añade un MergeConflict ya construido (con ID generado). */
     fun addConflict(conflict: MergeConflict) {
-        _conflicts.value = _conflicts.value + conflict
+        // `update` reintenta si otro hilo escribió a la vez: la Fase 3 lanza
+        // varias fusiones en paralelo y cada una reporta sus propios hallazgos.
+        // Con `value = value + conflict` dos escrituras concurrentes se pisaban
+        // y el conflicto perdido no aparecía ni en la UI ni en el semáforo.
+        _conflicts.update { it + conflict }
         Log.i("PackForge_Conflict", "Registrado: ${conflict.severity.name} ${conflict.conflictType} @ ${conflict.filePath}")
     }
 

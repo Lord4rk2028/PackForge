@@ -27,7 +27,6 @@ class DiagnosticoMergeGeometryMultiAddonTest {
 
     @Test
     fun `la fusion con los cuatro addons conserva los modelos de entidad`() {
-        val downloads = File(System.getenv("USERPROFILE"), "Downloads")
         val nombresAddon = listOf(
             "core-craft_v1.2.8.mcaddon",
             "The-Sift-WE-0.9-RP.mcpack",
@@ -35,8 +34,8 @@ class DiagnosticoMergeGeometryMultiAddonTest {
             "BP_RP_MTA_26.3.mcaddon"
         )
         assumeTrue(
-            "Faltan addons en Downloads",
-            nombresAddon.map { File(downloads, it) }.any { it.isFile }
+            TestFixtures.describe("core-craft_v1.2.8.mcaddon"),
+            nombresAddon.any { TestFixtures.addon(it) != null }
         )
 
         val work = Files.createTempDirectory("pf_diag_multi_").toFile()
@@ -44,8 +43,8 @@ class DiagnosticoMergeGeometryMultiAddonTest {
             // Construir la lista de raices RP EXACTAMENTE como el orquestador.
             val roots = mutableListOf<Pair<String, File>>()
             nombresAddon.forEachIndexed { i, nombre ->
-                val addon = File(downloads, nombre)
-                if (!addon.isFile) {
+                val addon = TestFixtures.addon(nombre)
+                if (addon == null) {
                     println("DIAG-MULTI | $nombre: NO ESTA")
                     return@forEachIndexed
                 }

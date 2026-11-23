@@ -1,9 +1,11 @@
 package com.packforge.app.domain.engine
 
 import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -30,6 +32,8 @@ class IdentifierRemapperTest {
     fun tearDown() {
         tempRoots.forEach { it.deleteRecursively() }
         tempRoots.clear()
+        AddonOwnerRegistry.clear()
+        ConflictRegistry.clear()
     }
 
     // ── HELPERS ─────────────────────────────────────────────────────────
@@ -56,10 +60,37 @@ class IdentifierRemapperTest {
         return f
     }
 
+    private fun blockFile(dir: File, id: String): File {
+        val f = File(dir, "blocks/shiny.json").apply { parentFile.mkdirs() }
+        f.writeText(
+            """
+            {
+              "format_version": "1.20.10",
+              "minecraft:block": {
+                "description": { "identifier": "$id" },
+                "components": {}
+              }
+            }
+            """.trimIndent()
+        )
+        return f
+    }
+
     private fun langFile(dir: File, id: String): File {
         val f = File(dir, "texts/es_ES.lang").apply { parentFile.mkdirs() }
         f.writeText("entity.$id.name=Espada x\nitem.$id.name=Espada x\n")
         return f
+    }
+
+    private fun manifestFile(dir: File, uuid: String) {
+        val f = File(dir, "manifest.json")
+        f.writeText(
+            """
+            {"format_version":2,"header":{"name":"pack","description":"bp","uuid":"$uuid",
+            "version":[1,0,0],"min_engine_version":[1,20,0]},
+            "modules":[{"type":"data","uuid":"$uuid-m","version":[1,0,0]}]}
+            """.trimIndent()
+        )
     }
 
     private fun clientEntity(dir: File, id: String): File {
@@ -182,5 +213,108 @@ class IdentifierRemapperTest {
         assertEquals("Cada renombrado debe ser único", report.size, report.map { it.newId }.distinct().size)
         // El ganador queda intacto.
         assertTrue(File(dirA, "entities/sword.entity.json").readText().contains("tools:tool"))
+    }
+
+    @Test
+    fun renamingABlockAlsoRewritesItsKeysInTheCatalogs() {
+        // El id del bloque no solo vive en `description.identifier`: es CLAVE en
+        // `blocks.json` y en `texture_data`. Si no se reescribe, el bloque del
+        // perdedor queda renombrado pero sin mapeo de textura (bloque “?”).
+        val bpA = tempDir("keys_bp_a")
+        val bpB = tempDir("keys_bp_b")
+        val rpA = tempDir("keys_rp_a")
+        val rpB = tempDir("keys_rp_b")
+        blockFile(bpA, "shiny:block")
+        blockFile(bpB, "shiny:block")
+
+        fun catalogs(dir: File, textura: String) {
+            File(dir, "blocks.json").writeText(
+                """{"format_version":[1,1,0],"shiny:block":{"textures":"$textura","sound":"stone"}}"""
+            )
+            File(dir, "textures/terrain_texture.json").apply { parentFile?.mkdirs() }.writeText(
+                """{"texture_data":{"shiny:block":{"textures":"textures/blocks/$textura"}}}"""
+            )
+        }
+        catalogs(rpA, "shiny_a")
+        catalogs(rpB, "shiny_b")
+
+        AddonOwnerRegistry.register(bpA, "a", "Addon A")
+        AddonOwnerRegistry.register(rpA, "a", "Addon A")
+        AddonOwnerRegistry.register(bpB, "b", "Addon B")
+        AddonOwnerRegistry.register(rpB, "b", "Addon B")
+
+        val report = remap(listOf(bpA, bpB), listOf(rpA, rpB))
+        val nuevo = report.firstOrNull { it.oldId == "shiny:block" }?.newId
+        assertNotNull("El bloque debe renombrarse", nuevo)
+
+        val blocksB = JSONObject(File(rpB, "blocks.json").readText())
+        assertTrue("blocks.json del perdedor debe usar la clave nueva: $blocksB", blocksB.has(nuevo))
+        assertFalse("La clave vieja no puede quedar en blocks.json", blocksB.has("shiny:block"))
+
+        val atlasB = JSONObject(File(rpB, "textures/terrain_texture.json").readText())
+            .getJSONObject("texture_data")
+        assertTrue("texture_data del perdedor debe usar la clave nueva", atlasB.has(nuevo))
+        assertFalse("La clave vieja no puede quedar en texture_data", atlasB.has("shiny:block"))
+
+        // El ganador no se toca, ni en valores ni en claves.
+        val blocksA = JSONObject(File(rpA, "blocks.json").readText())
+        assertTrue("blocks.json del ganador intacto", blocksA.has("shiny:block"))
+        assertFalse("El ganador no debe recibir el id nuevo", blocksA.has(nuevo))
+    }
+    // ── 3.11: estabilidad de los tokens `pf:<hex>` ────────────────────────
+
+    /**
+     * El token del id renombrado tiene que ser el MISMO aunque el addon se
+     * extraiga en otra carpeta (`extracted_<epochMs>_…`). Antes salía de
+     * `ownerKey.hashCode()` y esa clave era la ruta extraída.
+     */
+    @Test
+    fun renamedTokenIsStableAcrossDifferentExtractionDirectories() {
+        fun tokenEn(nombreA: String, nombreB: String): String {
+            val root = tempDir("run_${System.nanoTime()}")
+            val a = File(root, nombreA).apply { mkdirs() }
+            val b = File(root, nombreB).apply { mkdirs() }
+            manifestFile(a, "11111111-1111-1111-1111-111111111111")
+            manifestFile(b, "22222222-2222-2222-2222-222222222222")
+            entityFile(a, "tools:sword")
+            entityFile(b, "tools:sword")
+            // Como hace el orquestador: semilla derivada del manifiesto.
+            AddonOwnerRegistry.register(a, "addon_0", "A", AddonOwnerRegistry.stableSeed(listOf(a), "A"))
+            AddonOwnerRegistry.register(b, "addon_1", "B", AddonOwnerRegistry.stableSeed(listOf(b), "B"))
+
+            val report = remap(listOf(a, b), emptyList())
+            AddonOwnerRegistry.clear()
+            return report.single().newId
+        }
+
+        assertEquals(
+            "El token no puede depender de la ruta de extracción",
+            tokenEn("extracted_111_first", "extracted_222_second"),
+            tokenEn("extracted_999_first", "extracted_888_second")
+        )
+    }
+
+    @Test
+    fun differentAddonsProduceDifferentTokens() {
+        fun tokenDelPerdedor(uuidPerdedor: String): String {
+            val root = tempDir("run_${System.nanoTime()}")
+            val a = File(root, "extracted_1_win").apply { mkdirs() }
+            val b = File(root, "extracted_2_lose").apply { mkdirs() }
+            manifestFile(a, "33333333-3333-3333-3333-333333333333")
+            manifestFile(b, uuidPerdedor)
+            entityFile(a, "tools:sword")
+            entityFile(b, "tools:sword")
+            AddonOwnerRegistry.register(a, "addon_0", "A", AddonOwnerRegistry.stableSeed(listOf(a), "A"))
+            AddonOwnerRegistry.register(b, "addon_1", "B", AddonOwnerRegistry.stableSeed(listOf(b), "B"))
+
+            val report = remap(listOf(a, b), emptyList())
+            AddonOwnerRegistry.clear()
+            return report.single().newId
+        }
+
+        assertNotEquals(
+            tokenDelPerdedor("44444444-4444-4444-4444-444444444444"),
+            tokenDelPerdedor("55555555-5555-5555-5555-555555555555")
+        )
     }
 }

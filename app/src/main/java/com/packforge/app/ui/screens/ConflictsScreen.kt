@@ -330,9 +330,57 @@ fun ConflictCard(conflict: Conflict, addons: List<Addon>, resolution: String?, o
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(conflict.description, style = MaterialTheme.typography.bodySmall)
 
-                    Text(stringResource(R.string.conflict_winner_label), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    // ⭐ TICKET-CORE-004 — Conflictos que la fusión YA resuelve
+                    // uniendo el contenido de todos los addons (p.ej. los
+                    // scripts, que van a scripts/modules/<addon_id>/ y se
+                    // cargan todos desde scripts/main.js).
+                    //
+                    // Antes esta pantalla pedía "elige el ganador" también
+                    // aquí, y no había ganador: elegir uno descartaba el
+                    // trabajo del otro. Sin elección posible, se explica qué
+                    // hará la fusión en vez de ofrecer una disyuntiva falsa.
+                    if (conflict.type == ConflictType.SCRIPT_CONFLICT) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = ExpressiveShapes.action,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            border = borderStroke(true, MaterialTheme.colorScheme.secondary)
+                        ) {
+                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.MergeType,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.secondary
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        "Se fusionan los scripts de todos (no hay que elegir)",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        "El router aísla el código de cada addon en " +
+                                            "scripts/modules/<addon_id>/, así que sus imports " +
+                                            "relativos siguen resolviéndose, y genera " +
+                                            "scripts/main.js para cargarlos todos.",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Text(stringResource(R.string.conflict_winner_label), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    }
 
-                    val affected = addons.filter { conflict.affectedAddonIds.contains(it.id) }
+                    // Los scripts NO se eligen: se conservan todos (ver arriba).
+                    // Ofrecer "elige ganador" aquí solo llevaría a descartar el
+                    // trabajo de un addon sin motivo.
+                    val affected = if (conflict.type == ConflictType.SCRIPT_CONFLICT) {
+                        emptyList()
+                    } else {
+                        addons.filter { conflict.affectedAddonIds.contains(it.id) }
+                    }
                     affected.forEach { addon ->
                         val selected = resolution == addon.id
                         Surface(
@@ -527,6 +575,17 @@ fun ConflictBattleCard(
         "ITEM_OVERWRITE" -> "Ítem sobrescrito"
         "ENTITY_OVERWRITE" -> "Entidad sobrescrita"
         "TEXTURE_OVERWRITE" -> "Textura sobrescrita"
+        "BLOCK_RENDER_OVERWRITE" -> "Render de bloque sobrescrito"
+        "ENTITY_IDENTIFIER_MERGED" -> "Entidad fusionada por identificador"
+        "GEOMETRY_IDENTIFIER_COLLISION" -> "Geometría duplicada"
+        "SUBPACK_RENAMED" -> "Subpack renombrado"
+        "SUBPACK_TIER_COLLISION" -> "Subpacks del mismo nivel de memoria"
+        "SUBPACK_INVALID" -> "Subpack sin carpeta"
+        "FORMAT_VERSION_MISMATCH" -> "Esquemas de contenido distintos"
+        "TRADING_TABLE_MERGED" -> "Tabla de comercio fusionada"
+        "EXTERNAL_DEPENDENCY_DROPPED" -> "Dependencia externa eliminada"
+        "SCRIPT_API_MAJOR_CONFLICT" -> "Versiones de API de scripts incompatibles"
+        "UI_GLOBAL_VARIABLE_RENAMED" -> "Variable global de UI renombrada"
         "RECIPE_OVERWRITE" -> "Receta sobrescrita"
         "NAMESPACE_COLLISION" -> "Identificador en conflicto"
         "UNKNOWN_STRUCTURE" -> "Estructura no reconocida"

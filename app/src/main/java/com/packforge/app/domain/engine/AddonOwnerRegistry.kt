@@ -1,6 +1,10 @@
 package com.packforge.app.domain.engine
 
+import org.json.JSONObject
 import java.io.File
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -35,10 +39,20 @@ object AddonOwnerRegistry {
     /** clave de propietario → nombre legible para los reportes. */
     private val etiquetas = ConcurrentHashMap<String, String>()
 
+    /**
+     * clave de propietario → SEMILLA estable del addon (UUID de sus manifiestos).
+     *
+     * Se separa de la clave porque la clave puede ser posicional (`both_0`) —
+     * lo que mantiene determinista al ganador de una colisión— mientras que el
+     * token `pf:<hex>` debe sobrevivir a las reexportaciones.
+     */
+    private val semillas = ConcurrentHashMap<String, String>()
+
     /** Limpia el registro al inicio de cada fusión. */
     fun clear() {
         porRuta.clear()
         etiquetas.clear()
+        semillas.clear()
     }
 
     /**
@@ -47,9 +61,10 @@ object AddonOwnerRegistry {
      *
      * @param etiqueta nombre legible del addon, solo para los reportes.
      */
-    fun register(dir: File, owner: String, etiqueta: String) {
+    fun register(dir: File, owner: String, etiqueta: String, semilla: String = owner) {
         porRuta[dir.absolutePath] = owner
         etiquetas[owner] = etiqueta
+        semillas.putIfAbsent(owner, semilla)
     }
 
     /** Propietario registrado para [dir], o `null` si no se registró. */
@@ -57,4 +72,66 @@ object AddonOwnerRegistry {
 
     /** Nombre legible del addon [owner], o `null` si no se conoce. */
     fun labelOf(owner: String): String? = etiquetas[owner]
+
+    /**
+     * Semilla estable del addon [owner] (ver [stableSeed]), o `null` si la
+     * carpeta no se registró. La usan los tokens `_pf<hex>` cuya estabilidad
+     * entre exportaciones importa (identificadores que ya viven en los mundos).
+     */
+    fun seedOf(owner: String): String? = semillas[owner]
+
+    /**
+     * 3.11 — Semilla ESTABLE de un addon a partir de sus raíces de pack.
+     *
+     * Antes el token `_pf` salía de `ownerKey.hashCode()` y la clave solía ser la
+     * ruta extraída (`extracted_<epochMs>_<addon>`): el identificador renombrado
+     * (`pf:1a2b3c_stone`) cambiaba en cada exportación y lo que ya estaba
+     * guardado en un mundo dejaba de resolverse al reinstalar el modpack.
+     *
+     * La semilla se deriva de los **UUID de header de los manifiestos**, que son
+     * estables entre reimportaciones del mismo addon y distintos entre addons.
+     * Solo si no hay manifiesto legible se cae al nombre sin la estampa de
+     * extracción (nunca a la ruta completa, que incluye el epoch).
+     */
+    fun stableSeed(roots: List<File>, etiqueta: String): String {
+        val uuids = roots.asSequence()
+            .filter { it.isDirectory }
+            .mapNotNull { uuidDeManifiesto(it) }
+            .distinct()
+            .sorted()
+            .toList()
+
+        val base = if (uuids.isNotEmpty()) {
+            "uuid:" + uuids.joinToString("|")
+        } else {
+            "nombre:" + etiqueta
+                .replace(Regex("(?i)^(extracted|separated_(bp|rp))_\\d+_"), "")
+                .trim()
+                .lowercase(Locale.ROOT)
+        }
+        return "seed_" + sha256Hex(base).take(12)
+    }
+
+    private fun uuidDeManifiesto(dir: File): String? {
+        val manifiesto = File(dir, "manifest.json")
+        if (!manifiesto.isFile) return null
+        val texto = runCatching { manifiesto.readText(StandardCharsets.UTF_8) }.getOrNull()
+            ?: return null
+        val json = runCatching { JSONObject(texto) }.getOrNull()
+            ?: LenientJson.parseObject(texto)
+            ?: return null
+        return json.optJSONObject("header")
+            ?.optString("uuid", "")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.lowercase(Locale.ROOT)
+    }
+
+    private fun sha256Hex(texto: String): String = try {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(texto.toByteArray(StandardCharsets.UTF_8))
+        digest.joinToString("") { "%02x".format(it) }
+    } catch (_: Exception) {
+        texto.hashCode().toUInt().toString(16)
+    }
 }

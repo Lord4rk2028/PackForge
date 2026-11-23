@@ -7,6 +7,8 @@ import org.json.JSONTokener
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
+import com.packforge.app.domain.model.ConflictSeverity
+import com.packforge.app.domain.model.MergeConflict
 
 /**
  * ═══════════════════════════════════════════════════════════════════════
@@ -204,31 +206,136 @@ object MergeReportGenerator {
         return body.startsWith("true") || body.startsWith("false") || body.startsWith("null")
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    //  ANÁLISIS DE UN FICHERO, UNA SOLA VEZ (TICKET-CORE-013)
+    // ══════════════════════════════════════════════════════════════════════
+
     /**
-     * ¿El JSON tiene AL MENOS una clave raíz que Bedrock reconoce?
-  *
- * TICKET-CORE-003 fix: antes solo parseaba JSONObject, así que un archivo
-     * de raíz ARRAY (p.ej. textures/texture_list.json) o una clave legítima no
- * catalogada (p.ej. texts/languages.json) se marcaban como CLAVES_CIFRADAS.
+     * Resultado de leer y parsear UN archivo, reutilizado por todas las
+     * comprobaciones de diagnóstico.
+     *
+     * Antes cada comprobación volvía a parsear el mismo texto: la validación de
+     * sintaxis lo hacía por su cuenta y la auditoría de integridad hasta cinco
+     * veces (dos para la validez estructural, dos para la clave canónica y una
+     * estricta para el identificador). Con miles de JSON eso domina el tramo
+     * final de la exportación, que es puro diagnóstico.
      */
-  private fun hasCanonicalKey(text: String): Boolean {
-        return try {
-            // ⭐ FASE 5: se parsea con tolerancia a comentarios. CoreCraft mete
-            // `// cooking` DENTRO de item_texture.json; con JSONTokener estricto
-            // el parseo fallaba y el archivo acababa clasificado como cifrado.
-            when (val root = org.json.JSONTokener(lenientForTokener(text)).nextValue()) {
-        is JSONObject -> root.keys().asSequence().any { key ->
-            CANONICAL_KEYS.contains(key) ||
-                CANONICAL_KEY_PREFIXES.any { key.startsWith(it) }
+    private class AnalisisArchivo(
+        /** Ruta relativa normalizada, con `/`. */
+        val rel: String,
+        /** Texto del archivo, o null si no se pudo leer. */
+        val text: String?,
+        /** Mensaje de error de lectura, si lo hubo. */
+        val lecturaError: String?,
+        /** ¿Se pudo parsear con el parser tolerante a comentarios? */
+        val estructuralmenteValido: Boolean,
+        /** ¿Tiene alguna clave raíz que Bedrock reconozca? */
+        val tieneClaveCanonica: Boolean,
+        /** `description.identifier`; solo si válido y canónico, como antes. */
+        val identificador: String?
+    )
+
+    /**
+     * Lee y parsea todos los `.json` del pack UNA sola vez, en el orden estable
+     * de `DirIndexCache`, para que los hallazgos conserven su orden.
+     */
+    private fun analizarPack(root: File): List<AnalisisArchivo> {
+        if (!root.isDirectory) return emptyList()
+        val salida = ArrayList<AnalisisArchivo>()
+        for (file in DirIndexCache.index(root).jsonFiles) {
+            val rel = file.relativeTo(root).path.replace('\\', '/')
+            val text = try {
+                file.readText(StandardCharsets.UTF_8)
+            } catch (e: Exception) {
+                // Un fallo de E/S NO puede desaparecer: antes producía un
+                // «JSON ilegible» distinto de «JSON inválido».
+                salida += AnalisisArchivo(
+                    rel = rel,
+                    text = null,
+                    lecturaError = e.message ?: "E/S",
+                    estructuralmenteValido = false,
+                    tieneClaveCanonica = false,
+                    identificador = null
+                )
+                continue
+            }
+            // Un único parseo tolerante a comentarios: es el MISMO parser que
+            // usaban la comprobación estructural y la de clave canónica.
+            val raiz: Any? = try {
+                org.json.JSONTokener(lenientForTokener(text)).nextValue()
+            } catch (_: Exception) {
+                null
+            }
+            val objeto = raiz as? JSONObject
+            val canonica = when {
+                raiz is JSONArray -> true
+                objeto != null -> tieneClaveCanonicaDeBedrock(rel, objeto)
+                else -> false
+            }
+            salida += AnalisisArchivo(
+                rel = rel,
+                text = text,
+                lecturaError = null,
+                estructuralmenteValido = raiz != null,
+                tieneClaveCanonica = canonica,
+                // Condición EXACTA de antes: el identificador se busca solo en
+                // archivos válidos y canónicos, y con el parser ESTRICTO, para
+                // que los hallazgos salgan idénticos.
+                identificador = if (raiz != null && canonica) extractIdentifierSafely(text) else null
+            )
         }
-   // Array en la raíz: Bedrock lo acepta (texture_list.json, etc.).
-    is JSONArray -> true
-        else -> false
-       }
-        } catch (_: Exception) {
-  false
-        }
+        return salida
     }
+
+    /**
+     * ¿El objeto raíz declara algo que Bedrock reconozca?
+     *
+     * ⭐ PASO 5 — Además del catálogo de claves, se aceptan los ficheros de `ui/`
+     * cuyas claves raíz son NOMBRES DE ELEMENTO.
+     *
+     * Motivo (medido sobre `Desse-UI` + `Chroma Shader`): de 190 ficheros bajo
+     * `ui/`, 113 usan `namespace`, 49 usan `modifications` y **31 son overrides
+     * de elemento sin `namespace`**, del estilo
+     * `{"blast_furnace_screen": {"$is_blast_furnace_screen": true}}` o
+     * `{"right_navigation_tabs": {"$show_help_button": false}}`.
+     *
+     * El auditor los marcaba todos como «cifrado por sustitución» y el informe
+     * afirmaba **77 veces** que «el juego ignorará este archivo»: una afirmación
+     * sobre el comportamiento del juego que no habíamos verificado y que además
+     * contradecía al Decifrador, que en el MISMO informe decía «no se detectó
+     * contenido closed-source que recuperar».
+     *
+     * En `ui/` la raíz ES el mapa de elementos: Bedrock no espera ahí
+     * `format_version` ni `minecraft:*`. Por eso, para esa carpeta, se acepta un
+     * objeto no vacío cuyas claves tengan forma de elemento. Se exige que TODAS
+     * lo parezcan, así que un archivo con basura mezclada se sigue reportando.
+     */
+    private fun tieneClaveCanonicaDeBedrock(rel: String, root: JSONObject): Boolean {
+        val claves = root.keys().asSequence().toList()
+        val canonica = claves.any { clave ->
+            CANONICAL_KEYS.contains(clave) ||
+                CANONICAL_KEY_PREFIXES.any { prefijo -> clave.startsWith(prefijo) }
+        }
+        if (canonica) return true
+        if (!esRutaDeUi(rel) || claves.isEmpty()) return false
+        return claves.all { PATRON_ELEMENTO_UI.matches(it) }
+    }
+
+    /** ¿La ruta está bajo una carpeta `ui/` y no es relleno con segmentos repetidos? */
+    private fun esRutaDeUi(rel: String): Boolean {
+        if (hasRepeatedSegment(rel)) return false
+        return rel.split('/').any { it.equals("ui", ignoreCase = true) }
+    }
+
+    /**
+     * Forma de un nombre de elemento de UI: `blast_furnace_screen`,
+     * `right_navigation_tabs` o una ruta de modificación como
+     * `beacon_panel/root_panel/beacon_inventory`.
+     *
+     * Deliberadamente estricto (sin espacios ni `=`, `+`, `%`) para no absolver
+     * a un archivo cifrado de verdad.
+     */
+    private val PATRON_ELEMENTO_UI = Regex("""[A-Za-z0-9_$][A-Za-z0-9_$./:@\-]*""")
 
     /**
      * ⭐ FASE 5: el auditor también debe tolerar comentarios de línea y de bloque.
@@ -248,15 +355,24 @@ object MergeReportGenerator {
         text
     }
 
-    /** ¿El JSON es estructuralmente válido (cualquier tipo de raíz)? */
-    private fun isStructurallyValid(text: String): Boolean {
-        if (text.isBlank()) return false
-        return try {
-            org.json.JSONTokener(lenientForTokener(text)).nextValue()
-            true
-        } catch (_: Exception) {
-            false
-        }
+    /**
+     * ⭐ TICKET-CORE-013 — Diagnóstico completo de un pack en UNA sola pasada.
+     *
+     * El orquestador pedía sintaxis e integridad por separado sobre el MISMO
+     * pack, así que cada archivo se leía y se parseaba dos veces completas. Aquí
+     * las dos comprobaciones comparten el mismo análisis.
+     */
+    data class PackAudit(
+        val syntaxErrors: List<String>,
+        val integrityFindings: List<IntegrityFinding>
+    )
+
+    fun auditPack(root: File): PackAudit {
+        val analisis = analizarPack(root)
+        return PackAudit(
+            syntaxErrors = erroresDeSintaxis(analisis),
+            integrityFindings = auditarIntegridad(analisis)
+        )
     }
 
     /** Extrae description.identifier sin lanzar excepciones. */
@@ -280,32 +396,25 @@ object MergeReportGenerator {
      *
      * @return lista de hallazgos (vacía = todo correcto).
      */
-    fun auditJsonIntegrity(root: File): List<IntegrityFinding> {
+    fun auditJsonIntegrity(root: File): List<IntegrityFinding> =
+        auditarIntegridad(analizarPack(root))
+
+    /** Cuerpo de la auditoría, sobre un análisis ya hecho (evita reparsear). */
+    private fun auditarIntegridad(analisis: List<AnalisisArchivo>): List<IntegrityFinding> {
         val findings = mutableListOf<IntegrityFinding>()
-        if (!root.isDirectory) return findings
 
-        val index = DirIndexCache.index(root)
-        val jsonFiles = index.jsonFiles
-
-        // 1a pasada: cachear texto + identificadores VALIDOS, para saber que
-        // archivos corruptos son sombras de una contraparte sana (INFO).
-        val texts = HashMap<File, String>()
+        // 1a pasada: identificadores VALIDOS, para saber que archivos corruptos
+        // son sombras de una contraparte sana (INFO).
         val validIds = HashSet<String>()
-        for (file in jsonFiles) {
-    val text = try {
-        file.readText(StandardCharsets.UTF_8)
-   } catch (_: Exception) {
-  continue
-     }
-            texts[file] = text
-      if (!isStructurallyValid(text) || !hasCanonicalKey(text)) continue
-        extractIdentifierSafely(text)?.let { validIds += it }
-   }
+        for (a in analisis) {
+            if (!a.estructuralmenteValido || !a.tieneClaveCanonica) continue
+            a.identificador?.let { validIds += it }
+        }
 
-        // 2a pasada: auditoria real.
-        for (file in jsonFiles) {
-            val rel = file.relativeTo(root).path.replace('\\', '/')
-            val text = texts[file] ?: continue
+        // 2a pasada: auditoria real, sobre el análisis ya hecho.
+        for (a in analisis) {
+            val rel = a.rel
+            val text = a.text ?: continue
       val trimmed = text.trimStart('\uFEFF').trim()
       val head = text.take(DECOY_SCAN_CHARS)
 
@@ -356,7 +465,7 @@ object MergeReportGenerator {
             // cifrar. Antes se marcaba como "claves cifradas" y el reporte acusaba
             // al addon de ofuscar un `sounds.json` de 2 bytes perfectamente válido.
             val vacio = text.trim().let { it == "{}" || it == "[]" || it.isEmpty() }
-            if (!vacio && isStructurallyValid(text) && !hasCanonicalKey(text)) {
+            if (!vacio && a.estructuralmenteValido && !a.tieneClaveCanonica) {
            val id = extractIdentifierSafely(text)
           val hasValidTwin = id != null && validIds.contains(id)
        val readByBedrock = isBedrockReadPath(rel)
@@ -423,37 +532,44 @@ if (hasValidTwin) {
     * JSONObject.NULL u otro tipo primitivo, todos válidos como raíz.
    * @return líneas de error (vacío = OK).
     */
-    fun validateJsonSyntax(root: File): List<String> {
-   val errors = mutableListOf<String>()
-        if (!root.isDirectory) return errors
-   // ⭐ OPTIMIZACIÓN: Usar DirIndexCache en lugar de walkTopDown()
-    val cachedFiles = DirIndexCache.index(root).jsonFiles
-     for (file in cachedFiles) {
-    // Zero-Excess I/O: una sola lectura por archivo, reutilizada en el reintento.
-       val text = try {
-        file.readText(StandardCharsets.UTF_8)
-       } catch (e: Exception) {
-   errors += "❌ JSON ilegible: ${file.relativeTo(root).path} (${e.message ?: "E/S"})"
-       continue
-   }
+    fun validateJsonSyntax(root: File): List<String> = erroresDeSintaxis(analizarPack(root))
+
+    /**
+     * ⭐ TICKET-CORE-013 — Errores de sintaxis sobre el análisis ya hecho.
+     *
+     * Si el parseo tolerante del análisis funcionó, el archivo es válido y no
+     * hay nada más que comprobar: el parser estricto acepta un subconjunto de lo
+     * que acepta el tolerante, así que un archivo que pasa el tolerante no puede
+     * fallar el estricto. Solo cuando el análisis falla se recorre la cadena de
+     * reintentos original —BOM y `LenientJson`—, de modo que el veredicto es
+     * exactamente el mismo que antes pero sin reparsear los archivos sanos.
+     */
+    private fun erroresDeSintaxis(analisis: List<AnalisisArchivo>): List<String> {
+        val errors = mutableListOf<String>()
+        for (a in analisis) {
+            val errorLectura = a.lecturaError
+            if (errorLectura != null) {
+                errors += "❌ JSON ilegible: ${a.rel} ($errorLectura)"
+                continue
+            }
+            if (a.estructuralmenteValido) continue
+            val text = a.text ?: continue
             if (isValidJsonRoot(text)) continue
-   // Reintento tolerante: algunos archivos legacy llevan BOM inicial.
+            // Reintento tolerante: algunos archivos legacy llevan BOM inicial.
             if (isValidJsonRoot(text.trimStart('\uFEFF'))) continue
-            // ⭐ FASE 5: reintento tolerante a comentarios (`//`, `/* */`) y comas
-            // finales, con el MISMO parser que usa el resto del pipeline.
-            //
-            // CoreCraft los inyecta dentro de agregados como item_texture.json, y
+            // ⭐ FASE 5: reintento tolerante a comentarios y comas finales, con el
+            // MISMO parser que usa el resto del pipeline. CoreCraft los inyecta
+            // dentro de agregados como item_texture.json, y
             // `entities/vanilla/sulfur_cube.json` de Origins (66 KB) también los
-            // trae. Bedrock acepta ambos, pero el preprocesado anterior
-            // (`lenientForTokener`) no cubría todas las posiciones y el archivo se
-            // reportaba como "JSON inválido" siendo válido para el juego.
+            // trae; el preprocesado anterior no cubría todas las posiciones y el
+            // archivo se reportaba como inválido siendo válido para el juego.
             if (LenientJson.parse(text) != null) continue
             if (LenientJson.parse(text.trimStart('\uFEFF')) != null) continue
 
-    errors += "❌ JSON inválido: ${file.relativeTo(root).path} (raíz no reconocida como JSONObject/JSONArray)"
+            errors += "❌ JSON inválido: ${a.rel} (raíz no reconocida como JSONObject/JSONArray)"
         }
-  if (errors.isNotEmpty()) {
-       com.packforge.app.util.PackForgeLog.w(TAG, "Validación JSON: ${errors.size} archivo(s) inválido(s)")
+        if (errors.isNotEmpty()) {
+            com.packforge.app.util.PackForgeLog.w(TAG, "Validación JSON: ${errors.size} archivo(s) inválido(s)")
         }
         return errors
     }
@@ -514,11 +630,42 @@ if (hasValidTwin) {
          */
         val phaseTimings: Map<String, Double> = emptyMap(),
         /**
+         * ⭐ TICKET-CORE-013 — Tiempos de CADA fusión crítica de la Fase 3.
+         *
+         * La Fase 3 lanza 22 fusiones en paralelo y el reporte solo mostraba el
+         * total del bloque. Con dos addons RP cualesquiera (295 JSON) ese total
+         * era de 16,08 s —el 59,7 % de la exportación— sin decir cuál de las 22
+         * se los llevaba: el desglose existía pero iba a `println`, que en
+         * Android termina en logcat y no en el informe. Sin esta lista,
+         * optimizar la fase era adivinar.
+         *
+         * Ordenado por coste descendente (lo decide el orquestador).
+         */
+        val criticalMergeTimings: List<Pair<String, Double>> = emptyList(),
+        /**
          * Lista de addons fusionados en este modpack.
          * Cada entrada: "nombre (tipo: BP/RP/BOTH, tamaño: X MB)"
          */
-        val mergedAddons: List<String> = emptyList()
+        val mergedAddons: List<String> = emptyList(),
+        /**
+         * Conflictos registrados durante la fusión ([ConflictRegistry]).
+         *
+         * Antes NO llegaban a `fusion_report.txt`: el usuario los veía en la
+         * pantalla de Conflictos y en el semáforo, pero el documento que se
+         * entrega junto al `.mcaddon` no decía nada de ellos. Eso dejaba fuera
+         * del informe hallazgos como una geometría duplicada o un subpack
+         * renombrado, que solo existían en logcat.
+         */
+        val conflicts: List<MergeConflict> = emptyList()
     )
+
+    /** Icono del semáforo para un conflicto en el informe de texto. */
+    private fun iconoSeveridad(s: ConflictSeverity): String = when (s) {
+        ConflictSeverity.CRITICAL -> "🔴"
+        ConflictSeverity.HIGH -> "🟠"
+        ConflictSeverity.MEDIUM -> "🟡"
+        else -> "⚪"
+    }
 
     fun build(inputs: Inputs): List<String> {
         val lines = mutableListOf<String>()
@@ -562,12 +709,82 @@ if (hasValidTwin) {
             if (noMedido > 0.05) {
                 val pct = if (inputs.elapsedSeconds > 0) noMedido / inputs.elapsedSeconds * 100 else 0.0
                 val ultima = marcas.lastOrNull()?.key ?: ""
+                // ⚠️ La etiqueta anterior decía "(empaquetado/cierre)" y era
+                // engañosa: este tramo empieza DESPUÉS de la marca «Generación
+                // de reporte», así que es el reporte (auditorías de sintaxis e
+                // integridad + validación del ZIP) y el cierre, no el empaquetado
+                // —que ya se contó en su propia marca—. En el pack de prueba eran
+                // 3,47 s (12,9 %), el segundo coste de la exportación, y con la
+                // etiqueta vieja parecía parte del ZIP.
                 lines += String.format(
                     "  ⏱️ %-46s %8.2fs %5.1f%%",
-                    "resto tras '$ultima' (empaquetado/cierre)", noMedido, pct
+                    "resto tras '$ultima' (reporte y cierre)", noMedido, pct
                 )
             }
             lines += String.format("  %-48s %8.2fs", "TOTAL", inputs.elapsedSeconds)
+            lines += ""
+        }
+
+        // ── 0c. FUSIONES CRÍTICAS, POR COSTE ──
+        //
+        // La Fase 3 es un bloque de 22 fusiones en paralelo cuyo total puede
+        // llevarse más de la mitad de la exportación. Sin este desglose el
+        // informe decía «Fase 3: 16,08 s» y no había forma de saber cuál de las
+        // 22 fusiones atacar; el detalle solo existía en logcat.
+        //
+        // Se listan TODAS, no un top: un tope escondería justo la fusión que se
+        // busca cuando cambia el addon, y son 23 líneas.
+        if (inputs.criticalMergeTimings.isNotEmpty()) {
+            lines += "── 0c. FUSIONES CRÍTICAS (Fase 3, por coste) ──"
+            val suma = inputs.criticalMergeTimings.sumOf { it.second }
+            inputs.criticalMergeTimings.forEach { (nombre, segundos) ->
+                val pct = if (suma > 0) segundos / suma * 100 else 0.0
+                lines += String.format("  🔧 %-44s %8.2fs %5.1f%%", nombre, segundos, pct)
+            }
+            lines += String.format("  %-48s %8.2fs", "SUMA de las fusiones", suma)
+            lines += ""
+        }
+
+        // ── 0d. CONFLICTOS REGISTRADOS ──
+        //
+        // Todo lo que el motor descarta, renombra o repara debe verse aquí
+        // (regla 15). Hasta ahora estos conflictos solo existían en la UI y en
+        // el semáforo: el documento que se entrega con el `.mcaddon` no los
+        // mencionaba, así que hallazgos como una geometría duplicada o un
+        // subpack renombrado quedaban solo en logcat.
+        if (inputs.conflicts.isNotEmpty()) {
+            val conflictos = inputs.conflicts
+            lines += "── 0d. CONFLICTOS REGISTRADOS (${conflictos.size}) ──"
+            conflictos.groupingBy { it.conflictType }
+                .eachCount()
+                .entries
+                .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+                .forEach { (tipo, cantidad) ->
+                    lines += "  • $tipo: $cantidad"
+                }
+            lines += ""
+
+            // El detalle omite los avisos menores y las sobrescrituras de
+            // versión (rutina), y deduplica, para que el informe siga siendo
+            // legible en packs con cientos de colisiones de escalares.
+            val detallables = conflictos
+                .filter { it.severity != ConflictSeverity.LOW &&
+                    it.severity != ConflictSeverity.WARNING &&
+                    it.conflictType != "VERSION_OVERWRITE" }
+                .distinctBy { "${it.conflictType}|${it.filePath}|${it.description}" }
+            if (detallables.isNotEmpty()) {
+                lines += "  DETALLE (${detallables.size} conflicto(s) relevante(s)):"
+                detallables.take(60).forEach { c ->
+                    lines += "  ${iconoSeveridad(c.severity)} [${c.conflictType}] ${c.filePath}"
+                    if (c.sourceAddon.isNotBlank() || c.targetAddon.isNotBlank()) {
+                        lines += "      ${c.sourceAddon} ↔ ${c.targetAddon}"
+                    }
+                    if (c.description.isNotBlank()) lines += "      ${c.description}"
+                }
+                if (detallables.size > 60) {
+                    lines += "  … y ${detallables.size - 60} conflicto(s) más (ver pantalla de Conflictos)"
+                }
+            }
             lines += ""
         }
 

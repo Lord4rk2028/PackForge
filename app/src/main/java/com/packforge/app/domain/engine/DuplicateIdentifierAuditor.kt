@@ -31,7 +31,11 @@ object DuplicateIdentifierAuditor {
     private const val MAX_FINDINGS = 200
 
     /** Directorios del BP que declaran identificadores. */
-    private val BP_ROOTS = listOf("blocks", "items", "entities", "entity", "recipes", "trading")
+    private val BP_ROOTS = listOf(
+        "blocks", "items", "entities", "entity", "recipes", "trading",
+        // 3.8
+        "item_catalog", "cameras", "dimensions", "worldgen"
+    )
 
     /** Directorios del RP que declaran identificadores. */
     private val RP_ROOTS = listOf("entity", "models", "animations", "animation_controllers", "render_controllers", "attachables")
